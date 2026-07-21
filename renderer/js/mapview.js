@@ -20,7 +20,7 @@ const mapDlActive = new Set();
 const WORLD_MAX = 4096;
 const KILL_RADIUS = 200;
 const GIANT_BG = '#c01c00';
-const CRIT_RING = '#e8b33c';
+const CRIT_RING = '#0099c5';
 const TANK_PATH = '#cfa35a';
 
 onChange(what => { if (what === 'icons') imgCache.clear(); });
@@ -921,8 +921,14 @@ export function renderMapView(container, file, waveIndex) {
       onclick: () => { ps.showRoute = ps.showRoute === false; emit('map'); }
     });
     if (pathGroups.length) {
-      const pathSel = el('select', { class: 'inp sm', title: 'Which bomb path the map has enabled — switches func_nav_prefer / func_nav_avoid' },
-        el('option', { value: '', text: 'default (map)', selected: !bombPath }),
+      const fromMap = pathGroups.some(g => g.fromMap);
+      const pathSel = el('select', {
+        class: 'inp sm',
+        title: fromMap
+          ? 'The map picks one of these at random each round. Choosing one applies exactly what that relay enables.'
+          : 'Which bomb path the map has enabled — switches func_nav_prefer / func_nav_avoid'
+      },
+        el('option', { value: '', text: fromMap ? 'random (map picks)' : 'default (map)', selected: !bombPath }),
         ...pathGroups.map(g => el('option', {
           value: g.key, text: g.key.replace(/_/g, ' '), selected: g.key === bombPath
         })));
@@ -1213,17 +1219,31 @@ export function renderMapView(container, file, waveIndex) {
   function drawSquadLinks(positions) {
     const leaders = new Map();
     for (const q of positions) if (q.a.squadRole === 'leader' && q.a.squadId) leaders.set(q.a.squadId, q);
-    ctx.save();
-    ctx.lineWidth = 1.6;
-    ctx.strokeStyle = 'rgba(180,205,235,.42)';
-    ctx.setLineDash([3, 3]);
+    const pairs = [];
     for (const q of positions) {
       if (q.a.squadRole !== 'member' || !q.a.squadId) continue;
       const lead = leaders.get(q.a.squadId);
-      if (!lead) continue;
+      if (lead) pairs.push([lead, q]);
+    }
+    if (!pairs.length) return;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(150,190,235,.16)';
+    ctx.lineWidth = 26;
+    for (const [a, b] of pairs) {
       ctx.beginPath();
-      ctx.moveTo(lead.sx, lead.sy);
-      ctx.lineTo(q.sx, q.sy);
+      ctx.moveTo(a.sx, a.sy);
+      ctx.lineTo(b.sx, b.sy);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(190,220,255,.55)';
+    ctx.lineWidth = 1.6;
+    ctx.setLineDash([3, 3]);
+    for (const [a, b] of pairs) {
+      ctx.beginPath();
+      ctx.moveTo(a.sx, a.sy);
+      ctx.lineTo(b.sx, b.sy);
       ctx.stroke();
     }
     ctx.restore();

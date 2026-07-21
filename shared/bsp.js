@@ -119,10 +119,17 @@ export function parseEntities(text) {
   let m;
   while ((m = blockRe.exec(text)) !== null) {
     const ent = {};
+    const outputs = [];
     let kv;
     kvRe.lastIndex = 0;
-    while ((kv = kvRe.exec(m[1])) !== null) ent[kv[1].toLowerCase()] = kv[2];
-    if (ent.classname) out.push(ent);
+    while ((kv = kvRe.exec(m[1])) !== null) {
+      const key = kv[1].toLowerCase();
+      ent[key] = kv[2];
+      if (key.startsWith('on')) outputs.push({ key, value: kv[2] });
+    }
+    if (!ent.classname) continue;
+    if (outputs.length) ent.outputs = outputs;
+    out.push(ent);
   }
   return out;
 }

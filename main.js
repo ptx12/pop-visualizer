@@ -537,6 +537,66 @@ ipcMain.handle('tank:path', async (e, popName, tfPathOverride, starts) => {
 });
 
 const mapDataCache = new Map();
+const OUTPUT_ESC = String.fromCharCode(27);
+
+function entityOutputs(ents) {
+  const graph = new Map();
+  for (const en of ents) {
+    const name = (en.targetname || '').toLowerCase();
+    if (!name || !en.outputs) continue;
+    if (!graph.has(name)) graph.set(name, []);
+    const list = graph.get(name);
+    for (const o of en.outputs) {
+      const parts = o.value.includes(OUTPUT_ESC) ? o.value.split(OUTPUT_ESC) : o.value.split(',');
+      list.push({ on: o.key, target: (parts[0] || '').toLowerCase(), input: (parts[1] || '').toLowerCase(), param: parts[2] || '' });
+    }
+  }
+  return graph;
+}
+
+function resolveToggles(graph, seed, volumeNames) {
+  const enable = new Set();
+  const disable = new Set();
+  const queue = [{ name: seed, depth: 0 }];
+  const seen = new Set();
+  while (queue.length) {
+    const cur = queue.shift();
+    if (cur.depth > 8 || seen.has(cur.name)) continue;
+    seen.add(cur.name);
+    for (const o of graph.get(cur.name) || []) {
+      if (!o.target) continue;
+      if (volumeNames.has(o.target)) {
+        if (o.input === 'enable') enable.add(o.target);
+        else if (o.input === 'disable') disable.add(o.target);
+        continue;
+      }
+      if (o.input === 'trigger') queue.push({ name: o.target, depth: cur.depth + 1 });
+    }
+  }
+  return { enable: [...enable], disable: [...disable] };
+}
+
+function buildBombPaths(ents, navVolumes) {
+  const volumeNames = new Set(navVolumes.map(v => v.name).filter(Boolean));
+  if (!volumeNames.size) return [];
+  const graph = entityOutputs(ents);
+  const paths = [];
+  for (const en of ents) {
+    if (en.classname !== 'logic_case' || !en.outputs) continue;
+    for (const o of en.outputs) {
+      if (!/^oncase/i.test(o.key)) continue;
+      const parts = o.value.includes(OUTPUT_ESC) ? o.value.split(OUTPUT_ESC) : o.value.split(',');
+      const relay = (parts[0] || '').toLowerCase();
+      if (!relay || relay === 'null') continue;
+      const t = resolveToggles(graph, relay, volumeNames);
+      if (!t.enable.length && !t.disable.length) continue;
+      const key = relay.replace(/^bombpath_/, '').replace(/_relay$/, '') || relay;
+      if (paths.some(p => p.key === key)) continue;
+      paths.push({ key, relay, chooser: (en.targetname || '').toLowerCase(), enable: t.enable, disable: t.disable });
+    }
+  }
+  return paths;
+}
 
 async function looseNavs(tfPath) {
   const out = [];
@@ -685,6 +745,7 @@ ipcMain.handle('map:data', async (e, popName, tfPathOverride) => {
         maxs: [m.maxs[0] + m.origin[0], m.maxs[1] + m.origin[1], m.maxs[2] + m.origin[2]]
       });
     }
+    const bombPaths = buildBombPaths(ents, navVolumes);
     const spawnRooms = [];
     for (const en of ents) {
       if (en.classname !== 'func_respawnroom') continue;
@@ -713,7 +774,7 @@ ipcMain.handle('map:data', async (e, popName, tfPathOverride) => {
     }
     const navLookup = await loadNavFor(best, tfPath);
     result = {
-      map: best.name, spawns, flags, capzones, tracks, spawnRooms, nav: navLookup.nav,
+      map: best.name, spawns, flags, capzones, tracks, spawnRooms, bombPaths, nav: navLookup.nav,
       navSearch: { searched: navLookup.searched, near: navLookup.near, reason: navLookup.reason || null },
       redSpawns, hints, navVolumes, pathProps
     };
@@ -1226,11 +1287,13 @@ ipcMain.handle('potato:navs', async (e, mapName) => {
     try { href = decodeURIComponent(href); } catch {}
     navs.push(href.toLowerCase().replace(/\.nav$/, ''));
   }
+  const stem = s => s.replace(/^mvm_/, '');
+  const wanted = stem(name);
   const scored = [];
   for (const n of [...new Set(navs)]) {
-    const l = sharedPrefixLen(n, name);
-    if (n === name) scored.push({ name: n, exact: true, score: 999 });
-    else if (l >= 6) scored.push({ name: n, exact: false, score: l });
+    if (n === name) { scored.push({ name: n, exact: true, score: 999 }); continue; }
+    const l = sharedPrefixLen(stem(n), wanted);
+    if (l >= 5) scored.push({ name: n, exact: false, score: l });
   }
   scored.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
   return { candidates: scored.slice(0, 12).map(({ name: n, exact }) => ({ name: n, exact })) };

@@ -106,6 +106,10 @@ export function pathKeyOf(name) {
 }
 
 export function bombPathGroups(mapData) {
+  const mapped = mapData.bombPaths || [];
+  if (mapped.length) {
+    return mapped.map(p => ({ key: p.key, volumes: p.enable.length, props: 0, fromMap: true }));
+  }
   const keys = new Map();
   const add = (name, what) => {
     const k = pathKeyOf(name);
@@ -128,15 +132,25 @@ function inList(list, name) {
   return false;
 }
 
-function volumeActive(v, activeNames, bombPath) {
+function volumeActive(v, activeNames, bombPath, mapPaths) {
   if (v.name) {
     const n = v.name.toLowerCase();
     if (inList(activeNames.disabled, n)) return false;
     if (inList(activeNames.enabled, n)) return true;
+    if (mapPaths && mapPaths.pool.has(n)) return mapPaths.on.has(n);
     if (v.startDisabled) return bombPath ? pathKeyOf(v.name) === bombPath : false;
     return true;
   }
   return !v.startDisabled;
+}
+
+function mapPathSets(mapData, bombPath) {
+  const paths = mapData.bombPaths || [];
+  if (!paths.length) return null;
+  const pool = new Set();
+  for (const p of paths) for (const n of p.enable) pool.add(n);
+  const chosen = bombPath ? paths.find(p => p.key === bombPath) : null;
+  return { pool, on: new Set(chosen ? chosen.enable : []) };
 }
 
 export function activeNavVolumes(mapData, opts = {}) {
@@ -144,7 +158,8 @@ export function activeNavVolumes(mapData, opts = {}) {
     enabled: (opts.enabledNames || []).map(s => String(s).toLowerCase()),
     disabled: (opts.disabledNames || []).map(s => String(s).toLowerCase())
   };
-  return (mapData.navVolumes || []).filter(v => volumeActive(v, activeNames, opts.bombPath || null));
+  const mapPaths = mapPathSets(mapData, opts.bombPath || null);
+  return (mapData.navVolumes || []).filter(v => volumeActive(v, activeNames, opts.bombPath || null, mapPaths));
 }
 
 function areaWeights(mapData, volumes) {

@@ -1069,17 +1069,11 @@ body.zen .act-holder svg { height: 30px; }
 .boticon img {
   width: 26px; height: 26px;
   display: block;
-  position: relative; z-index: 1;
   filter: drop-shadow(0 1px 2px #0009);
 }
 .bi-giant, .bi-boss { background: #c01c00; border-radius: 50%; }
 .bi-boss { background: #8f1500; }
-.bi-critbg {
-  position: absolute; inset: -3px; z-index: 0;
-  background-size: contain; background-repeat: no-repeat; background-position: center;
-  pointer-events: none;
-}
-.bi-crit { box-shadow: 0 0 0 1.5px #e8b33c; border-radius: 50%; }
+.bi-crit { box-shadow: 0 0 0 2px #0099c5; border-radius: 50%; }
 .bi-sm img { width: 20px; height: 20px; }
 .bi-lg img { width: 40px; height: 40px; }
 .bi-giant img { width: 32px; height: 32px; }
