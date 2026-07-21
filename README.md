@@ -21,7 +21,6 @@ Team Fortress 2 does not need to be running or installed to open and edit popfil
 - Bundled Valve missions and stock bot templates
 - Dock mode for external editors on Windows
 
-![Timeline view](docs/timeline.png)
 ![Map simulation](docs/map.png)
 
 ## Installation
