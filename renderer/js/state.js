@@ -4,7 +4,7 @@ import { simulateWave, DEFAULT_SIM_OPTS } from './sim.js';
 import { lintModel } from './lint.js';
 import { native } from './native.js';
 import { collectIconNames, ensureIcons, getTFPath } from './icons.js';
-import { buildTriggerGraph, analyzeWave, isGated, navToggles } from './gating.js';
+import { buildTriggerGraph, analyzeWave, isGated, navToggles, firesAny } from './gating.js';
 
 let fileSeq = 1;
 
@@ -198,6 +198,7 @@ export function rebuild(file, opts = {}) {
   file.simCache = new Map();
   file.gateCache = new Map();
   file.navToggleCache = new Map();
+  file.rerollCache = undefined;
   file.triggerGraph = null;
   if (!file.lint) file.lint = [];
   if (opts.lazyLint) scheduleLint(file);
@@ -294,6 +295,23 @@ export function gatingFor(file, wave) {
     }
   }
   return file.gateCache.get(wave);
+}
+
+export function bombPathRerollsFor(file, mapData) {
+  const paths = (mapData && mapData.bombPaths) || [];
+  if (!paths.length) return false;
+  const names = new Set();
+  for (const p of paths) for (const n of p.rerollBy || []) names.add(String(n).toLowerCase());
+  if (!names.size) return false;
+  if (file.rerollCache === undefined) {
+    try {
+      if (!file.triggerGraph) file.triggerGraph = buildTriggerGraph(file.doc);
+      file.rerollCache = firesAny(file.triggerGraph, file.doc, names);
+    } catch {
+      file.rerollCache = false;
+    }
+  }
+  return file.rerollCache;
 }
 
 export function navTogglesFor(file, wave) {

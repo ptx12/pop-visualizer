@@ -211,6 +211,35 @@ export function navToggles(wave, tg) {
   return { enabled, disabled, deferred };
 }
 
+const OUTPUT_BLOCK_KEYS = new Set([...WS_OUTPUT_KEYS, 'initwaveoutput', 'onspawnoutput']);
+
+export function popOutputTargets(doc) {
+  const out = new Set();
+  const walk = node => {
+    for (const c of node.children || []) {
+      if (c.type !== 'block') continue;
+      if (OUTPUT_BLOCK_KEYS.has(c.key.toLowerCase())) {
+        const t = (getValue(c, 'Target', '') || '').trim().toLowerCase();
+        if (t) out.add(t);
+      }
+      walk(c);
+    }
+  };
+  walk(doc);
+  return out;
+}
+
+export function firesAny(tg, doc, names) {
+  if (!names || !names.size) return false;
+  for (const t of popOutputTargets(doc)) if (names.has(t)) return true;
+  if (!tg) return false;
+  for (const [, outs] of tg.graph) {
+    for (const o of outs) if (names.has(String(o.target).toLowerCase())) return true;
+  }
+  for (const o of tg.boot) if (names.has(String(o.target).toLowerCase())) return true;
+  return false;
+}
+
 export function isGated(g) {
   return !!(g && (g.paused || g.whereDisabled));
 }

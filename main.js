@@ -601,7 +601,33 @@ function buildBombPaths(ents, navVolumes) {
       paths.push({ key, relay, chooser: (en.targetname || '').toLowerCase(), enable: t.enable, disable: t.disable });
     }
   }
+  for (const p of paths) p.rerollBy = rerollSources(graph, p.chooser);
   return paths;
+}
+
+function rerollSources(graph, chooser) {
+  if (!chooser) return [];
+  const picks = new Set();
+  for (const [name, outs] of graph) {
+    for (const o of outs) {
+      if (o.target === chooser && /^pick/.test(o.input)) picks.add(name);
+    }
+  }
+  const out = new Set();
+  const seen = new Set();
+  const walk = (name, depth) => {
+    if (depth > 8 || seen.has(name)) return;
+    seen.add(name);
+    for (const [src, outs] of graph) {
+      for (const o of outs) {
+        if (o.target !== name || o.input !== 'trigger') continue;
+        out.add(src);
+        walk(src, depth + 1);
+      }
+    }
+  };
+  for (const p of picks) { out.add(p); walk(p, 0); }
+  return [...out];
 }
 
 async function looseNavs(tfPath, popDir) {

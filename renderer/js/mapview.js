@@ -1,5 +1,5 @@
 import { el, clear, showTip, hideTip, fmtTime, loader } from './ui.js';
-import { simFor, emit, onChange, deathModel, navTogglesFor } from './state.js';
+import { simFor, emit, onChange, deathModel, navTogglesFor, bombPathRerollsFor } from './state.js';
 import { CLASS_INFO, botDisplayName } from './popmodel.js';
 import { getTFPath, iconURL, iconNameFor, classIconName } from './icons.js';
 import { native } from './native.js';
@@ -405,10 +405,30 @@ function saveKillPoints(mapName, list) {
   else localStorage.removeItem('popvis.killpts.' + mapName);
 }
 
-function bombPathFor(mapName, groups) {
-  const v = localStorage.getItem('popvis.bombpath.' + mapName);
+function bombPathKey(mapName, waveIndex, perWave) {
+  return perWave ? 'popvis.bombpath.' + mapName + '.' + waveIndex : 'popvis.bombpath.' + mapName;
+}
+
+function autoBombPath(mapName, waveIndex, groups) {
+  if (!groups.length) return null;
+  let h = 2166136261 ^ waveIndex;
+  for (let i = 0; i < mapName.length; i++) {
+    h ^= mapName.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return groups[(h >>> 0) % groups.length].key;
+}
+
+function bombPathFor(mapName, groups, waveIndex, perWave) {
+  const v = localStorage.getItem(bombPathKey(mapName, waveIndex, perWave));
   if (v && groups.some(g => g.key === v)) return v;
-  return null;
+  if (v === '__none') return null;
+  if (!perWave) {
+    const legacy = localStorage.getItem('popvis.bombpath.' + mapName);
+    if (legacy && groups.some(g => g.key === legacy)) return legacy;
+    return null;
+  }
+  return autoBombPath(mapName, waveIndex, groups);
 }
 
 function objectiveIdxFor(mapName) {
@@ -833,7 +853,8 @@ export function renderMapView(container, file, waveIndex) {
   const killPts = killPointsFor(mapData.map);
   const objIdx = objectiveIdxFor(mapData.map);
   const pathGroups = bombPathGroups(mapData);
-  const bombPath = bombPathFor(mapData.map, pathGroups);
+  const perWavePath = bombPathRerollsFor(file, mapData);
+  const bombPath = bombPathFor(mapData.map, pathGroups, waveIndex, perWavePath);
   const toggles = navTogglesFor(file, wave);
   const aiKey = [waveIndex, model, dps, zMode, paintV, objIdx, bombPath, JSON.stringify(killPts),
     toggles.enabled.join(','), toggles.disabled.join(',')].join('|');
@@ -967,22 +988,37 @@ export function renderMapView(container, file, waveIndex) {
     });
     if (pathGroups.length) {
       const fromMap = pathGroups.some(g => g.fromMap);
+      const stored = localStorage.getItem(bombPathKey(mapData.map, waveIndex, perWavePath));
+      const picked = stored && pathGroups.some(g => g.key === stored);
+      const autoLabel = perWavePath
+        ? 'this wave: ' + String(bombPath || '').replace(/_/g, ' ')
+        : (fromMap ? 'random (map picks)' : 'default (map)');
       const pathSel = el('select', {
         class: 'inp sm',
-        title: fromMap
-          ? 'The map picks one of these at random each round. Choosing one applies exactly what that relay enables.'
-          : 'Which bomb path the map has enabled — switches func_nav_prefer / func_nav_avoid'
+        title: perWavePath
+          ? 'The map re-rolls the bomb path after every wave, so each wave gets its own. This is one of the possibilities — pick a specific one to pin it.'
+          : (fromMap
+            ? 'The map picks one of these at random each round. Choosing one applies exactly what that relay enables.'
+            : 'Which bomb path the map has enabled — switches func_nav_prefer / func_nav_avoid')
       },
-        el('option', { value: '', text: fromMap ? 'random (map picks)' : 'default (map)', selected: !bombPath }),
+        el('option', { value: '', text: autoLabel, selected: !picked }),
         ...pathGroups.map(g => el('option', {
-          value: g.key, text: g.key.replace(/_/g, ' '), selected: g.key === bombPath
-        })));
+          value: g.key, text: g.key.replace(/_/g, ' '), selected: picked && g.key === bombPath
+        })),
+        perWavePath ? el('option', { value: '__none', text: 'none enabled', selected: stored === '__none' }) : null);
       pathSel.addEventListener('change', () => {
-        if (pathSel.value) localStorage.setItem('popvis.bombpath.' + mapData.map, pathSel.value);
-        else localStorage.removeItem('popvis.bombpath.' + mapData.map);
+        const key = bombPathKey(mapData.map, waveIndex, perWavePath);
+        if (pathSel.value) localStorage.setItem(key, pathSel.value);
+        else localStorage.removeItem(key);
         emit('map');
       });
       panel.append(el('div', { class: 'opt-row' }, el('span', { class: 'opt-label', text: 'Nav path' }), pathSel, routeBtn));
+      if (perWavePath) {
+        panel.append(el('div', {
+          class: 'opt-note info',
+          text: 'Re-rolled by the map after each wave'
+        }));
+      }
     } else {
       panel.append(el('div', { class: 'opt-row' }, el('span', { class: 'opt-label', text: 'Route' }), routeBtn));
     }
