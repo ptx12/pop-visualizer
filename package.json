@@ -29,7 +29,9 @@
     "dev": "node test/devserver.mjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
-    "build:wasm": "cargo build --release --manifest-path rust/Cargo.toml --target wasm32-unknown-unknown && node -e \"for (const n of ['navkernel','vtfkernel']) require('fs').copyFileSync(`rust/target/wasm32-unknown-unknown/release/${n}.wasm`,`shared/${n}.wasm`)\""
+    "build:wasm": "cargo build --release --manifest-path rust/Cargo.toml --target wasm32-unknown-unknown && node -e \"for (const n of ['navkernel','vtfkernel']) require('fs').copyFileSync(`rust/target/wasm32-unknown-unknown/release/${n}.wasm`,`shared/${n}.wasm`)\"",
+    "predist": "node tools/wincodesign.mjs",
+    "prepack": "node tools/wincodesign.mjs"
   },
   "devDependencies": {
     "electron": "^33.2.0",
