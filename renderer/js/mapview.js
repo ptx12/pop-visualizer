@@ -20,7 +20,9 @@ const mapDlActive = new Set();
 const WORLD_MAX = 4096;
 const KILL_RADIUS = 200;
 const GIANT_BG = '#c01c00';
-const CRIT_RING = '#0099c5';
+const NORMAL_BG = '#ebe2ca';
+const CRIT_BG = ['#0099c5', '#00ceeb'];
+const CRIT_FPS = 5;
 const TANK_PATH = '#cfa35a';
 
 onChange(what => { if (what === 'icons') imgCache.clear(); });
@@ -1189,22 +1191,23 @@ export function renderMapView(container, file, waveIndex) {
       return;
     }
     const bot = a.bot;
-    const s = bot.isBoss ? 38 : bot.isGiant ? 32 : 21;
-    const rad = s / 2 + 2;
-    ctx.beginPath();
-    ctx.arc(sx, sy, rad, 0, Math.PI * 2);
-    ctx.fillStyle = bot.isGiant || bot.isBoss ? GIANT_BG : 'rgba(10,12,16,.55)';
-    ctx.fill();
-    ctx.lineWidth = 1.4;
-    ctx.strokeStyle = bot.isGiant || bot.isBoss ? 'rgba(0,0,0,.55)' : 'rgba(255,255,255,.22)';
-    ctx.stroke();
+    const plate = bot.isBoss ? 34 : bot.isGiant ? 28 : 20;
+    const r = plate * 0.25;
     if (bot.alwaysCrit) {
+      const halo = plate * 1.125;
+      ctx.fillStyle = CRIT_BG[Math.floor(performance.now() / 1000 * CRIT_FPS) % CRIT_BG.length];
       ctx.beginPath();
-      ctx.arc(sx, sy, rad + 2.5, 0, Math.PI * 2);
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = CRIT_RING;
-      ctx.stroke();
+      ctx.roundRect(sx - halo / 2, sy - halo / 2, halo, halo, r * 1.125);
+      ctx.fill();
     }
+    ctx.fillStyle = bot.isGiant || bot.isBoss ? GIANT_BG : NORMAL_BG;
+    ctx.beginPath();
+    ctx.roundRect(sx - plate / 2, sy - plate / 2, plate, plate, r);
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(0,0,0,.45)';
+    ctx.stroke();
+    const s = plate * 0.875;
     const img = iconImage(iconNameFor(bot), scheduleDraw) || iconImage(classIconName(bot.cls), scheduleDraw);
     if (img && img.complete && img.naturalWidth) {
       ctx.drawImage(img, sx - s / 2, sy - s / 2, s, s);

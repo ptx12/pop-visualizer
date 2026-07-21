@@ -237,6 +237,87 @@ impl Nav {
         self.nearest(x, y, z)
     }
 
+    fn area_containing(&self, x: f64, y: f64, z: f64, hint: i32) -> i32 {
+        if let Some(hi) = self.index(hint) {
+            if self.areas[hi].contains(x, y) {
+                return self.areas[hi].id;
+            }
+            for &n in self.neighbors(hi) {
+                if let Some(ni) = self.index(n as i32) {
+                    if self.areas[ni].contains(x, y) {
+                        return self.areas[ni].id;
+                    }
+                }
+            }
+        }
+        let flat = !(z == z);
+        let mut best = -1;
+        let mut best_dz = f64::INFINITY;
+        if let Some(cell) = self.grid.cell_of(x, y) {
+            for &ai in &self.grid.cells[cell] {
+                let ai = ai as usize;
+                if !self.areas[ai].contains(x, y) {
+                    continue;
+                }
+                if flat {
+                    return self.areas[ai].id;
+                }
+                let az = (self.areas[ai].nw[2] + self.areas[ai].se[2]) * 0.5;
+                let dz = if az > z { az - z } else { z - az };
+                if dz < best_dz {
+                    best_dz = dz;
+                    best = self.areas[ai].id;
+                }
+            }
+        }
+        best
+    }
+
+    fn clamp_into(&self, area: i32, x: f64, y: f64) -> [f64; 2] {
+        match self.index(area) {
+            Some(ai) => {
+                let a = &self.areas[ai];
+                let cx = if x < a.nw[0] { a.nw[0] } else if x > a.se[0] { a.se[0] } else { x };
+                let cy = if y < a.nw[1] { a.nw[1] } else if y > a.se[1] { a.se[1] } else { y };
+                [cx, cy]
+            }
+            None => [x, y],
+        }
+    }
+
+    fn settle(
+        &self,
+        px: f64,
+        py: f64,
+        pz: f64,
+        nx: f64,
+        ny: f64,
+        cur_area: i32,
+        crossing: i32,
+    ) -> ([f64; 2], i32) {
+        let hit = self.area_containing(nx, ny, pz, cur_area);
+        if hit >= 0 {
+            return ([nx, ny], hit);
+        }
+        if crossing >= 0 {
+            if let (Some(ci), Some(ai)) = (self.index(crossing), self.index(cur_area)) {
+                let c = &self.areas[ci];
+                let a = &self.areas[ai];
+                let minx = if a.nw[0] < c.nw[0] { a.nw[0] } else { c.nw[0] };
+                let maxx = if a.se[0] > c.se[0] { a.se[0] } else { c.se[0] };
+                let miny = if a.nw[1] < c.nw[1] { a.nw[1] } else { c.nw[1] };
+                let maxy = if a.se[1] > c.se[1] { a.se[1] } else { c.se[1] };
+                if nx >= minx && nx <= maxx && ny >= miny && ny <= maxy {
+                    return ([nx, ny], cur_area);
+                }
+            }
+        }
+        let here = self.area_containing(px, py, pz, cur_area);
+        let keep = if here >= 0 { here } else { cur_area };
+        let p = self.clamp_into(keep, nx, ny);
+        (p, keep)
+    }
+
     fn field_pos(&self, target: i32) -> Option<usize> {
         self.field_index.get(&target).copied()
     }
@@ -573,11 +654,13 @@ pub extern "C" fn move_along(
     let straight = (dx0 * dx0 + dy0 * dy0).sqrt();
     let mut wx = tx;
     let mut wy = ty;
+    let mut crossing = -1;
     if straight > STRAIGHT_MIN && area >= 0 {
         let t_area = n.area_at(tx, ty, tz, -1);
         if t_area >= 0 && t_area != area {
             let next = n.next_toward(t_area, area);
             if next >= 0 {
+                crossing = next;
                 if let Some(p) = n.portal(area, next) {
                     wx = p[0];
                     wy = p[1];
@@ -592,16 +675,12 @@ pub extern "C" fn move_along(
         d = 1.0;
     }
     let step_len = d.min(speed * dt);
-    let nx = px + dx / d * step_len;
-    let ny = py + dy / d * step_len;
-    let na = n.area_at(nx, ny, f64::NAN, area);
-    let (fa, fz) = if na >= 0 {
-        let ai = n.index(na).unwrap();
-        (na, (n.areas[ai].nw[2] + n.areas[ai].se[2]) * 0.5)
-    } else {
-        (area, pz)
+    let (p, fa) = n.settle(px, py, pz, px + dx / d * step_len, py + dy / d * step_len, area, crossing);
+    let fz = match n.index(fa) {
+        Some(ai) => (n.areas[ai].nw[2] + n.areas[ai].se[2]) * 0.5,
+        None => pz,
     };
-    write_actor(nx, ny, fz, fa, straight);
+    write_actor(p[0], p[1], fz, fa, straight);
     straight
 }
 
@@ -663,14 +742,19 @@ pub extern "C" fn move_field(
     }
     let dd = if d == 0.0 { 1.0 } else { d };
     let step_len = speed * dt;
-    let nx = px + dx / dd * step_len.min(d);
-    let ny = py + dy / dd * step_len.min(d);
-    let na = n.area_at(nx, ny, f64::NAN, cur_area);
-    let (fa, fz) = if na >= 0 {
-        let ai = n.index(na).unwrap();
-        (na, (n.areas[ai].nw[2] + n.areas[ai].se[2]) * 0.5)
-    } else {
-        (cur_area, pz)
+    let (p, fa) = n.settle(
+        px,
+        py,
+        pz,
+        px + dx / dd * step_len.min(d),
+        py + dy / dd * step_len.min(d),
+        cur_area,
+        next,
+    );
+    let (nx, ny) = (p[0], p[1]);
+    let fz = match n.index(fa) {
+        Some(ai) => (n.areas[ai].nw[2] + n.areas[ai].se[2]) * 0.5,
+        None => pz,
     };
     let rdx = tx - nx;
     let rdy = ty - ny;

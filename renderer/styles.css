@@ -1071,9 +1071,18 @@ body.zen .act-holder svg { height: 30px; }
   display: block;
   filter: drop-shadow(0 1px 2px #0009);
 }
-.bi-giant, .bi-boss { background: #c01c00; border-radius: 50%; }
+.boticon {
+  background: #ebe2ca;
+  border-radius: 22%;
+}
+.bi-giant, .bi-boss { background: #c01c00; }
 .bi-boss { background: #8f1500; }
-.bi-crit { box-shadow: 0 0 0 2px #0099c5; border-radius: 50%; }
+.bi-crit { box-shadow: 0 0 0 2px #0099c5; animation: critflash .4s steps(1) infinite; }
+@keyframes critflash {
+  0%, 49% { box-shadow: 0 0 0 2px #0099c5; }
+  50%, 100% { box-shadow: 0 0 0 2px #00ceeb; }
+}
+.bi-tankicon { background: none; }
 .bi-sm img { width: 20px; height: 20px; }
 .bi-lg img { width: 40px; height: 40px; }
 .bi-giant img { width: 32px; height: 32px; }

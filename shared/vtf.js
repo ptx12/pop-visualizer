@@ -218,5 +218,17 @@ export function decodeVTF(buf) {
   }
 
   const rgba = decodeImage(buf, offset, width, height, highFmt);
-  return { width, height, rgba };
+  return { width, height, rgba, frames: Math.max(1, frames), frameOffset: offset, format: highFmt };
+}
+
+export function decodeVTFFrames(buf) {
+  const first = decodeVTF(buf);
+  const n = Math.max(1, first.frames);
+  if (n === 1) return { width: first.width, height: first.height, images: [first.rgba] };
+  const stride = mipSize(first.width, first.height, first.format);
+  const images = [first.rgba];
+  for (let f = 1; f < n; f++) {
+    images.push(decodeImage(buf, first.frameOffset + f * stride, first.width, first.height, first.format));
+  }
+  return { width: first.width, height: first.height, images };
 }

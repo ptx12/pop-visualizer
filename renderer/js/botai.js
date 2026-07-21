@@ -277,7 +277,39 @@ export function buildNavGraph(mapData, volumes, allowWasm = true) {
     return [(x1 + x2) / 2, (y1 + y2) / 2];
   }
 
-  return { byId, centers, nearestArea, areaAt, flowField, nextToward, portal, center };
+  const holds = (a, x, y) => a && x >= a.nw[0] && x <= a.se[0] && y >= a.nw[1] && y <= a.se[1];
+
+  function areaContaining(x, y, hintId) {
+    const h = byId.get(hintId);
+    if (holds(h, x, y)) return h;
+    if (h) for (const n of h.connect) {
+      const a = byId.get(n);
+      if (holds(a, x, y)) return a;
+    }
+    for (const a of byId.values()) if (holds(a, x, y)) return a;
+    return null;
+  }
+
+  function settle(px, py, nx, ny, curId, crossing) {
+    const hit = areaContaining(nx, ny, curId);
+    if (hit) return { pos: [nx, ny], area: hit };
+    if (crossing != null) {
+      const c = byId.get(crossing);
+      const a = byId.get(curId);
+      if (c && a) {
+        const inSpan = nx >= Math.min(a.nw[0], c.nw[0]) && nx <= Math.max(a.se[0], c.se[0]) &&
+          ny >= Math.min(a.nw[1], c.nw[1]) && ny <= Math.max(a.se[1], c.se[1]);
+        if (inSpan) return { pos: [nx, ny], area: a };
+      }
+    }
+    const here = areaContaining(px, py, curId) || byId.get(curId);
+    if (!here) return { pos: [nx, ny], area: null };
+    const cx = Math.min(Math.max(nx, here.nw[0]), here.se[0]);
+    const cy = Math.min(Math.max(ny, here.nw[1]), here.se[1]);
+    return { pos: [cx, cy], area: here };
+  }
+
+  return { byId, centers, nearestArea, areaAt, flowField, nextToward, portal, center, settle };
 }
 
 export function buildTrackChains(mapData) {
@@ -517,7 +549,12 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     a.z = a.spawnPos ? a.spawnPos[2] : 0;
     if (a.kind === 'bot' && hasNav) a.nav = graphFor(profileOf(a.bot, false));
     if (a.kind === 'bot') a.shield = hasDemoShield(a.bot);
-    a.areaId = hasNav ? (navOf(a).nearestArea(a.spawnPos || objective) || {}).id ?? null : null;
+    const home = hasNav ? navOf(a).nearestArea(a.spawnPos || objective) : null;
+    if (home && a.kind !== 'tank') {
+      a.pos[0] = Math.min(Math.max(a.pos[0], home.nw[0]), home.se[0]);
+      a.pos[1] = Math.min(Math.max(a.pos[1], home.nw[1]), home.se[1]);
+    }
+    a.areaId = home ? home.id : null;
     a.homeArea = a.areaId;
     a.jx = (rng() * 2 - 1) * 26;
     a.jy = (rng() * 2 - 1) * 26;
@@ -561,12 +598,14 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     const dx0 = targetPt[0] - a.pos[0], dy0 = targetPt[1] - a.pos[1];
     const straight = Math.hypot(dx0, dy0);
     let wp = targetPt;
+    let crossing = null;
     if (hasNav && a.areaId != null) {
       const tArea = g.areaAt(targetPt, null);
       if (tArea && tArea.id !== a.areaId) {
         const field = g.flowField(tArea.id);
         const next = g.nextToward(field, a.areaId);
         if (next != null) {
+          crossing = next;
           const p = g.portal(a.areaId, next);
           if (p) wp = p;
         }
@@ -575,11 +614,16 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     let dx = wp[0] - a.pos[0], dy = wp[1] - a.pos[1];
     const d = Math.hypot(dx, dy) || 1;
     const stepLen = Math.min(d, speed * dt);
-    a.pos[0] += dx / d * stepLen;
-    a.pos[1] += dy / d * stepLen;
-    if (hasNav) {
-      const na = g.areaAt(a.pos, a.areaId);
-      if (na) { a.areaId = na.id; a.z = (na.nw[2] + na.se[2]) / 2; }
+    const nx = a.pos[0] + dx / d * stepLen;
+    const ny = a.pos[1] + dy / d * stepLen;
+    if (hasNav && g.settle) {
+      const s = g.settle(a.pos[0], a.pos[1], nx, ny, a.areaId, crossing);
+      a.pos[0] = s.pos[0];
+      a.pos[1] = s.pos[1];
+      if (s.area) { a.areaId = s.area.id; a.z = (s.area.nw[2] + s.area.se[2]) / 2; }
+    } else {
+      a.pos[0] = nx;
+      a.pos[1] = ny;
     }
     return straight;
   }
@@ -602,10 +646,12 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       d = Math.hypot(dx, dy) || 1;
     }
     const stepLen = speed * dt;
-    a.pos[0] += dx / (d || 1) * Math.min(d, stepLen);
-    a.pos[1] += dy / (d || 1) * Math.min(d, stepLen);
-    const na = g.areaAt(a.pos, a.areaId);
-    if (na) { a.areaId = na.id; a.z = (na.nw[2] + na.se[2]) / 2; }
+    const nx = a.pos[0] + dx / (d || 1) * Math.min(d, stepLen);
+    const ny = a.pos[1] + dy / (d || 1) * Math.min(d, stepLen);
+    const s = g.settle(a.pos[0], a.pos[1], nx, ny, a.areaId, next);
+    a.pos[0] = s.pos[0];
+    a.pos[1] = s.pos[1];
+    if (s.area) { a.areaId = s.area.id; a.z = (s.area.nw[2] + s.area.se[2]) / 2; }
     return Math.hypot(targetPt[0] - a.pos[0], targetPt[1] - a.pos[1]);
   }
 
@@ -932,7 +978,12 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     const field = g.flowField(objArea.id);
     if (!field) return null;
     const raw = [];
-    if (startPt) raw.push([startPt[0], startPt[1]]);
+    if (startPt) {
+      raw.push([
+        Math.min(Math.max(startPt[0], startArea.nw[0]), startArea.se[0]),
+        Math.min(Math.max(startPt[1], startArea.nw[1]), startArea.se[1])
+      ]);
+    }
     const seen = new Set();
     let cur = startArea.id, guard = 0;
     while (cur !== objArea.id && guard++ < 4000 && !seen.has(cur)) {

@@ -17,7 +17,7 @@ function corridor(n) {
     areas.push({
       id: i,
       nw: [i * 200, 0, i * 8],
-      se: [i * 200 + 190, 300, i * 8],
+      se: (i + 1) * 200 === 0 ? [200, 300, i * 8] : [(i + 1) * 200, 300, i * 8],
       neZ: i * 8, swZ: i * 8,
       connect, tfAttributes: 0
     });
@@ -113,15 +113,47 @@ function buildNavGraphManually(md) {
     const y1 = Math.max(a.nw[1], b.nw[1]), y2 = Math.min(a.se[1], b.se[1]);
     return [(x1 + x2) / 2, (y1 + y2) / 2];
   }
+  const holds = (ar, x, y) => ar && x >= ar.nw[0] && x <= ar.se[0] && y >= ar.nw[1] && y <= ar.se[1];
+  function areaContaining(x, y, hintId) {
+    const h = byId.get(hintId);
+    if (holds(h, x, y)) return h;
+    if (h) for (const n of h.connect) {
+      const ar = byId.get(n);
+      if (holds(ar, x, y)) return ar;
+    }
+    for (const ar of byId.values()) if (holds(ar, x, y)) return ar;
+    return null;
+  }
+  function settle(px, py, nx, ny, curId, crossing) {
+    const hit = areaContaining(nx, ny, curId);
+    if (hit) return { pos: [nx, ny], area: hit };
+    if (crossing != null) {
+      const c = byId.get(crossing);
+      const a = byId.get(curId);
+      if (c && a) {
+        const inSpan = nx >= Math.min(a.nw[0], c.nw[0]) && nx <= Math.max(a.se[0], c.se[0]) &&
+          ny >= Math.min(a.nw[1], c.nw[1]) && ny <= Math.max(a.se[1], c.se[1]);
+        if (inSpan) return { pos: [nx, ny], area: a };
+      }
+    }
+    const here = areaContaining(px, py, curId) || byId.get(curId);
+    if (!here) return { pos: [nx, ny], area: null };
+    return {
+      pos: [Math.min(Math.max(nx, here.nw[0]), here.se[0]), Math.min(Math.max(ny, here.nw[1]), here.se[1])],
+      area: here
+    };
+  }
   function moveAlong(a, targetPt, dt, speed) {
     const dx0 = targetPt[0] - a.pos[0], dy0 = targetPt[1] - a.pos[1];
     const straight = Math.hypot(dx0, dy0);
     let wp = targetPt;
+    let crossing = null;
     if (a.areaId != null) {
       const tArea = areaAt(targetPt, null);
       if (tArea && tArea.id !== a.areaId) {
         const next = nextToward(flowField(tArea.id), a.areaId);
         if (next != null) {
+          crossing = next;
           const p = portal(a.areaId, next);
           if (p) wp = p;
         }
@@ -130,13 +162,13 @@ function buildNavGraphManually(md) {
     let dx = wp[0] - a.pos[0], dy = wp[1] - a.pos[1];
     const d = Math.hypot(dx, dy) || 1;
     const stepLen = Math.min(d, speed * dt);
-    a.pos[0] += dx / d * stepLen;
-    a.pos[1] += dy / d * stepLen;
-    const na = areaAt(a.pos, a.areaId);
-    if (na) { a.areaId = na.id; a.z = (na.nw[2] + na.se[2]) / 2; }
+    const s = settle(a.pos[0], a.pos[1], a.pos[0] + dx / d * stepLen, a.pos[1] + dy / d * stepLen, a.areaId, crossing);
+    a.pos[0] = s.pos[0];
+    a.pos[1] = s.pos[1];
+    if (s.area) { a.areaId = s.area.id; a.z = (s.area.nw[2] + s.area.se[2]) / 2; }
     return straight;
   }
-  return { byId, centers, nearestArea, areaAt, flowField, nextToward, portal, center, moveAlong };
+  return { byId, centers, nearestArea, areaAt, flowField, nextToward, portal, center, moveAlong, areaContaining };
 }
 
 const pts = [];
@@ -204,6 +236,21 @@ for (const start of [0, 5, 23, 41]) {
 }
 check('moveAlong matches JS step for step', walkDelta < 1e-9, 'max delta ' + walkDelta);
 check('moveAlong never leaves the mesh', cutThrough === 0, cutThrough + ' off-mesh steps');
+
+let escaped = 0;
+let escapedJs = 0;
+for (const off of [[0, -9000], [40000, 150], [3000, 8000], [-6000, -6000]]) {
+  const aWa = { pos: [mapData.nav.areas[10].nw[0] + 95, 150], areaId: 10, z: 0 };
+  const aJs = { pos: aWa.pos.slice(), areaId: 10, z: 0 };
+  for (let i = 0; i < 80; i++) {
+    wasmG.moveAlong(aWa, off, 0.25, 400);
+    jsG.moveAlong(aJs, off, 0.25, 400);
+    if (!jsG.areaContaining(aWa.pos[0], aWa.pos[1], aWa.areaId)) escaped++;
+    if (!jsG.areaContaining(aJs.pos[0], aJs.pos[1], aJs.areaId)) escapedJs++;
+  }
+}
+check('wasm bots never step off the mesh chasing an unreachable point', escaped === 0, escaped + ' off-mesh steps');
+check('JS bots never step off the mesh chasing an unreachable point', escapedJs === 0, escapedJs + ' off-mesh steps');
 
 const far = { pos: [mapData.nav.areas[0].nw[0] + 95, 150], areaId: 0, z: 0 };
 const nearTarget = [mapData.nav.areas[1].nw[0] + 95, 150];
