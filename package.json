@@ -25,11 +25,11 @@
   "type": "module",
   "scripts": {
     "start": "electron .",
-    "test": "node test/roundtrip.mjs && node test/model.mjs && node test/hardening.mjs && node test/navkernel.mjs",
+    "test": "node test/roundtrip.mjs && node test/model.mjs && node test/hardening.mjs && node test/navkernel.mjs && node test/vtfkernel.mjs",
     "dev": "node test/devserver.mjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
-    "build:wasm": "cargo build --release --manifest-path rust/navkernel/Cargo.toml --target wasm32-unknown-unknown && node -e \"require('fs').copyFileSync('rust/navkernel/target/wasm32-unknown-unknown/release/navkernel.wasm','shared/navkernel.wasm')\""
+    "build:wasm": "cargo build --release --manifest-path rust/Cargo.toml --target wasm32-unknown-unknown && node -e \"for (const n of ['navkernel','vtfkernel']) require('fs').copyFileSync(`rust/target/wasm32-unknown-unknown/release/${n}.wasm`,`shared/${n}.wasm`)\""
   },
   "devDependencies": {
     "electron": "^33.2.0",

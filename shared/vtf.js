@@ -1,4 +1,26 @@
 import { LIMITS, cap } from './limits.js';
+import { readFileSync } from 'node:fs';
+
+let wasm = null;
+let wasmTried = false;
+
+function vtfWasm() {
+  if (wasmTried) return wasm;
+  wasmTried = true;
+  try {
+    const url = new URL('./vtfkernel.wasm', import.meta.url);
+    const bytes = readFileSync(url);
+    const inst = new WebAssembly.Instance(new WebAssembly.Module(bytes), {});
+    wasm = inst.exports;
+  } catch {
+    wasm = null;
+  }
+  return wasm;
+}
+
+export function vtfWasmReady() {
+  return !!vtfWasm();
+}
 
 const FMT = {
   RGBA8888: 0, ABGR8888: 1, RGB888: 2, BGR888: 3, I8: 5, IA88: 6, A8: 8,
@@ -89,6 +111,27 @@ function decodeDXT3Alpha(buf, off, out, w, h, bx, by) {
 }
 
 function decodeImage(buf, off, w, h, fmt) {
+  const m = vtfWasm();
+  if (m) {
+    const out = decodeImageWasm(m, buf, off, w, h, fmt);
+    if (out) return out;
+  }
+  return decodeImageJs(buf, off, w, h, fmt);
+}
+
+function decodeImageWasm(m, buf, off, w, h, fmt) {
+  const outLen = w * h * 4;
+  const need = mipSize(w, h, fmt);
+  const src = buf.subarray(off, Math.min(buf.length, off + need));
+  if (!src.length) return null;
+  const srcPtr = m.reserve(src.length, outLen);
+  if (!srcPtr) return null;
+  new Uint8Array(m.memory.buffer, srcPtr, src.length).set(src);
+  if (!m.decode_image(src.length, 0, w, h, fmt)) return null;
+  return new Uint8Array(new Uint8Array(m.memory.buffer, m.out_addr(), outLen));
+}
+
+export function decodeImageJs(buf, off, w, h, fmt) {
   const out = new Uint8Array(w * h * 4);
   out.fill(255);
   if (fmt === FMT.DXT1 || fmt === FMT.DXT1A || fmt === FMT.DXT3 || fmt === FMT.DXT5) {

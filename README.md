@@ -20,7 +20,7 @@ Team Fortress 2 does not need to be running or installed to open and edit popfil
 - Multi-file tabs, undo and redo, crash recovery, and external-change detection
 - Bundled Valve missions and stock bot templates
 - Dock mode for external editors on Windows
-- Rust and WebAssembly navigation kernel for the map simulation
+- Rust and WebAssembly kernels for the map simulation and texture decoding
 
 ![Map simulation](docs/map.png)
 
@@ -118,18 +118,23 @@ npm run dist
 
 Builds are written to `dist/`. Building on the target operating system is recommended.
 
-### Navigation kernel (Rust)
+### Rust kernels
 
-The bot movement hot path — nav mesh lookups, Dijkstra flow fields, and per-step movement — is implemented in Rust under `rust/navkernel` and compiled to WebAssembly at `shared/navkernel.wasm`. On a 91-bot wave this takes the map simulation from about 1000 ms to about 220 ms.
+Two hot paths are implemented in Rust under `rust/` and compiled to WebAssembly:
 
-The compiled `.wasm` is committed, so running or packaging the application needs no Rust toolchain. Only rebuilding it does:
+| crate | what it does | effect |
+|---|---|---|
+| `navkernel` | nav mesh lookups, Dijkstra flow fields, per-step bot movement | 91-bot wave simulation, ~1000 ms to ~220 ms |
+| `vtfkernel` | VTF texture decoding (DXT1/3/5 and uncompressed) | map texture bake, ~1385 ms to ~950 ms; also speeds up robot icons and model materials |
+
+The compiled `.wasm` files are committed, so running or packaging the application needs no Rust toolchain. Only rebuilding them does:
 
 ```bash
 rustup target add wasm32-unknown-unknown
 npm run build:wasm
 ```
 
-The JavaScript implementation is retained and used automatically if the module fails to load, so the application still runs without it. `npm test` checks the two against each other — area lookups, flow field distances, routing decisions and portal midpoints must match exactly.
+The JavaScript implementations are retained and used automatically if a module fails to load, so the application still runs without them. `npm test` holds each against its JavaScript counterpart: area lookups, flow field distances, routing decisions and portal midpoints must match exactly, and every supported texture format must decode to identical pixels.
 
 ## License
 
