@@ -103,8 +103,15 @@ body.tf-font .nav-wave-cash { font-weight: 400; }
 .brand {
   font-weight: 600; font-size: var(--fs-body);
   color: var(--fg-dim); margin-right: 2px; white-space: nowrap;
-  display: inline-flex; align-items: baseline; gap: 6px;
+  display: inline-flex; align-items: center; gap: 6px;
 }
+.brand-mark {
+  width: 22px; height: 22px; flex: none;
+  align-self: center; cursor: pointer;
+  filter: drop-shadow(0 1px 2px #0008);
+  transition: transform 120ms ease, filter 120ms ease;
+}
+.brand-mark:hover { transform: scale(1.08); filter: drop-shadow(0 1px 4px #000a); }
 .brand-by {
   font-family: 'Segoe UI', system-ui, sans-serif;
   font-size: var(--fs-micro); font-weight: 500; letter-spacing: 0;
@@ -427,6 +434,7 @@ textarea.inp { height: auto; padding: 6px 8px; }
 .nav-gate-status { color: var(--fg-dim); font-size: var(--fs-meta); min-height: 16px; }
 .nav-gate-list { display: flex; flex-direction: column; gap: var(--sp-1); align-items: flex-start; }
 .nav-cand { font-family: var(--mono); }
+.opt-note { font-size: var(--fs-micro); color: var(--warn); padding: 2px 0; }
 .nav-gate-msg.warn { color: var(--warn); }
 
 .nav-approx {
@@ -742,6 +750,13 @@ body.tf-font .map-next { font-family: 'TF2Build', 'Segoe UI', system-ui, sans-se
   pointer-events: none;
 }
 .act-legend .lg-item { display: inline-flex; align-items: center; gap: 5px; }
+.act-legend .lg-cash i {
+  width: 14px; height: 10px; border: 0; border-radius: 2px;
+  background-size: cover; background-position: center;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .35);
+}
+.cash-area { opacity: .3; }
+.act-svg.has-cashart + .act-legend .lg-cash i { border-top: 0; }
 .act-legend i { width: 15px; height: 0; border-top-width: 2px; border-top-style: solid; }
 .act-legend .lg-bots i { border-top-color: var(--accent); }
 .act-legend .lg-cash i { border-top-style: dashed; border-top-color: var(--ok); }

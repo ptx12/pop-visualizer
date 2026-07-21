@@ -191,16 +191,24 @@ export function analyzeWave(wave, tg) {
   return result;
 }
 
+const NAV_TOGGLE_MAX_DELAY = 1;
+
 export function navToggles(wave, tg) {
   const enabled = [];
   const disabled = [];
-  if (!tg) return { enabled, disabled };
+  const deferred = [];
+  if (!tg) return { enabled, disabled, deferred };
   resolve([...tg.boot, ...seedsForWave(wave)], tg.graph, e => {
     if (!e.target) return;
-    if (/^enable$/i.test(e.input)) enabled.push(e.target);
-    else if (/^disable$/i.test(e.input)) disabled.push(e.target);
+    const on = /^enable$/i.test(e.input);
+    if (!on && !/^disable$/i.test(e.input)) return;
+    if (e.delay > NAV_TOGGLE_MAX_DELAY) {
+      deferred.push({ target: e.target, input: on ? 'enable' : 'disable', delay: e.delay });
+      return;
+    }
+    (on ? enabled : disabled).push(e.target);
   });
-  return { enabled, disabled };
+  return { enabled, disabled, deferred };
 }
 
 export function isGated(g) {

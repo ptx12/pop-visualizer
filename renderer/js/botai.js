@@ -16,7 +16,8 @@ const MAX_STEPS = 6000;
 const BOMB_UPGRADE_1 = 5;
 const BOMB_UPGRADE_2 = 15;
 const BOMB_UPGRADE_3 = 15;
-const BOMB_TAUNT_TIME = 4;
+const BOMB_TAUNT_MIN = 3;
+const BOMB_TAUNT_MAX = 5;
 const CHARGE_SPEED = 750;
 const CHARGE_TIME = 1.5;
 const CHARGE_REGEN = 8.3;
@@ -692,9 +693,10 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     }
     if (t < a.bombUpgradeAt) return;
     a.bombLevel++;
-    a.tauntUntil = t + BOMB_TAUNT_TIME;
-    a.bombUpgradeAt = a.bombLevel === 1 ? t + BOMB_UPGRADE_2 + BOMB_TAUNT_TIME
-      : a.bombLevel === 2 ? t + BOMB_UPGRADE_3 + BOMB_TAUNT_TIME : Infinity;
+    const taunt = BOMB_TAUNT_MIN + rng() * (BOMB_TAUNT_MAX - BOMB_TAUNT_MIN);
+    a.tauntUntil = t + taunt;
+    a.bombUpgradeAt = a.bombLevel === 1 ? t + BOMB_UPGRADE_2 + taunt
+      : a.bombLevel === 2 ? t + BOMB_UPGRADE_3 + taunt : Infinity;
   }
 
   function chargeStep(a, t, dt, speed) {

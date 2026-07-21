@@ -845,6 +845,7 @@ export function renderMapView(container, file, waveIndex) {
   const run = aiRunFor(file, wave, sim, mapData, aiKey, aiOpts);
 
   if (ps.raf) { cancelAnimationFrame(ps.raf); ps.raf = 0; }
+  if (ps.pulse) { clearTimeout(ps.pulse); ps.pulse = 0; }
 
   if (!run.ai && !run.staleAi) {
     const prog = loader('Simulating');
@@ -984,6 +985,13 @@ export function renderMapView(container, file, waveIndex) {
       panel.append(el('div', { class: 'opt-row' }, el('span', { class: 'opt-label', text: 'Nav path' }), pathSel, routeBtn));
     } else {
       panel.append(el('div', { class: 'opt-row' }, el('span', { class: 'opt-label', text: 'Route' }), routeBtn));
+    }
+    if (toggles.deferred && toggles.deferred.length) {
+      panel.append(el('div', {
+        class: 'opt-note',
+        title: toggles.deferred.map(d => d.input + ' ' + d.target + ' at +' + d.delay + 's').join('\n'),
+        text: toggles.deferred.length + ' nav change' + (toggles.deferred.length > 1 ? 's fire' : ' fires') + ' later — not simulated'
+      }));
     }
 
     panel.append(el('div', { class: 'tool-sep' }));
@@ -1418,13 +1426,34 @@ export function renderMapView(container, file, waveIndex) {
 
   function loop(prev) {
     ps.raf = 0;
-    if (!canvas.isConnected || !ps.playing) return;
+    if (!canvas.isConnected || !ps.playing) { schedulePulse(); return; }
     const now = performance.now();
     const dt = prev ? (now - prev) / 1000 : 0;
     ps.t += dt * ps.speed;
     if (ps.t >= waveEnd) { ps.t = waveEnd; ps.playing = false; playBtn.textContent = 'Play'; }
     drawFrame();
     if (ps.playing) ps.raf = requestAnimationFrame(() => loop(now));
+    else schedulePulse();
+  }
+
+  function critOnScreen() {
+    const t = ps.t;
+    for (const a of ai.actors) {
+      if (a.kind !== 'bot' || !a.bot.alwaysCrit) continue;
+      if (t >= a.spawnT && t <= a.dieT) return true;
+    }
+    return false;
+  }
+
+  function schedulePulse() {
+    clearTimeout(ps.pulse);
+    ps.pulse = 0;
+    if (ps.playing || !canvas.isConnected || !critOnScreen()) return;
+    ps.pulse = setTimeout(() => {
+      if (!canvas.isConnected || ps.playing) return;
+      drawFrame();
+      schedulePulse();
+    }, 1000 / CRIT_FPS);
   }
 
   playBtn.addEventListener('click', () => {
@@ -1546,4 +1575,5 @@ export function renderMapView(container, file, waveIndex) {
   mapRedraw = drawFrame;
   drawFrame();
   if (ps.playing) ps.raf = requestAnimationFrame(() => loop(0));
+  else schedulePulse();
 }
