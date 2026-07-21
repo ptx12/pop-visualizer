@@ -629,11 +629,18 @@ export async function saveFile(file, as = false) {
   return { ok: true };
 }
 
+let profileWritesBlocked = false;
+
+export function blockProfileWrites() {
+  profileWritesBlocked = true;
+}
+
 export function getRecent() {
   try { return JSON.parse(localStorage.getItem('popvis.recent') || '[]'); } catch { return []; }
 }
 
 export function addRecent(path) {
+  if (profileWritesBlocked) return;
   let list = getRecent().filter(p => p !== path);
   list.unshift(path);
   list = list.slice(0, 12);

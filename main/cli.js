@@ -11,6 +11,7 @@ export function argValue(flag) {
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
 async function runDock(win, dockHandle) {
+  sendCmd({ type: 'nosession' });
   await wait(900);
   console.log('[dock] bounds before:', JSON.stringify(win.getBounds()), 'visible:', win.isVisible());
   const ok = startDock({ handle: Number(dockHandle), name: 'cli' }, { position: argValue('--dockpos') || 'bottom' });

@@ -1,6 +1,6 @@
 import { initNavWasm } from './navwasm.js';
 import { el, clear, toast, isModalOpen, closeMenu, modal, closeModal, closePopover } from './ui.js';
-import { state, activeFile, activateFile, onChange, emit, openFile, closeFile, undo, redo, saveFile, beginEdit, commitEdit, reloadFromDisk, refreshBases, newFile } from './state.js';
+import { state, activeFile, activateFile, onChange, emit, openFile, closeFile, undo, redo, saveFile, beginEdit, commitEdit, reloadFromDisk, refreshBases, newFile, blockProfileWrites } from './state.js';
 import { renderSidebar } from './sidebar.js';
 import { renderTimeline, applySelectionClasses, duplicateWS, deleteWS, pasteWS, zoomBy, fitWave, addWaveSpawn } from './timeline.js';
 import { renderInspector } from './inspector.js';
@@ -812,6 +812,7 @@ native.onCommand(async cmd => {
   }
   if (cmd.type === 'nosession') {
     sessionBlocked = true;
+    blockProfileWrites();
     return;
   }
   if (cmd.type === 'wantclose') {
