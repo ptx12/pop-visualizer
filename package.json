@@ -1,7 +1,7 @@
 {
   "name": "pop-visualizer",
   "productName": "pop visualizer",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Timeline visualizer, editor and wave simulator for Team Fortress 2 Mann vs. Machine popfiles",
   "keywords": [
     "tf2",
