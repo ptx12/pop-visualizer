@@ -420,6 +420,19 @@ textarea.inp { height: auto; padding: 6px 8px; }
 .wtable td { padding: 6px 10px; border-bottom: 1px solid var(--line); }
 .wtable tbody tr { cursor: pointer; }
 .wtable tbody tr:hover { background: var(--bg2); }
+.nav-gate { padding: var(--sp-4); max-width: 720px; display: flex; flex-direction: column; gap: var(--sp-2); }
+.nav-gate-msg { color: var(--fg); }
+.nav-gate-sub { color: var(--fg-faint); font-size: var(--fs-meta); }
+.nav-gate-mono { font-family: var(--mono); word-break: break-all; }
+.nav-gate-status { color: var(--fg-dim); font-size: var(--fs-meta); min-height: 16px; }
+.nav-gate-list { display: flex; flex-direction: column; gap: var(--sp-1); align-items: flex-start; }
+.nav-cand { font-family: var(--mono); }
+
+.inf-mark {
+  display: inline-block; font-size: 21px; line-height: 12px;
+  vertical-align: -3px; color: var(--fg);
+}
+.none-mark { color: var(--fg-faint); }
 
 .mgrid { border-collapse: collapse; }
 .mgrid th {
@@ -704,8 +717,19 @@ body.tf-font .map-next { font-family: 'TF2Build', 'Segoe UI', system-ui, sans-se
 }
 .act-holder { padding-top: 8px; }
 .act-area { fill: #6a97c41f; }
-.act-line { fill: none; stroke: var(--accent); stroke-width: 1.4; }
-.cash-line { fill: none; stroke: var(--fg-faint); stroke-width: 1.2; opacity: .9; }
+.act-line { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.cash-line { fill: none; stroke: var(--ok); stroke-width: 1.6; stroke-dasharray: 5 3; stroke-linecap: round; }
+
+.act-legend {
+  position: absolute; top: 3px; left: 12px; z-index: 2;
+  display: flex; gap: var(--sp-3);
+  font-size: var(--fs-micro); color: var(--fg-faint);
+  pointer-events: none;
+}
+.act-legend .lg-item { display: inline-flex; align-items: center; gap: 5px; }
+.act-legend i { width: 15px; height: 0; border-top-width: 2px; border-top-style: solid; }
+.act-legend .lg-bots i { border-top-color: var(--accent); }
+.act-legend .lg-cash i { border-top-style: dashed; border-top-color: var(--ok); }
 
 .tl-rows { position: relative; }
 
@@ -1045,8 +1069,17 @@ body.zen .act-holder svg { height: 30px; }
 .boticon img {
   width: 26px; height: 26px;
   display: block;
+  position: relative; z-index: 1;
   filter: drop-shadow(0 1px 2px #0009);
 }
+.bi-giant, .bi-boss { background: #c01c00; border-radius: 50%; }
+.bi-boss { background: #8f1500; }
+.bi-critbg {
+  position: absolute; inset: -3px; z-index: 0;
+  background-size: contain; background-repeat: no-repeat; background-position: center;
+  pointer-events: none;
+}
+.bi-crit { box-shadow: 0 0 0 1.5px #e8b33c; border-radius: 50%; }
 .bi-sm img { width: 20px; height: 20px; }
 .bi-lg img { width: 40px; height: 40px; }
 .bi-giant img { width: 32px; height: 32px; }

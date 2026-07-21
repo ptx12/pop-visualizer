@@ -71,8 +71,8 @@ export function collectTemplates(doc, baseDocs) {
 export function resolveBot(node, templates, stack = []) {
   const info = {
     cls: null, clsRaw: null, name: null, health: null, scale: null, skill: null,
-    icon: null, attrs: [], items: [], restriction: null, templateChain: [],
-    missingTemplates: [], moveSpeedMult: 1, node
+    icon: null, attrs: [], items: [], tags: [], restriction: null, templateChain: [],
+    missingTemplates: [], moveSpeedMult: 1, chargeTimeMult: 1, chargeRechargeMult: 1, node
   };
   applyBotBlock(node, info, templates, stack);
   if (!info.cls) info.cls = 'unknown';
@@ -110,6 +110,12 @@ function applyBotBlock(node, info, templates, stack) {
           if (/^(move speed bonus|move speed penalty|card: move speed bonus)$/i.test(a.key)) {
             const v = parseFloat(a.value);
             if (Number.isFinite(v) && v > 0) info.moveSpeedMult *= v;
+          } else if (/^charge time increased$/i.test(a.key)) {
+            const v = parseFloat(a.value);
+            if (Number.isFinite(v) && v > 0) info.chargeTimeMult *= v;
+          } else if (/^charge recharge rate increased$/i.test(a.key)) {
+            const v = parseFloat(a.value);
+            if (Number.isFinite(v) && v > 0) info.chargeRechargeMult *= v;
           }
         }
       }
@@ -125,6 +131,7 @@ function applyBotBlock(node, info, templates, stack) {
     else if (k === 'classicon') info.icon = c.value;
     else if (k === 'attributes') info.attrs.push(c.value);
     else if (k === 'item') info.items.push(c.value);
+    else if (k === 'tag') { if (c.value) info.tags.push(String(c.value).toLowerCase()); }
     else if (k === 'weaponrestrictions') info.restriction = c.value;
   }
 }

@@ -466,9 +466,22 @@ ipcMain.handle('icons:list', async (e, extraDirs, tfPathOverride) => {
 
 const bspTrackCache = new Map();
 
+async function mapDirs(tfPath) {
+  const dirs = [path.join(tfPath, 'maps'), path.join(tfPath, 'download', 'maps')];
+  try {
+    const customs = await fs.readdir(path.join(tfPath, 'custom'), { withFileTypes: true });
+    for (const c of customs) {
+      if (!c.isDirectory() || c.name === 'workshop') continue;
+      dirs.push(path.join(tfPath, 'custom', c.name, 'maps'));
+      dirs.push(path.join(tfPath, 'custom', c.name, 'download', 'maps'));
+    }
+  } catch {}
+  return dirs;
+}
+
 async function listBSPs(tfPath) {
   const out = [];
-  for (const d of [path.join(tfPath, 'maps'), path.join(tfPath, 'download', 'maps')]) {
+  for (const d of await mapDirs(tfPath)) {
     try {
       for (const n of await fs.readdir(d)) {
         if (n.toLowerCase().endsWith('.bsp')) out.push({ name: n.toLowerCase().replace(/\.bsp$/, ''), full: path.join(d, n) });
@@ -527,7 +540,7 @@ const mapDataCache = new Map();
 
 async function looseNavs(tfPath) {
   const out = [];
-  for (const d of [path.join(tfPath, 'maps'), path.join(tfPath, 'download', 'maps')]) {
+  for (const d of await mapDirs(tfPath)) {
     try {
       for (const n of await fs.readdir(d)) {
         if (n.toLowerCase().endsWith('.nav')) out.push({ name: n.toLowerCase().replace(/\.nav$/, ''), kind: 'file', where: path.join(d, n) });
@@ -556,12 +569,16 @@ function sharedPrefixLen(a, b) {
 }
 
 async function loadNavFor(bsp, tfPath) {
+  const searched = await mapDirs(tfPath);
   const candidates = [...await looseNavs(tfPath), ...vpkNavs(tfPath)];
   try {
     for (const p of pakEntries(bsp.full)) {
       if (p.name.endsWith('.nav')) candidates.push({ name: p.name.split('/').pop().replace(/\.nav$/, ''), kind: 'pak', where: bsp.full, entry: p });
     }
   } catch {}
+  const near = [...new Set(candidates
+    .filter(c => sharedPrefixLen(c.name, bsp.name) >= 5)
+    .map(c => c.name))].slice(0, 8);
   let pick = candidates.find(c => c.name === bsp.name);
   let approx = false;
   if (!pick) {
@@ -572,21 +589,28 @@ async function loadNavFor(bsp, tfPath) {
     }
     approx = !!pick;
   }
-  if (!pick) return null;
-  let buf = null;
+  if (!pick) return { nav: null, searched, near, reason: 'missing' };
   try {
+    let buf = null;
     if (pick.kind === 'file') buf = await fs.readFile(pick.where);
     else if (pick.kind === 'vpk') buf = readVPKEntry(pick.where, pick.entry);
     else buf = readPakEntry(pick.where, pick.entry);
-    if (!buf) return null;
+    if (!buf) return { nav: null, searched, near, reason: 'unreadable' };
     const nav = parseNav(buf);
-    return { source: pick.kind, name: pick.name, approx, areas: nav.areas.map(a => {
-      const out = { id: a.id, nw: a.nw, se: a.se, neZ: a.neZ, swZ: a.swZ, connect: a.connect };
-      if (a.hide) out.hide = a.hide;
-      return out;
-    }) };
-  } catch {
-    return null;
+    return {
+      searched, near,
+      nav: {
+        source: pick.kind, name: pick.name, approx, where: pick.kind === 'file' ? pick.where : pick.kind,
+        areas: nav.areas.map(a => {
+          const out = { id: a.id, nw: a.nw, se: a.se, neZ: a.neZ, swZ: a.swZ, connect: a.connect };
+          if (a.hide) out.hide = a.hide;
+          if (a.tfAttributes) out.tf = a.tfAttributes;
+          return out;
+        })
+      }
+    };
+  } catch (err) {
+    return { nav: null, searched, near, reason: 'error: ' + err.message };
   }
 }
 
@@ -661,6 +685,18 @@ ipcMain.handle('map:data', async (e, popName, tfPathOverride) => {
         maxs: [m.maxs[0] + m.origin[0], m.maxs[1] + m.origin[1], m.maxs[2] + m.origin[2]]
       });
     }
+    const spawnRooms = [];
+    for (const en of ents) {
+      if (en.classname !== 'func_respawnroom') continue;
+      if (String(en.teamnum ?? en.TeamNum ?? '') !== '3') continue;
+      const idx = parseInt(String(en.model || '').slice(1), 10);
+      const m = models[idx];
+      if (!m) continue;
+      spawnRooms.push({
+        mins: [m.mins[0] + m.origin[0], m.mins[1] + m.origin[1], m.mins[2] + m.origin[2]],
+        maxs: [m.maxs[0] + m.origin[0], m.maxs[1] + m.origin[1], m.maxs[2] + m.origin[2]]
+      });
+    }
     const pathProps = [];
     for (const en of ents) {
       if (en.classname !== 'prop_dynamic') continue;
@@ -675,8 +711,12 @@ ipcMain.handle('map:data', async (e, popName, tfPathOverride) => {
         startDisabled: String(en.startdisabled ?? en.start_disabled ?? '0') === '1'
       });
     }
-    const nav = await loadNavFor(best, tfPath);
-    result = { map: best.name, spawns, flags, capzones, tracks, nav, redSpawns, hints, navVolumes, pathProps };
+    const navLookup = await loadNavFor(best, tfPath);
+    result = {
+      map: best.name, spawns, flags, capzones, tracks, spawnRooms, nav: navLookup.nav,
+      navSearch: { searched: navLookup.searched, near: navLookup.near, reason: navLookup.reason || null },
+      redSpawns, hints, navVolumes, pathProps
+    };
   } catch {
     result = null;
   }
@@ -762,7 +802,7 @@ ipcMain.handle('map:texture', async (e, popName, tfPathOverride) => {
   let result = null;
   try {
     const cachedData = mapDataCache.get(best.full);
-    const nav = cachedData ? cachedData.nav : await loadNavFor(best, tfPath);
+    const nav = cachedData ? cachedData.nav : (await loadNavFor(best, tfPath)).nav;
     const baked = await bakeTopDown(best.full, makeMaterialLoader(tfPath), {
       nav,
       spawns: cachedData ? cachedData.spawns : [],
@@ -1174,9 +1214,49 @@ ipcMain.handle('potato:map', async (e, mapName, tfPathOverride) => {
   return { results };
 });
 
+ipcMain.handle('potato:navs', async (e, mapName) => {
+  const name = String(mapName).toLowerCase().replace(/\.bsp$/, '');
+  if (!/^[a-z0-9_\-.]+$/.test(name)) return { error: 'bad map name' };
+  let body;
+  try { body = await httpGet(potatoUrl('maps/'), 16 * 1024 * 1024); } catch { body = null; }
+  if (!body) return { error: 'could not reach the potato.tf index' };
+  const navs = [];
+  for (const m of body.toString('utf8').matchAll(/<a\s+href="([^"]+\.nav)"/gi)) {
+    let href = m[1];
+    try { href = decodeURIComponent(href); } catch {}
+    navs.push(href.toLowerCase().replace(/\.nav$/, ''));
+  }
+  const scored = [];
+  for (const n of [...new Set(navs)]) {
+    const l = sharedPrefixLen(n, name);
+    if (n === name) scored.push({ name: n, exact: true, score: 999 });
+    else if (l >= 6) scored.push({ name: n, exact: false, score: l });
+  }
+  scored.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  return { candidates: scored.slice(0, 12).map(({ name: n, exact }) => ({ name: n, exact })) };
+});
+
+ipcMain.handle('potato:nav', async (e, mapName, sourceName, tfPathOverride) => {
+  const tfPath = tfPathOverride || await detectTFPath();
+  if (!tfPath) return { error: 'TF folder not found' };
+  const name = String(mapName).toLowerCase().replace(/\.bsp$/, '');
+  const src = String(sourceName).toLowerCase().replace(/\.nav$/, '');
+  if (!/^[a-z0-9_\-.]+$/.test(name) || !/^[a-z0-9_\-.]+$/.test(src)) return { error: 'bad map name' };
+  dlProgress('Downloading ' + src + '.nav');
+  let buf = null;
+  try { buf = await httpGet(potatoUrl('maps/' + src + '.nav')); } catch {}
+  dlProgress('');
+  if (!buf) return { error: src + '.nav is not on the index' };
+  const dest = await saveUnder(tfPath, 'maps/' + name + '.nav', buf);
+  mapDataCache.clear();
+  mapTexCache.clear();
+  return { saved: dest, source: src, bytes: buf.length, renamed: src !== name };
+});
+
 ipcMain.handle('map:flush', () => {
   mapDataCache.clear();
   mapGeoCache.clear();
+  mapTexCache.clear();
   bspTrackCache.clear();
   tfPathCache = undefined;
 });

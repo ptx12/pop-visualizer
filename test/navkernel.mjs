@@ -113,7 +113,30 @@ function buildNavGraphManually(md) {
     const y1 = Math.max(a.nw[1], b.nw[1]), y2 = Math.min(a.se[1], b.se[1]);
     return [(x1 + x2) / 2, (y1 + y2) / 2];
   }
-  return { byId, centers, nearestArea, areaAt, flowField, nextToward, portal, center };
+  function moveAlong(a, targetPt, dt, speed) {
+    const dx0 = targetPt[0] - a.pos[0], dy0 = targetPt[1] - a.pos[1];
+    const straight = Math.hypot(dx0, dy0);
+    let wp = targetPt;
+    if (a.areaId != null) {
+      const tArea = areaAt(targetPt, null);
+      if (tArea && tArea.id !== a.areaId) {
+        const next = nextToward(flowField(tArea.id), a.areaId);
+        if (next != null) {
+          const p = portal(a.areaId, next);
+          if (p) wp = p;
+        }
+      }
+    }
+    let dx = wp[0] - a.pos[0], dy = wp[1] - a.pos[1];
+    const d = Math.hypot(dx, dy) || 1;
+    const stepLen = Math.min(d, speed * dt);
+    a.pos[0] += dx / d * stepLen;
+    a.pos[1] += dy / d * stepLen;
+    const na = areaAt(a.pos, a.areaId);
+    if (na) { a.areaId = na.id; a.z = (na.nw[2] + na.se[2]) / 2; }
+    return straight;
+  }
+  return { byId, centers, nearestArea, areaAt, flowField, nextToward, portal, center, moveAlong };
 }
 
 const pts = [];
@@ -165,6 +188,30 @@ check('portal midpoints match JS', pMismatch === 0, pMismatch + ' mismatches');
 
 const graph = buildNavGraph(mapData, []);
 check('buildNavGraph prefers wasm when loaded', graph.wasm === true);
+
+let walkDelta = 0;
+let cutThrough = 0;
+for (const start of [0, 5, 23, 41]) {
+  const target = [mapData.nav.areas[Math.min(start + 6, 59)].nw[0] + 95, 150];
+  const aJs = { pos: [mapData.nav.areas[start].nw[0] + 95, 150], areaId: start, z: 0 };
+  const aWa = { pos: aJs.pos.slice(), areaId: start, z: 0 };
+  for (let i = 0; i < 60; i++) {
+    jsG.moveAlong(aJs, target, 0.25, 300);
+    wasmG.moveAlong(aWa, target, 0.25, 300);
+    walkDelta = Math.max(walkDelta, Math.abs(aJs.pos[0] - aWa.pos[0]), Math.abs(aJs.pos[1] - aWa.pos[1]));
+    if (wasmG.areaAt(aWa.pos, aWa.areaId) === null) cutThrough++;
+  }
+}
+check('moveAlong matches JS step for step', walkDelta < 1e-9, 'max delta ' + walkDelta);
+check('moveAlong never leaves the mesh', cutThrough === 0, cutThrough + ' off-mesh steps');
+
+const far = { pos: [mapData.nav.areas[0].nw[0] + 95, 150], areaId: 0, z: 0 };
+const nearTarget = [mapData.nav.areas[1].nw[0] + 95, 150];
+wasmG.moveAlong(far, nearTarget, 0.25, 300);
+const viaPortal = wasmG.portal(0, 1);
+check('short cross-area hops route through the portal',
+  Math.abs(far.pos[1] - viaPortal[1]) < Math.abs(far.pos[1] - nearTarget[1]) + 1e-9,
+  'moved to ' + far.pos.map(v => v.toFixed(1)).join(','));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -32,22 +32,15 @@ function isCompact() {
 
 const COLLAPSED_H = 24;
 
-function groupWavespawns(wavespawns) {
-  const groups = [];
-  const byName = new Map();
-  for (const ws of wavespawns) {
-    const key = !ws.isLogic && ws.name ? ws.name.toLowerCase() : null;
-    if (key !== null && byName.has(key)) { byName.get(key).push(ws); continue; }
-    const g = [ws];
-    groups.push(g);
-    if (key !== null) byName.set(key, g);
-  }
-  return groups;
-}
-
-function rowKeyOf(members, gi) {
-  const ws = members[0];
-  return !ws.isLogic && ws.name ? 'n:' + ws.name.toLowerCase() : 'i:' + gi;
+function rowKeysFor(wavespawns) {
+  const seen = new Map();
+  return wavespawns.map((ws, gi) => {
+    if (ws.isLogic || !ws.name) return 'i:' + gi;
+    const k = ws.name.toLowerCase();
+    const n = seen.get(k) || 0;
+    seen.set(k, n + 1);
+    return n === 0 ? 'n:' + k : 'n:' + k + '#' + n;
+  });
 }
 
 function collapsedSetFor(file, waveIndex) {
@@ -187,17 +180,17 @@ export function renderTimeline(container, file, waveIndex) {
   inner.append(buildActivity(span, pps, sim, wave));
 
   const collapsedSet = collapsedSetFor(file, waveIndex);
-  const groups = groupWavespawns(wave.wavespawns);
-  const rowHeights = groups.map((members, gi) => collapsedSet.has(rowKeyOf(members, gi)) ? COLLAPSED_H : rowHeight());
+  const rowKeys = rowKeysFor(wave.wavespawns);
+  const rowHeights = wave.wavespawns.map((ws, gi) => collapsedSet.has(rowKeys[gi]) ? COLLAPSED_H : rowHeight());
   const yCenters = [];
   let rowsTotalH = 0;
   for (const h of rowHeights) { yCenters.push(rowsTotalH + h / 2); rowsTotalH += h; }
 
   const rowsWrap = el('div', { class: 'tl-rows' });
   const yOfWs = new Map();
-  groups.forEach((members, gi) => {
-    const row = buildRow(container, file, wave, waveIndex, members, sim, pps, gi, collapsedSet.has(rowKeyOf(members, gi)), rowHeights[gi]);
-    for (const ws of members) yOfWs.set(ws, yCenters[gi]);
+  wave.wavespawns.forEach((ws, gi) => {
+    const row = buildRow(container, file, wave, waveIndex, ws, sim, pps, gi, collapsedSet.has(rowKeys[gi]), rowHeights[gi], rowKeys[gi]);
+    yOfWs.set(ws, yCenters[gi]);
     rowsWrap.append(row);
   });
   inner.append(rowsWrap);
@@ -267,16 +260,16 @@ export function renderTimeline(container, file, waveIndex) {
 
 function buildHeader(container, file, wave, sim, waveIndex, refit) {
   const collapsedSet = collapsedSetFor(file, waveIndex);
-  const headerGroups = groupWavespawns(wave.wavespawns);
-  const anyExpanded = headerGroups.some((members, gi) => !collapsedSet.has(rowKeyOf(members, gi)));
+  const headerKeys = rowKeysFor(wave.wavespawns);
+  const anyExpanded = headerKeys.some(k => !collapsedSet.has(k));
   const viewGroup = el('div', { class: 'tb-group' });
-  if (headerGroups.length > 1) {
+  if (headerKeys.length > 1) {
     viewGroup.append(el('button', {
       class: 'btn', text: anyExpanded ? 'Collapse all' : 'Expand all',
       title: 'Collapse rows to thin strips (each row also has its own - / + button)',
       onclick: () => {
         const set = new Set();
-        if (anyExpanded) headerGroups.forEach((members, gi) => set.add(rowKeyOf(members, gi)));
+        if (anyExpanded) headerKeys.forEach(k => set.add(k));
         saveCollapsedSet(file, waveIndex, set);
         emit('timeline');
       }
@@ -400,6 +393,9 @@ function buildActivity(span, pps, sim, wave) {
     svgEl('polyline', { points: line, class: 'act-line' }),
     cashPts ? svgEl('polyline', { points: cashPts, class: 'cash-line' }) : null);
   wrap.append(el('div', { class: 'act-holder' }, svg));
+  wrap.append(el('div', { class: 'act-legend' },
+    el('span', { class: 'lg-item lg-bots' }, el('i'), el('span', { text: 'robots' })),
+    cashPts ? el('span', { class: 'lg-item lg-cash' }, el('i'), el('span', { text: 'money' })) : null));
   return wrap;
 }
 
@@ -468,18 +464,14 @@ function logicTooltip(ws, r) {
   return wrap;
 }
 
-function buildRow(container, file, wave, waveIndex, members, sim, pps, index, isCollapsed = false, rowH = null) {
-  const ws = members[0];
-  const merged = members.length > 1;
-  const combinedBots = merged ? members.flatMap(m => m.bots) : ws.bots;
-  const mergedSupport = members.find(m => m.support)?.support || null;
+function buildRow(container, file, wave, waveIndex, ws, sim, pps, index, isCollapsed = false, rowH = null, rowKey = '') {
   const r = sim.results.get(ws);
   const color = ws.isLogic ? '#e0b45f' : primaryColor(ws);
   const selId = file.selection && file.selection.type === 'wavespawn' ? file.selection.nodeId : null;
-  const selected = selId !== null && members.some(m => m.node.id === selId);
-  const dimmed = state.search && !members.some(m => matchesSearch(m, state.search));
+  const selected = selId !== null && ws.node.id === selId;
+  const dimmed = state.search && !matchesSearch(ws, state.search);
 
-  const inMulti = file.multi && members.some(m => file.multi.has(m.node.id));
+  const inMulti = file.multi && file.multi.has(ws.node.id);
   const gateInfo = gatingFor(file, wave).get(ws);
   const gatedOff = isGated(gateInfo) && wsTriggerTime(file, wave, ws) === null;
   const row = el('div', { class: 'tl-row' + (selected ? ' selected' : '') + (dimmed ? ' dimmed' : '') + (ws.isLogic ? ' row-logic' : '') + (inMulti ? ' multisel' : '') + (isCollapsed ? ' collapsed' : '') + (gatedOff ? ' gated-off' : ''), style: `--rowcolor:${color}` });
@@ -489,7 +481,7 @@ function buildRow(container, file, wave, waveIndex, members, sim, pps, index, is
   }
   row.dataset.wsIndex = index;
   row.dataset.wsId = ws.node.id;
-  row.dataset.wsIds = members.map(m => m.node.id).join(',');
+  row.dataset.wsIds = String(ws.node.id);
 
   const metaBits = [];
   if (ws.isLogic) {
@@ -498,13 +490,12 @@ function buildRow(container, file, wave, waveIndex, members, sim, pps, index, is
     if (ws.sounds.length) metaBits.push(ws.sounds.length + ' sound' + (ws.sounds.length > 1 ? 's' : ''));
     if (!ws.outputs.length && !ws.sounds.length) metaBits.push('timer / chain anchor');
   } else {
-    if (mergedSupport) metaBits.push(mergedSupport === 'unlimited' ? 'support ∞' : 'support (limited)');
-    metaBits.push(`${members.reduce((s, m) => s + (m.totalCount || 0), 0)}×`);
-    if (merged) metaBits.push(members.length + ' wavespawns');
+    if (ws.support) metaBits.push(ws.support === 'unlimited' ? 'support ∞' : 'support (limited)');
+    metaBits.push(`${ws.totalCount || 0}×`);
   }
 
-  const nameSpan = el('span', { class: 'ws-name', text: ws.name || '(unnamed)', title: merged ? members.length + ' wavespawns share this name (right-click to edit one)' : 'Double-click to rename' });
-  if (!merged) nameSpan.addEventListener('dblclick', e => {
+  const nameSpan = el('span', { class: 'ws-name', text: ws.name || '(unnamed)', title: 'Double-click to rename' });
+  nameSpan.addEventListener('dblclick', e => {
     e.stopPropagation();
     startRename(file, ws, nameSpan);
   });
@@ -512,7 +503,7 @@ function buildRow(container, file, wave, waveIndex, members, sim, pps, index, is
   const collapseBtn = el('button', {
     class: 'row-collapse', text: isCollapsed ? '+' : '-',
     title: isCollapsed ? 'Expand row' : 'Collapse row',
-    onclick: e => { e.stopPropagation(); toggleCollapse(file, waveIndex, rowKeyOf(members, index)); }
+    onclick: e => { e.stopPropagation(); toggleCollapse(file, waveIndex, rowKey); }
   });
   collapseBtn.addEventListener('mousedown', e => e.stopPropagation());
 
@@ -522,10 +513,10 @@ function buildRow(container, file, wave, waveIndex, members, sim, pps, index, is
       el('div', { class: 'ws-line1' }, nameSpan,
         isCollapsed && ws.isLogic ? el('span', { class: 'badge logic', text: 'LOGIC' }) : null,
         !isCollapsed && ws.isLogic ? el('span', { class: 'badge logic', title: 'No robots — fires outputs / plays sounds / anchors WaitForAll chains', text: 'LOGIC' }) : null,
-        !isCollapsed && members.some(m => m.hasBoss) ? el('span', { class: 'badge boss', text: 'BOSS' }) : null,
-        !isCollapsed && members.some(m => m.isTank) ? el('span', { class: 'badge tank', text: 'TANK' }) : null,
+        !isCollapsed && ws.hasBoss ? el('span', { class: 'badge boss', text: 'BOSS' }) : null,
+        !isCollapsed && ws.isTank ? el('span', { class: 'badge tank', text: 'TANK' }) : null,
         gateBadge(file, wave, ws)),
-      isCollapsed ? null : el('div', { class: 'ws-line2' }, ws.isLogic ? el('span', { class: 'logic-glyph', text: logicGlyph(ws) }) : compositionChips({ bots: combinedBots }, 6, { size: isCompact() ? 'sm' : undefined })),
+      isCollapsed ? null : el('div', { class: 'ws-line2' }, ws.isLogic ? el('span', { class: 'logic-glyph', text: logicGlyph(ws) }) : compositionChips(ws, 6, { size: isCompact() ? 'sm' : undefined })),
       isCollapsed || isCompact() ? null : el('div', { class: 'ws-line3', text: metaBits.join(' · ') })
     ),
     collapseBtn
@@ -556,21 +547,15 @@ function buildRow(container, file, wave, waveIndex, members, sim, pps, index, is
     const gw = gateWait();
     if (gw) track.append(gw);
 
-    const rs = members.map(m => sim.results.get(m)).filter(Boolean);
-    const barStart = Math.min(...rs.map(x => x.firstSpawn));
-    const isInf = members.some(m => m.support === 'unlimited');
-    const anchorEnd = Math.max(...rs.map(x => x.barEnd != null ? x.barEnd : x.lastSpawn));
+    const barStart = r.firstSpawn;
+    const isInf = ws.support === 'unlimited';
+    const anchorEnd = r.barEnd != null ? r.barEnd : r.lastSpawn;
     const cad = ws.waitBetweenSpawnsAfterDeath > 0 ? Math.max(0.05, ws.waitBetweenSpawnsAfterDeath) : Math.max(0.05, ws.waitBetweenSpawns);
     let ticks, visualEnd;
     if (isInf) {
       visualEnd = spanOf(sim);
       ticks = [];
       for (let t = barStart; t <= visualEnd + 0.01 && ticks.length < 4000; t += cad) ticks.push(t);
-    } else if (merged) {
-      visualEnd = anchorEnd;
-      ticks = [];
-      for (const x of rs) for (const t of (x.tickTimes || [])) ticks.push(t);
-      ticks.sort((a, b) => a - b);
     } else {
       visualEnd = anchorEnd;
       ticks = r.tickTimes || r.events.map(e => e.t);
@@ -578,12 +563,12 @@ function buildRow(container, file, wave, waveIndex, members, sim, pps, index, is
     const spawnW = Math.max(4, (visualEnd - barStart) * pps);
     const groups = ticks.length;
     const bar = el('div', {
-      class: 'bar' + (isInf ? ' bar-support' : '') + (mergedSupport === 'limited' ? ' bar-limited' : '')
-        + (!merged && ws.spawner && ws.spawner.kind === 'random' ? ' bar-random' : '')
-        + (!merged && ws.waitBetweenSpawnsAfterDeath > 0 ? ' bar-ad' : ''),
+      class: 'bar' + (isInf ? ' bar-support' : '') + (ws.support === 'limited' ? ' bar-limited' : '')
+        + (ws.spawner && ws.spawner.kind === 'random' ? ' bar-random' : '')
+        + (ws.waitBetweenSpawnsAfterDeath > 0 ? ' bar-ad' : ''),
       style: `left:${GUTTER + barStart * pps}px;width:${spawnW}px`
     });
-    const colors = memberColors({ bots: combinedBots });
+    const colors = memberColors(ws);
     if (colors.length > 1) {
       const stops = colors.map((c, i) => `color-mix(in srgb, ${c} 72%, #1c1c28) ${(i / colors.length * 100).toFixed(1)}% ${((i + 1) / colors.length * 100).toFixed(1)}%`);
       bar.style.background = `linear-gradient(180deg, ${stops.join(', ')})`;
@@ -595,17 +580,17 @@ function buildRow(container, file, wave, waveIndex, members, sim, pps, index, is
         bar.append(el('div', { class: 'bar-tick', style: `left:${(t - barStart) * pps}px` }));
       });
     }
-    if (groups > 1 && !isInf && !merged && ws.waitBetweenSpawnsAfterDeath <= 0) {
+    if (groups > 1 && !isInf && ws.waitBetweenSpawnsAfterDeath <= 0) {
       bar.append(el('div', { class: 'bar-resize', title: 'Drag to change WaitBetweenSpawns' }));
     }
-    const tipFor = () => merged ? mergedTooltip(members, sim) : barTooltip(file, ws, r, sim);
+    const tipFor = () => barTooltip(file, ws, r, sim);
     bar.addEventListener('mouseenter', e => { if (!suppressTips) showTip(tipFor(), e.clientX, e.clientY); });
     bar.addEventListener('mousemove', e => { if (!suppressTips) showTip(tipFor(), e.clientX, e.clientY); });
     bar.addEventListener('mouseleave', hideTip);
     track.append(bar);
 
     const labelAt = isInf ? barStart : Math.max(anchorEnd, barStart);
-    const totalCurrency = members.reduce((s, m) => s + (m.totalCurrency > 0 ? m.totalCurrency : 0), 0);
+    const totalCurrency = ws.totalCurrency > 0 ? ws.totalCurrency : 0;
     if (totalCurrency > 0) {
       track.append(el('div', { class: 'bar-cash', style: `left:${GUTTER + labelAt * pps + 8}px`, text: '$' + totalCurrency }));
     }
@@ -614,7 +599,7 @@ function buildRow(container, file, wave, waveIndex, members, sim, pps, index, is
     attachLinkDrag(container, linkDot, file, wave, waveIndex, ws, sim, pps);
     track.append(linkDot);
 
-    if (!merged) attachBarDrag(container, bar, file, wave, waveIndex, ws, sim, pps);
+    attachBarDrag(container, bar, file, wave, waveIndex, ws, sim, pps);
   }
 
   row.append(gutter, track);
@@ -645,36 +630,11 @@ function buildRow(container, file, wave, waveIndex, members, sim, pps, index, is
   });
   row.addEventListener('contextmenu', e => {
     e.preventDefault();
-    if (merged) { mergedRowMenu(e.clientX, e.clientY, file, members); return; }
     selectWS(file, ws);
     wsContextMenu(e.clientX, e.clientY, file, wave, waveIndex, ws);
   });
-  if (!merged) attachReorderDrag(gutter.querySelector('.ws-drag'), row, file, wave, ws);
+  attachReorderDrag(gutter.querySelector('.ws-drag'), row, file, wave, ws);
   return row;
-}
-
-function mergedTooltip(members, sim) {
-  const wrap = el('div');
-  wrap.append(el('div', { class: 'tip-head' }, el('span', { class: 'tip-title', text: members[0].name || '(unnamed)' })));
-  const total = members.reduce((s, m) => s + (m.totalCount || 0), 0);
-  wrap.append(el('div', { class: 'tip-sub', text: `${members.length} wavespawns share this name · ${total} bots` }));
-  const grid = el('div', { class: 'tip-grid' });
-  members.forEach((m, i) => {
-    const rr = sim.results.get(m);
-    const b = m.bots.find(x => x.bot);
-    const label = b ? (b.bot.isGiant ? 'Giant ' : '') + b.bot.cls : (m.isTank ? 'Tank' : '?');
-    grid.append(el('span', { class: 'tip-k', text: '#' + (i + 1) }), el('span', { class: 'tip-v', text: `${m.totalCount}× ${label}` + (rr ? ` @ ${fmtTime(rr.firstSpawn)}` : '') }));
-  });
-  wrap.append(grid);
-  return wrap;
-}
-
-function mergedRowMenu(x, y, file, members) {
-  contextMenu(x, y, members.map((m, i) => {
-    const b = m.bots.find(x => x.bot);
-    const label = b ? (b.bot.isGiant ? 'Giant ' : '') + b.bot.cls : (m.isTank ? 'Tank' : '?');
-    return { label: `Edit #${i + 1}: ${m.totalCount}× ${label}`, action: () => selectWS(file, m) };
-  }));
 }
 
 let dimTimer = null;

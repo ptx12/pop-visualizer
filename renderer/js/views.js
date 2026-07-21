@@ -75,7 +75,11 @@ function waveTable(file) {
     const row = el('tr', { onclick: () => { state.view = { mode: 'wave', wave: w.index }; emit(); } },
       el('td', { text: 'Wave ' + (w.index + 1) }),
       el('td', { text: w.totalBots }),
-      el('td', { text: w.supportBots ? w.supportBots + ' limited' : (w.wavespawns.some(x => x.support === 'unlimited') ? '∞' : '—') }),
+      el('td', {}, w.supportBots
+        ? el('span', { text: w.supportBots + ' limited' })
+        : (w.wavespawns.some(x => x.support === 'unlimited')
+          ? el('span', { class: 'inf-mark', title: 'Endless support — spawns until the wave ends', text: '∞' })
+          : el('span', { class: 'none-mark', text: 'none' }))),
       el('td', { text: w.tankCount || '—' }),
       el('td', { class: 'cash', text: '$' + w.totalCurrency }),
       el('td', { text: w.totalHP ? '≈' + fmtCompact(w.totalHP) : '—' }),

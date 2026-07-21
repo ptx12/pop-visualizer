@@ -69,6 +69,10 @@ export function botVisual(bot, opts = {}) {
   if (opts.size) cls.push('bi-' + opts.size);
   const wrap = el('span', { class: cls.join(' '), title: opts.title || chipTitle(bot) },
     el('img', { src: url, draggable: 'false' }));
+  if (bot.alwaysCrit) {
+    const critUrl = iconURL('leaderboard_class_critical');
+    if (critUrl) wrap.append(el('span', { class: 'bi-critbg', style: `background-image:url("${critUrl}")` }));
+  }
   const skill = bot.skill ? SKILL_COLORS[bot.skill.toLowerCase()] : null;
   if (skill) wrap.append(el('span', { class: 'bi-skill', style: `background:${skill}` }));
   if (bot.isBoss) wrap.append(el('span', { class: 'bi-bossdot', title: 'Boss health bar' }));

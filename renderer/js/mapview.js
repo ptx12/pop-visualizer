@@ -1,5 +1,5 @@
 import { el, clear, showTip, hideTip, fmtTime, loader } from './ui.js';
-import { simFor, emit, onChange, deathModel } from './state.js';
+import { simFor, emit, onChange, deathModel, navTogglesFor } from './state.js';
 import { CLASS_INFO, botDisplayName } from './popmodel.js';
 import { getTFPath, iconURL, iconNameFor, classIconName } from './icons.js';
 import { native } from './native.js';
@@ -19,6 +19,9 @@ const paintVersions = new Map();
 const mapDlActive = new Set();
 const WORLD_MAX = 4096;
 const KILL_RADIUS = 200;
+const GIANT_BG = '#c01c00';
+const CRIT_RING = '#e8b33c';
+const TANK_PATH = '#cfa35a';
 
 onChange(what => { if (what === 'icons') imgCache.clear(); });
 
@@ -85,36 +88,57 @@ function wsSpan(ws, r, waveEnd) {
   return [a, Math.min(b, waveEnd)];
 }
 
+function wtGroups(wave) {
+  const groups = [];
+  const byName = new Map();
+  for (const ws of wave.wavespawns) {
+    const key = !ws.isLogic && ws.name ? ws.name.toLowerCase() : null;
+    if (key !== null && byName.has(key)) { byName.get(key).push(ws); continue; }
+    const g = [ws];
+    groups.push(g);
+    if (key !== null) byName.set(key, g);
+  }
+  return groups;
+}
+
 export function wtView(wave, sim, waveEnd, t) {
   const half = WT_WINDOW * 0.35;
   let a = Math.max(0, t - half);
   let b = a + WT_WINDOW;
   if (b > waveEnd) { b = waveEnd; a = Math.max(0, b - WT_WINDOW); }
 
+  const groups = wtGroups(wave);
   const scored = [];
-  for (const ws of wave.wavespawns) {
-    const span = wsSpan(ws, sim.results.get(ws), waveEnd);
-    if (!span) continue;
-    const [s, e] = span;
+  for (const members of groups) {
+    let s = Infinity, e = -Infinity;
+    for (const ws of members) {
+      const span = wsSpan(ws, sim.results.get(ws), waveEnd);
+      if (!span) continue;
+      s = Math.min(s, span[0]);
+      e = Math.max(e, span[1]);
+    }
+    if (!Number.isFinite(s)) continue;
     const activeNow = t >= s - 0.5 && t <= e + 0.5;
     const overlaps = e >= a && s <= b;
     if (!activeNow && !overlaps) continue;
-    scored.push({ ws, s, e, rank: activeNow ? 0 : (s >= t ? 1 : 2), dist: Math.abs(s - t) });
+    scored.push({ members, s, e, rank: activeNow ? 0 : (s >= t ? 1 : 2), dist: Math.abs(s - t) });
   }
   scored.sort((x, y) => x.rank - y.rank || x.dist - y.dist);
   const picked = scored.slice(0, WT_MAX_COLS).sort((x, y) => x.s - y.s || x.e - y.e);
-  return { cols: picked.map(p => p.ws), a, b, total: wave.wavespawns.length };
+  return { cols: picked.map(p => p.members), a, b, total: groups.length };
 }
 
-function wsIconNames(ws) {
+function wsIconNames(members) {
   const names = [];
   const push = n => { if (n && !names.includes(n)) names.push(n); };
-  for (const b of ws.bots) {
-    if (names.length >= 3) break;
-    if (b.tank) push('leaderboard_class_tank');
-    else if (b.bot) push(iconNameFor(b.bot) || classIconName(b.bot.cls));
+  for (const ws of members) {
+    for (const b of ws.bots) {
+      if (names.length >= 3) break;
+      if (b.tank) push('leaderboard_class_tank');
+      else if (b.bot) push(iconNameFor(b.bot) || classIconName(b.bot.cls));
+    }
+    if (!names.length && ws.isTank) push('leaderboard_class_tank');
   }
-  if (!names.length && ws.isTank) push('leaderboard_class_tank');
   return names;
 }
 
@@ -146,8 +170,9 @@ function drawFlippedTimeline(canvas, view, sim) {
     const redraw = () => {
       if (waPanel && waPanel.canvas.isConnected && waPanel.view) drawFlippedTimeline(waPanel.canvas, waPanel.view, waPanel.sim);
     };
-    view.cols.forEach((ws, i) => {
-      const names = wsIconNames(ws);
+    view.cols.forEach((members, i) => {
+      const ws = members[0];
+      const names = wsIconNames(members);
       const cx = i * L.colW + L.colW / 2;
       if (!names.length) return;
       const size = Math.max(10, Math.min(L.iconSize, (L.colW - 6) / names.length));
@@ -181,15 +206,18 @@ function drawFlippedTimeline(canvas, view, sim) {
     c.fillText(fmtTime(tt), 2, y - 2);
   }
 
-  view.cols.forEach((ws, i) => {
-    const r = sim.results.get(ws);
-    if (!r) return;
+  view.cols.forEach((members, i) => {
+    const ws = members[0];
+    const rs = members.map(m => sim.results.get(m)).filter(Boolean);
+    if (!rs.length) return;
+    const r = rs[0];
     const cx = i * L.colW + L.colW / 2;
     const x = cx - L.barW / 2;
     const color = ws.isLogic ? '#e0b45f' : primaryColor(ws);
 
-    if (r.gate > 0.01) {
-      const gy = yOf(r.gate), sy = yOf(Math.max(r.start, r.firstSpawn));
+    const gate = Math.min(...rs.map(v => v.gate));
+    if (gate > 0.01) {
+      const gy = yOf(gate), sy = yOf(Math.min(...rs.map(v => Math.max(v.start, v.firstSpawn))));
       if (sy - gy > 1) {
         c.strokeStyle = 'rgba(255,255,255,.18)';
         c.setLineDash([3, 3]);
@@ -207,9 +235,9 @@ function drawFlippedTimeline(canvas, view, sim) {
       return;
     }
 
-    const y1 = yOf(r.firstSpawn);
-    const y2 = yOf(r.lastSpawn);
-    const y3 = yOf(Math.max(r.deathEnd, r.supportUntil || 0));
+    const y1 = yOf(Math.min(...rs.map(v => v.firstSpawn)));
+    const y2 = yOf(Math.max(...rs.map(v => v.lastSpawn)));
+    const y3 = yOf(Math.max(...rs.map(v => Math.max(v.deathEnd, v.supportUntil || 0))));
 
     if (y3 > y2 + 1) {
       c.globalAlpha = .18;
@@ -228,8 +256,9 @@ function drawFlippedTimeline(canvas, view, sim) {
 
     if (L.barW >= 5) {
       c.fillStyle = 'rgba(0,0,0,.45)';
-      const nth = Math.ceil(r.events.length / 120);
-      r.events.forEach((ev, k) => {
+      const evs = rs.flatMap(v => v.events);
+      const nth = Math.ceil(evs.length / 120);
+      evs.forEach((ev, k) => {
         if (k % nth) return;
         c.fillRect(x + 1, Math.round(yOf(ev.t)), L.barW - 2, 1);
       });
@@ -243,8 +272,8 @@ function drawFlippedTimeline(canvas, view, sim) {
     c.clip();
     c.font = '600 10px "Segoe UI", system-ui, sans-serif';
     c.textBaseline = 'middle';
-    view.cols.forEach((ws, i) => {
-      const name = ws.name || '(unnamed)';
+    view.cols.forEach((members, i) => {
+      const name = members[0].name || '(unnamed)';
       c.save();
       c.translate(i * L.colW + L.colW / 2, WT_PAD + L.headH + 3);
       c.rotate(Math.PI / 2);
@@ -271,7 +300,7 @@ function updateWavePanel(t, alive, waveEnd) {
   const changed = !p.view
     || Math.abs(next.a - p.view.a) > 0.4
     || next.cols.length !== p.view.cols.length
-    || next.cols.some((ws, i) => ws !== p.view.cols[i])
+    || next.cols.some((m, i) => m[0] !== p.view.cols[i][0] || m.length !== p.view.cols[i].length)
     || p.canvas.clientHeight !== p.lastH
     || p.canvas.clientWidth !== p.lastW;
   if (changed) {
@@ -333,11 +362,14 @@ export function renderMapInspector(container, file, waveIndex) {
     const L = wtLayout(canvas, p.view.cols.length);
     const r = graph.getBoundingClientRect();
     const i = Math.floor((ev.clientX - r.left) / Math.max(1, L.colW));
-    const ws = p.view.cols[i];
-    if (!ws) { hideTip(); return; }
-    const res = sim.results.get(ws);
-    const bits = [ws.name || '(unnamed)'];
-    if (res) bits.push(ws.isLogic ? 'logic @ ' + fmtTime(res.start) : `${fmtTime(res.firstSpawn)} – ${fmtTime(res.lastSpawn)}`);
+    const members = p.view.cols[i];
+    if (!members) { hideTip(); return; }
+    const ws = members[0];
+    const rs = members.map(m => sim.results.get(m)).filter(Boolean);
+    const res = rs[0];
+    const bits = [(ws.name || '(unnamed)') + (members.length > 1 ? ` · ${members.length} wavespawns` : '')];
+    if (res) bits.push(ws.isLogic ? 'logic @ ' + fmtTime(res.start)
+      : `${fmtTime(Math.min(...rs.map(v => v.firstSpawn)))} – ${fmtTime(Math.max(...rs.map(v => v.lastSpawn)))}`);
     bits.push('cursor ' + fmtTime(Math.max(0, timeAt(ev))));
     showTip(bits.join('\n'), ev.clientX, ev.clientY);
   });
@@ -384,9 +416,91 @@ export function presetMapTime(file, waveIndex, t) {
   playStateFor(file, waveIndex).t = Math.max(0, t);
 }
 
+function reloadMapData(file) {
+  file.mapData = undefined;
+  file.mapGeo = undefined;
+  file.mapTexture = undefined;
+  file.mapDataReq = null;
+  file.tankPathsKey = null;
+  emit('map');
+}
+
+function renderNavGate(container, file, mapData) {
+  clear(container);
+  const search = mapData.navSearch || {};
+  const panel = el('div', { class: 'nav-gate' });
+  panel.append(el('div', { class: 'panel-title', text: 'NO NAV MESH' }));
+  panel.append(el('div', { class: 'nav-gate-msg', text: 'The simulation needs ' + mapData.map + '.nav. Without it bots have no walkable graph, so it will not run.' }));
+  if (search.near && search.near.length) {
+    panel.append(el('div', { class: 'nav-gate-sub' },
+      el('span', { text: 'Nearby nav files found: ' }),
+      el('span', { class: 'nav-gate-mono', text: search.near.join(', ') })));
+  }
+  if (search.searched && search.searched.length) {
+    panel.append(el('div', { class: 'nav-gate-sub' },
+      el('span', { text: 'Searched: ' }),
+      el('span', { class: 'nav-gate-mono', text: search.searched.join('  ') }),
+      el('span', { text: '  plus tf2_misc_dir.vpk and the map pakfile.' })));
+  }
+
+  const status = el('div', { class: 'nav-gate-status' });
+  const list = el('div', { class: 'nav-gate-list' });
+
+  const refreshBtn = el('button', {
+    class: 'btn', text: 'Check again',
+    title: 'Re-scan the map folders for a nav mesh',
+    onclick: async () => {
+      status.textContent = 'Rescanning…';
+      if (native.isElectron) await window.popnative.mapFlush();
+      reloadMapData(file);
+    }
+  });
+
+  const findBtn = el('button', {
+    class: 'btn primary', text: 'Find on potato.tf',
+    onclick: async () => {
+      if (!native.isElectron) { status.textContent = 'Desktop app only.'; return; }
+      findBtn.disabled = true;
+      status.textContent = 'Searching the index…';
+      clear(list);
+      try {
+        const res = await window.popnative.potatoNavs(mapData.map);
+        if (!res || res.error) { status.textContent = res && res.error ? res.error : 'Search failed.'; return; }
+        if (!res.candidates.length) { status.textContent = 'No nav for this map on the index.'; return; }
+        const exact = res.candidates.filter(c => c.exact);
+        status.textContent = exact.length
+          ? 'Found ' + exact[0].name + '.nav.'
+          : 'No exact match — pick the closest ' + res.candidates.length + ':';
+        for (const c of res.candidates) {
+          list.append(el('button', {
+            class: 'btn nav-cand' + (c.exact ? ' primary' : ''),
+            text: c.name + '.nav' + (c.exact ? '  (exact)' : ''),
+            onclick: async () => {
+              status.textContent = 'Downloading ' + c.name + '.nav…';
+              const tfPath = await getTFPath();
+              const dl = await window.popnative.potatoNav(mapData.map, c.name, tfPath);
+              if (!dl || dl.error) { status.textContent = dl && dl.error ? dl.error : 'Download failed.'; return; }
+              status.textContent = 'Saved as ' + mapData.map + '.nav' + (dl.renamed ? ' (from ' + dl.source + ')' : '');
+              await window.popnative.mapFlush();
+              reloadMapData(file);
+            }
+          }));
+        }
+      } catch (err) {
+        status.textContent = 'Search failed: ' + err.message;
+      } finally {
+        findBtn.disabled = false;
+      }
+    }
+  });
+
+  panel.append(el('div', { class: 'btn-row' }, refreshBtn, findBtn), status, list);
+  container.append(panel);
+}
+
 function playStateFor(file, waveIndex) {
   const key = file.id + ':' + waveIndex;
-  if (!playStates.has(key)) playStates.set(key, { t: 0, playing: false, speed: 1, raf: 0, mode: localStorage.getItem('popvis.mapmode') || 'full', tool: null, brush: 1, killRadius: KILL_RADIUS, hover: null });
+  if (!playStates.has(key)) playStates.set(key, { t: 0, playing: false, speed: 1, raf: 0, mode: localStorage.getItem('popvis.mapmode') || 'full', tool: null, brush: 1, killRadius: KILL_RADIUS, hover: null, optionsOpen: localStorage.getItem('popvis.simpanel') !== '0' });
   return playStates.get(key);
 }
 
@@ -660,6 +774,7 @@ export function renderMapView(container, file, waveIndex) {
   }
 
   const mapData = file.mapData;
+  if (!mapData.nav) { renderNavGate(container, file, mapData); return; }
   const geo = file.mapGeo;
   requestMapTexture(file);
   const tex = file.mapTexture && file.mapTexture.canvas ? file.mapTexture : null;
@@ -675,8 +790,13 @@ export function renderMapView(container, file, waveIndex) {
   const objIdx = objectiveIdxFor(mapData.map);
   const pathGroups = bombPathGroups(mapData);
   const bombPath = bombPathFor(mapData.map, pathGroups);
-  const aiKey = [waveIndex, model, dps, zMode, paintV, objIdx, bombPath, JSON.stringify(killPts)].join('|');
-  const aiOpts = { teamDPS: dps, deathModel: model, zonesMode: zMode, killPoints: killPts, objectiveIdx: objIdx, bombPath };
+  const toggles = navTogglesFor(file, wave);
+  const aiKey = [waveIndex, model, dps, zMode, paintV, objIdx, bombPath, JSON.stringify(killPts),
+    toggles.enabled.join(','), toggles.disabled.join(',')].join('|');
+  const aiOpts = {
+    teamDPS: dps, deathModel: model, zonesMode: zMode, killPoints: killPts, objectiveIdx: objIdx, bombPath,
+    enabledNames: toggles.enabled, disabledNames: toggles.disabled
+  };
   if (zMode === 'custom') aiOpts.zoneWeights = paint;
   const run = aiRunFor(file, wave, sim, mapData, aiKey, aiOpts);
 
@@ -722,7 +842,7 @@ export function renderMapView(container, file, waveIndex) {
     return null;
   };
   const modeSeg = el('span', { class: 'map-modes' },
-    ...[['full', 'Full'], ['layout', 'Layout']].map(([m, label]) => el('button', {
+    ...[['full', 'Full'], ['layout', 'Nav']].map(([m, label]) => el('button', {
       class: 'seg-btn' + (ps.mode === m ? ' on' : ''), text: label,
       onclick: () => {
         ps.mode = m;
@@ -737,7 +857,11 @@ export function renderMapView(container, file, waveIndex) {
     class: 'btn sm' + (ps.optionsOpen ? ' on' : ''),
     text: 'Simulation',
     title: 'Death model, damage zones, kill points, objective',
-    onclick: () => { ps.optionsOpen = !ps.optionsOpen; emit('map'); }
+    onclick: () => {
+      ps.optionsOpen = !ps.optionsOpen;
+      localStorage.setItem('popvis.simpanel', ps.optionsOpen ? '1' : '0');
+      emit('map');
+    }
   });
 
   const bar = el('div', { class: 'map-toolbar' },
@@ -751,7 +875,10 @@ export function renderMapView(container, file, waveIndex) {
     const panel = el('div', { class: 'map-opts map-tools' });
     panel.append(el('div', { class: 'pop-title' },
       el('span', { text: 'SIMULATION' }),
-      el('button', { class: 'icon-btn sm', text: '×', title: 'Close', onclick: () => { ps.optionsOpen = false; emit('map'); } })));
+      el('button', {
+        class: 'icon-btn sm', text: '×', title: 'Close',
+        onclick: () => { ps.optionsOpen = false; localStorage.setItem('popvis.simpanel', '0'); emit('map'); }
+      })));
 
     const tool = (id, iconName, label, hint) => {
       const b = el('button', {
@@ -910,21 +1037,48 @@ export function renderMapView(container, file, waveIndex) {
 
   function drawOverlayStatic() {
     const seen = new Set();
-    ctx.lineWidth = 1.4;
     for (const t of mapData.tracks) {
       if (mapData.tracks.some(x => x.target === t.name)) continue;
       const chain = chains.chainFor(t.name);
       if (!chain || seen.has(chain)) continue;
       seen.add(chain);
-      ctx.strokeStyle = 'rgba(180,190,205,0.5)';
-      ctx.setLineDash([6, 5]);
-      ctx.beginPath();
-      chain.poly.forEach((p, i) => {
-        const [sx, sy] = toScreen(p[0], p[1]);
-        if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
-      });
+      const pts = chain.poly.map(p => toScreen(p[0], p[1]));
+      const trace = () => {
+        ctx.beginPath();
+        pts.forEach(([sx, sy], i) => { if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy); });
+      };
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      trace();
+      ctx.strokeStyle = 'rgba(0,0,0,.62)';
+      ctx.lineWidth = 6;
+      ctx.stroke();
+      trace();
+      ctx.strokeStyle = TANK_PATH;
+      ctx.lineWidth = 2.4;
+      ctx.setLineDash([9, 6]);
       ctx.stroke();
       ctx.setLineDash([]);
+      for (let i = 1; i < pts.length; i++) {
+        const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+        const dx = x1 - x0, dy = y1 - y0;
+        const len = Math.hypot(dx, dy);
+        if (len < 26) continue;
+        const ang = Math.atan2(dy, dx);
+        ctx.save();
+        ctx.translate(x0 + dx / 2, y0 + dy / 2);
+        ctx.rotate(ang);
+        ctx.fillStyle = TANK_PATH;
+        ctx.beginPath();
+        ctx.moveTo(5, 0); ctx.lineTo(-4, 3.6); ctx.lineTo(-4, -3.6);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+      const [ex, ey] = pts[0];
+      ctx.fillStyle = TANK_PATH;
+      ctx.font = 'bold 10px sans-serif';
+      ctx.fillText('TANK PATH', ex + 8, ey - 6);
     }
     const byName = new Map();
     for (const s of mapData.spawns) {
@@ -1001,33 +1155,52 @@ export function renderMapView(container, file, waveIndex) {
     }
   }
 
-  function drawActor(a, t) {
+  function actorHeading(a, t) {
+    const prev = actorPosAt(a, Math.max(a.spawnT, t - 0.6));
     const p = actorPosAt(a, t);
-    if (!p) return null;
-    const [sx, sy] = toScreen(p[0], p[1]);
-    if (sx < -30 || sy < -30 || sx > canvas.clientWidth + 30 || sy > canvas.clientHeight + 30) return { sx, sy, off: true };
+    if (!prev || !p) return null;
+    const dx = p[0] - prev[0], dy = p[1] - prev[1];
+    if (dx * dx + dy * dy < 4) return a.lastAngle ?? null;
+    a.lastAngle = Math.atan2(-dy, dx);
+    return a.lastAngle;
+  }
+
+  function drawActor(a, t, sx, sy) {
     if (a.kind === 'tank') {
       const img = iconImage('leaderboard_class_tank', scheduleDraw);
-      const s = 30;
-      if (img && img.complete && img.naturalWidth) {
-        ctx.drawImage(img, sx - s / 2, sy - s / 2, s, s);
-      } else {
-        ctx.fillStyle = '#8b95a0';
-        ctx.fillRect(sx - 8, sy - 8, 16, 16);
-      }
-      return { sx, sy };
+      const s = 34;
+      const ang = actorHeading(a, t);
+      ctx.save();
+      ctx.translate(sx, sy);
+      if (ang !== null) ctx.rotate(-ang);
+      ctx.fillStyle = 'rgba(10,12,16,.55)';
+      ctx.beginPath();
+      ctx.arc(0, 0, s / 2 + 2, 0, Math.PI * 2);
+      ctx.fill();
+      if (img && img.complete && img.naturalWidth) ctx.drawImage(img, -s / 2, -s / 2, s, s);
+      else { ctx.fillStyle = '#8b95a0'; ctx.fillRect(-9, -9, 18, 18); }
+      ctx.restore();
+      return;
     }
     const bot = a.bot;
-    const s = bot.isBoss ? 30 : bot.isGiant ? 25 : 16;
+    const s = bot.isBoss ? 38 : bot.isGiant ? 32 : 21;
+    const rad = s / 2 + 2;
+    ctx.beginPath();
+    ctx.arc(sx, sy, rad, 0, Math.PI * 2);
+    ctx.fillStyle = bot.isGiant || bot.isBoss ? GIANT_BG : 'rgba(10,12,16,.55)';
+    ctx.fill();
+    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = bot.isGiant || bot.isBoss ? 'rgba(0,0,0,.55)' : 'rgba(255,255,255,.22)';
+    ctx.stroke();
+    if (bot.alwaysCrit) {
+      ctx.beginPath();
+      ctx.arc(sx, sy, rad + 2.5, 0, Math.PI * 2);
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = CRIT_RING;
+      ctx.stroke();
+    }
     const img = iconImage(iconNameFor(bot), scheduleDraw) || iconImage(classIconName(bot.cls), scheduleDraw);
     if (img && img.complete && img.naturalWidth) {
-      if (bot.isGiant || bot.isBoss) {
-        ctx.strokeStyle = bot.isBoss ? '#d4504a' : 'rgba(255,255,255,0.75)';
-        ctx.lineWidth = 1.6;
-        ctx.beginPath();
-        ctx.arc(sx, sy, s / 2 + 2, 0, Math.PI * 2);
-        ctx.stroke();
-      }
       ctx.drawImage(img, sx - s / 2, sy - s / 2, s, s);
     } else {
       ctx.fillStyle = (CLASS_INFO[bot.cls] || CLASS_INFO.unknown).color;
@@ -1035,7 +1208,25 @@ export function renderMapView(container, file, waveIndex) {
       ctx.arc(sx, sy, s / 3, 0, Math.PI * 2);
       ctx.fill();
     }
-    return { sx, sy };
+  }
+
+  function drawSquadLinks(positions) {
+    const leaders = new Map();
+    for (const q of positions) if (q.a.squadRole === 'leader' && q.a.squadId) leaders.set(q.a.squadId, q);
+    ctx.save();
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = 'rgba(180,205,235,.42)';
+    ctx.setLineDash([3, 3]);
+    for (const q of positions) {
+      if (q.a.squadRole !== 'member' || !q.a.squadId) continue;
+      const lead = leaders.get(q.a.squadId);
+      if (!lead) continue;
+      ctx.beginPath();
+      ctx.moveTo(lead.sx, lead.sy);
+      ctx.lineTo(q.sx, q.sy);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   function drawBomb(t) {
@@ -1079,14 +1270,20 @@ export function renderMapView(container, file, waveIndex) {
     if (ps.showRoute !== false && ai.route) drawRoute(ctx, ai.route, toScreen, t);
     let alive = 0;
     lastPositions = [];
+    const shown = [];
+    const pad = 40;
     for (const a of ai.actors) {
       if (t < a.spawnT || t > a.dieT) continue;
-      const r = drawActor(a, t);
-      if (r) {
-        alive++;
-        if (!r.off) lastPositions.push({ a, sx: r.sx, sy: r.sy });
-      }
+      const p = actorPosAt(a, t);
+      if (!p) continue;
+      alive++;
+      const [sx, sy] = toScreen(p[0], p[1]);
+      if (sx < -pad || sy < -pad || sx > w + pad || sy > h + pad) continue;
+      shown.push({ a, sx, sy });
     }
+    lastPositions = shown;
+    drawSquadLinks(shown);
+    for (const q of shown) drawActor(q.a, t, q.sx, q.sy);
     drawBomb(t);
     timeLbl.textContent = fmtTime(t) + ' / ' + fmtTime(waveEnd) + ' — ' + alive + ' active';
     drawMini();

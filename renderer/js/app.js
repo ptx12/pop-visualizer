@@ -306,7 +306,7 @@ function helpModal() {
     ]),
     sec('Map', [
       'Timeline / Map switch sits top right of a wave view; Map is also in the sidebar.',
-      'Full: geometry rendered from the BSP. Layout: nav mesh floor plan.',
+      'Full: geometry rendered from the BSP. Nav: nav mesh floor plan.',
       'Bot movement follows the TF2 bot AI (fetch, carry, escort, squads, spy teleports, engineer nests).',
       'Zones: defender damage bands. High DPS at the front line and the hatch, lower in between.',
       'DPS: combined defender damage per second. Bots and tanks die from zone damage against their HP.',

@@ -40,5 +40,7 @@ contextBridge.exposeInMainWorld('popnative', {
   potatoList: (rel) => ipcRenderer.invoke('potato:list', rel),
   potatoModel: (rel, tfPath) => ipcRenderer.invoke('potato:model', rel, tfPath),
   potatoMap: (name, tfPath) => ipcRenderer.invoke('potato:map', name, tfPath),
+  potatoNavs: (name) => ipcRenderer.invoke('potato:navs', name),
+  potatoNav: (name, source, tfPath) => ipcRenderer.invoke('potato:nav', name, source, tfPath),
   mapFlush: () => ipcRenderer.invoke('map:flush')
 });

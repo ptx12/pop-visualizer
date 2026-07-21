@@ -13,6 +13,22 @@ const SPY_TELEPORT_RING = 1500;
 const SPY_RING_STEP = 500;
 const SPY_RING_MAX = 6000;
 const MAX_STEPS = 6000;
+const BOMB_UPGRADE_1 = 5;
+const BOMB_UPGRADE_2 = 15;
+const BOMB_UPGRADE_3 = 15;
+const BOMB_TAUNT_TIME = 4;
+const CHARGE_SPEED = 750;
+const CHARGE_TIME = 1.5;
+const CHARGE_REGEN = 8.3;
+const TF_NAV_SPAWN_ROOM_BLUE = 0x4;
+const SHIELD_RE = /targe|splendid screen|tide turner|shield/i;
+
+export function hasDemoShield(bot) {
+  if (!bot || bot.cls !== 'demoman') return false;
+  if (bot.chargeRechargeMult !== 1 || bot.chargeTimeMult !== 1) return true;
+  if ((bot.items || []).some(i => SHIELD_RE.test(i))) return true;
+  return /demoknight|samurai/i.test(bot.icon || '');
+}
 
 export function botMaxSpeed(bot, hasFlag) {
   let s = CLASS_BASE_SPEED[bot.cls] ?? 300;
@@ -36,8 +52,44 @@ export function dpsProfile(u) {
   return Math.exp(-((u / 0.16) ** 2)) + 0.85 * Math.exp(-(((u - 0.8) / 0.2) ** 2)) + 0.08;
 }
 
-const AVOID_COST = 9;
-const PREFER_COST = 0.45;
+const AVOID_COST = 25;
+const PREFER_COST = 0.04;
+const TF_TEAM_BLUE = 3;
+
+const CLASS_COST_NAME = {
+  scout: 'scout', soldier: 'soldier', pyro: 'pyro', demoman: 'demoman',
+  heavyweapons: 'heavyweapons', engineer: 'engineer', medic: 'medic',
+  sniper: 'sniper', spy: 'spy'
+};
+
+export function costApplies(vol, bot, carrying) {
+  const team = parseInt(vol.team, 10);
+  if (Number.isFinite(team) && team > 0 && team !== TF_TEAM_BLUE) return false;
+  const tags = vol.tags || [];
+  if (!tags.length) return false;
+  const botTags = (bot && bot.tags) || [];
+  if (carrying) {
+    if (tags.includes('bomb_carrier')) return true;
+    for (const t of tags) if (t.includes('bomb_carrier') && botTags.includes(t)) return true;
+    return false;
+  }
+  if (tags.includes('common')) return true;
+  const cname = bot ? CLASS_COST_NAME[bot.cls] : null;
+  if (cname && tags.includes(cname)) return true;
+  for (const t of tags) if (botTags.includes(t)) return true;
+  return false;
+}
+
+export function costProfile(volumes, bot, carrying) {
+  const picked = [];
+  let key = carrying ? 'c' : 'n';
+  for (let i = 0; i < volumes.length; i++) {
+    if (!costApplies(volumes[i], bot, carrying)) continue;
+    picked.push(volumes[i]);
+    key += ':' + i;
+  }
+  return { key, volumes: picked };
+}
 
 export function pathKeyOf(name) {
   if (!name) return null;
@@ -66,11 +118,21 @@ export function bombPathGroups(mapData) {
   return [...keys.values()].filter(g => g.volumes || g.props).sort((a, b) => a.key.localeCompare(b.key));
 }
 
+function namePatternMatch(pat, name) {
+  if (pat === name) return true;
+  return pat.endsWith('*') && name.startsWith(pat.slice(0, -1));
+}
+
+function inList(list, name) {
+  for (const p of list) if (namePatternMatch(p, name)) return true;
+  return false;
+}
+
 function volumeActive(v, activeNames, bombPath) {
   if (v.name) {
     const n = v.name.toLowerCase();
-    if (activeNames.disabled.has(n)) return false;
-    if (activeNames.enabled.has(n)) return true;
+    if (inList(activeNames.disabled, n)) return false;
+    if (inList(activeNames.enabled, n)) return true;
     if (v.startDisabled) return bombPath ? pathKeyOf(v.name) === bombPath : false;
     return true;
   }
@@ -79,8 +141,8 @@ function volumeActive(v, activeNames, bombPath) {
 
 export function activeNavVolumes(mapData, opts = {}) {
   const activeNames = {
-    enabled: new Set((opts.enabledNames || []).map(s => String(s).toLowerCase())),
-    disabled: new Set((opts.disabledNames || []).map(s => String(s).toLowerCase()))
+    enabled: (opts.enabledNames || []).map(s => String(s).toLowerCase()),
+    disabled: (opts.disabledNames || []).map(s => String(s).toLowerCase())
   };
   return (mapData.navVolumes || []).filter(v => volumeActive(v, activeNames, opts.bombPath || null));
 }
@@ -103,9 +165,9 @@ function areaWeights(mapData, volumes) {
   return w;
 }
 
-export function buildNavGraph(mapData, volumes) {
+export function buildNavGraph(mapData, volumes, allowWasm = true) {
   const weights = areaWeights(mapData, volumes || []);
-  if (navWasmReady()) {
+  if (allowWasm && navWasmReady()) {
     const accel = buildNavGraphWasm(mapData, weights);
     if (accel) return accel;
   }
@@ -281,13 +343,24 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   const killPoints = Array.isArray(opts.killPoints) ? opts.killPoints : [];
   const rng = mulberry32(0x7f4a7c15 ^ wave.index);
   const navVolumes = activeNavVolumes(mapData, opts);
-  const nav = buildNavGraph(mapData, navVolumes);
+  const commonProfile = costProfile(navVolumes, null, false);
+  const carrierProfile = costProfile(navVolumes, null, true);
+  const graphCache = new Map();
+  const nav = buildNavGraph(mapData, commonProfile.volumes);
+  graphCache.set(commonProfile.key, nav);
+  const graphFor = profile => {
+    if (!graphCache.has(profile.key)) graphCache.set(profile.key, buildNavGraph(mapData, profile.volumes, false));
+    return graphCache.get(profile.key);
+  };
+  const profileOf = (bot, carrying) => carrying && !bot ? carrierProfile : costProfile(navVolumes, bot, carrying);
+  const navOf = a => a.nav || nav;
   const chains = buildTrackChains(mapData);
   const hasNav = nav.byId.size > 0;
   const objective = findObjective(mapData, chains, opts.objectiveIdx || 0);
   const flagHome = mapData.flags[0] || null;
   const objArea = hasNav ? nav.nearestArea(objective) : null;
   const hatchField = objArea ? nav.flowField(objArea.id) : null;
+  const hatchFieldOf = a => (objArea ? navOf(a).flowField(objArea.id) : null);
   let hatchMaxDist = 1;
   if (hatchField) {
     for (const s of mapData.spawns) {
@@ -368,6 +441,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     let pending = [];
     let pendingSquadId = null;
     let pendingIdx = 0;
+    let pendingSpawn = null;
     for (const ev of r.events) {
       for (let c = 0; c < ev.count; c++) {
         if (!pending.length) {
@@ -376,9 +450,11 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
           pending = inst.entries;
           pendingSquadId = inst.squad && pending.length > 1 ? ++squadSeq : null;
           pendingIdx = 0;
+          pendingSpawn = null;
         }
         const entry = pending.shift();
-        const spawn = pickSpawn(ws.where);
+        if (!pendingSpawn || !pendingSquadId) pendingSpawn = pickSpawn(ws.where);
+        const spawn = pendingSpawn;
         actors.push({
           kind: 'bot', ws, bot: entry.bot, spawnT: ev.t, simDieT: ev.t + r.life,
           spawnPos: spawn.origin.slice(0, 3),
@@ -424,7 +500,9 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     if (a.squadRole === 'leader' && a.squadId) squadLeaders.set(a.squadId, a);
     a.pos = a.spawnPos ? a.spawnPos.slice(0, 2) : [0, 0];
     a.z = a.spawnPos ? a.spawnPos[2] : 0;
-    a.areaId = hasNav ? (nav.nearestArea(a.spawnPos || objective) || {}).id ?? null : null;
+    if (a.kind === 'bot' && hasNav) a.nav = graphFor(profileOf(a.bot, false));
+    if (a.kind === 'bot') a.shield = hasDemoShield(a.bot);
+    a.areaId = hasNav ? (navOf(a).nearestArea(a.spawnPos || objective) || {}).id ?? null : null;
     a.homeArea = a.areaId;
     a.jx = (rng() * 2 - 1) * 26;
     a.jy = (rng() * 2 - 1) * 26;
@@ -440,7 +518,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
         if (d < bestD) { bestD = d; best = n; }
       }
       a.nest = best ? best.origin : (a.spawnPos || objective);
-      a.nestField = hasNav ? nav.flowField((nav.nearestArea(a.nest) || { id: -1 }).id) : null;
+      a.nestField = hasNav ? navOf(a).flowField((navOf(a).nearestArea(a.nest) || { id: -1 }).id) : null;
     }
     else if (cls === 'medic') a.state = 'medicHeal';
     else if (a.bot.ignoreFlag) a.state = 'pushToPoint';
@@ -448,24 +526,33 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       a.state = 'fetchFlag';
       if (!bomb.carrier && bomb.deliveredAt == null && eligible(a) && bomb.home &&
           Math.abs(bomb.pos[0] - bomb.home[0]) + Math.abs(bomb.pos[1] - bomb.home[1]) < 1 && t - a.spawnT <= AUTO_FLAG_AGE) {
-        bomb.carrier = a;
-        a.state = 'deliverFlag';
+        takeBomb(a);
       }
     }
   }
 
+  function takeBomb(a) {
+    bomb.carrier = a;
+    a.state = 'deliverFlag';
+    a.bombLevel = 0;
+    a.bombUpgradeAt = null;
+    a.tauntUntil = 0;
+    if (hasNav && a.kind === 'bot') a.nav = graphFor(profileOf(a.bot, true));
+  }
+
   function moveAlong(a, targetPt, dt, speed) {
-    if (nav.moveAlong) return nav.moveAlong(a, targetPt, dt, speed);
+    const g = navOf(a);
+    if (g.moveAlong) return g.moveAlong(a, targetPt, dt, speed);
     const dx0 = targetPt[0] - a.pos[0], dy0 = targetPt[1] - a.pos[1];
     const straight = Math.hypot(dx0, dy0);
     let wp = targetPt;
-    if (hasNav && straight > 260 && a.areaId != null) {
-      const tArea = nav.areaAt(targetPt, null);
+    if (hasNav && a.areaId != null) {
+      const tArea = g.areaAt(targetPt, null);
       if (tArea && tArea.id !== a.areaId) {
-        const field = nav.flowField(tArea.id);
-        const next = nav.nextToward(field, a.areaId);
+        const field = g.flowField(tArea.id);
+        const next = g.nextToward(field, a.areaId);
         if (next != null) {
-          const p = nav.portal(a.areaId, next);
+          const p = g.portal(a.areaId, next);
           if (p) wp = p;
         }
       }
@@ -476,7 +563,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     a.pos[0] += dx / d * stepLen;
     a.pos[1] += dy / d * stepLen;
     if (hasNav) {
-      const na = nav.areaAt(a.pos, a.areaId);
+      const na = g.areaAt(a.pos, a.areaId);
       if (na) { a.areaId = na.id; a.z = (na.nw[2] + na.se[2]) / 2; }
     }
     return straight;
@@ -484,37 +571,82 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
   function moveField(a, field, targetPt, dt, speed) {
     if (!hasNav || a.areaId == null || !field) return moveAlong(a, targetPt, dt, speed);
-    if (nav.moveField) return nav.moveField(a, field, targetPt, dt, speed);
-    const tArea = nav.areaAt(targetPt, null);
+    const g = navOf(a);
+    if (g.moveField) return g.moveField(a, field, targetPt, dt, speed);
+    const tArea = g.areaAt(targetPt, null);
     if (tArea && a.areaId === tArea.id) return moveAlong(a, targetPt, dt, speed);
-    const next = nav.nextToward(field, a.areaId);
+    const next = g.nextToward(field, a.areaId);
     if (next == null) return moveAlong(a, targetPt, dt, speed);
-    const p = nav.portal(a.areaId, next) || nav.center(next);
+    const p = g.portal(a.areaId, next) || g.center(next);
     let dx = p[0] - a.pos[0], dy = p[1] - a.pos[1];
     let d = Math.hypot(dx, dy);
     if (d < 24) {
       a.areaId = next;
-      const c = nav.center(next);
+      const c = g.center(next);
       dx = c[0] - a.pos[0]; dy = c[1] - a.pos[1];
       d = Math.hypot(dx, dy) || 1;
     }
     const stepLen = speed * dt;
     a.pos[0] += dx / (d || 1) * Math.min(d, stepLen);
     a.pos[1] += dy / (d || 1) * Math.min(d, stepLen);
-    const na = nav.areaAt(a.pos, a.areaId);
+    const na = g.areaAt(a.pos, a.areaId);
     if (na) { a.areaId = na.id; a.z = (na.nw[2] + na.se[2]) / 2; }
     return Math.hypot(targetPt[0] - a.pos[0], targetPt[1] - a.pos[1]);
   }
 
   function dropBomb() {
     if (!bomb.carrier) return;
-    bomb.pos = bomb.carrier.pos.slice();
+    const prev = bomb.carrier;
+    bomb.pos = prev.pos.slice();
     bomb.carrier = null;
+    if (hasNav && prev.kind === 'bot') prev.nav = graphFor(profileOf(prev.bot, false));
     if (hasNav) {
       const a = nav.areaAt(bomb.pos, null);
       bomb.areaId = a ? a.id : null;
       bombField = bomb.areaId != null ? nav.flowField(bomb.areaId) : null;
     }
+  }
+
+  const spawnRooms = mapData.spawnRooms || [];
+
+  function inBlueSpawn(a) {
+    if (a.areaId != null) {
+      const ar = nav.byId.get(a.areaId);
+      if (ar && (ar.tf & TF_NAV_SPAWN_ROOM_BLUE)) return true;
+    }
+    if (!a.pos) return false;
+    for (const r of spawnRooms) {
+      if (a.pos[0] >= r.mins[0] && a.pos[0] <= r.maxs[0] &&
+          a.pos[1] >= r.mins[1] && a.pos[1] <= r.maxs[1] &&
+          a.z >= r.mins[2] - 96 && a.z <= r.maxs[2] + 96) return true;
+    }
+    return false;
+  }
+
+  function upgradeOverTime(a, t) {
+    if (a.bot.isGiant || a.bombLevel >= 3) return;
+    if (a.bombUpgradeAt == null || inBlueSpawn(a)) {
+      a.bombUpgradeAt = t + BOMB_UPGRADE_1;
+      return;
+    }
+    if (t < a.bombUpgradeAt) return;
+    a.bombLevel++;
+    a.tauntUntil = t + BOMB_TAUNT_TIME;
+    a.bombUpgradeAt = a.bombLevel === 1 ? t + BOMB_UPGRADE_2 + BOMB_TAUNT_TIME
+      : a.bombLevel === 2 ? t + BOMB_UPGRADE_3 + BOMB_TAUNT_TIME : Infinity;
+  }
+
+  function chargeStep(a, t, dt, speed) {
+    if (a.chargeMeter === undefined) { a.chargeMeter = 100; a.chargeUntil = 0; }
+    const mult = a.bot.chargeRechargeMult || 1;
+    if (t < a.chargeUntil) return CHARGE_SPEED;
+    if (a.chargeMeter >= 100) {
+      a.chargeUntil = t + CHARGE_TIME * (a.bot.chargeTimeMult || 1);
+      a.chargeMeter = 0;
+      return CHARGE_SPEED;
+    }
+    a.chargeMeter = Math.min(100, a.chargeMeter + dt * Math.max(1, CHARGE_REGEN * mult));
+    return speed;
   }
 
   function killActor(a, t) {
@@ -570,10 +702,17 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       }
       const cls = clsOf(a);
       const hasFlag = bomb.carrier === a;
-      const speed = botMaxSpeed(a.bot, hasFlag);
+      let speed = botMaxSpeed(a.bot, hasFlag);
+      if (a.shield) speed = chargeStep(a, t, dt, speed);
+      if (t < (a.tauntUntil || 0)) {
+        if (hasFlag) bomb.pos = a.pos.slice();
+        a.samples.push(a.pos[0], a.pos[1]);
+        continue;
+      }
 
       if (a.state === 'deliverFlag') {
-        const d = moveField(a, hatchField, objective, dt, speed);
+        upgradeOverTime(a, t);
+        const d = moveField(a, hatchFieldOf(a), objective, dt, speed);
         bomb.pos = a.pos.slice();
         if (d < 60) {
           a.state = 'deployBomb';
@@ -592,10 +731,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
         else if (bomb.carrier) a.state = 'escortFlagCarrier';
         else {
           const d = moveField(a, bombField, bomb.pos, dt, speed);
-          if (d < PICKUP_RANGE && eligible(a)) {
-            bomb.carrier = a;
-            a.state = 'deliverFlag';
-          }
+          if (d < PICKUP_RANGE && eligible(a)) takeBomb(a);
         }
       } else if (a.state === 'escortFlagCarrier') {
         if (!bomb.carrier) a.state = bomb.deliveredAt != null ? 'pushToPoint' : 'fetchFlag';
@@ -603,12 +739,12 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
           const c = bomb.carrier.pos;
           const d = Math.hypot(c[0] - a.pos[0], c[1] - a.pos[1]);
           if (d > FLAG_ESCORT_RANGE * 0.5) {
-            const carrierField = bomb.carrier.areaId != null ? nav.flowField(bomb.carrier.areaId) : null;
+            const carrierField = bomb.carrier.areaId != null ? navOf(a).flowField(bomb.carrier.areaId) : null;
             moveField(a, carrierField, [c[0] + a.jx, c[1] + a.jy], dt, speed);
           }
         }
       } else if (a.state === 'pushToPoint') {
-        const d = moveField(a, hatchField, objective, dt, speed);
+        const d = moveField(a, hatchFieldOf(a), objective, dt, speed);
         if (d < 150) { a.pos[0] += (rng() - 0.5) * 8; a.pos[1] += (rng() - 0.5) * 8; }
       } else if (a.state === 'escortSquadLeader') {
         const leader = squadLeaders.get(a.squadId);
@@ -623,7 +759,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
           const sy = leader.pos[1] - Math.sin(heading + slotAng) * 90;
           const d = Math.hypot(leader.pos[0] - a.pos[0], leader.pos[1] - a.pos[1]);
           if (d > SQUAD_ESCORT_RANGE) {
-            const lf = leader.areaId != null ? nav.flowField(leader.areaId) : null;
+            const lf = leader.areaId != null ? navOf(a).flowField(leader.areaId) : null;
             moveField(a, lf, leader.pos, dt, speed * 1.15);
           } else {
             moveAlong(a, [sx, sy], dt, speed);
@@ -640,10 +776,10 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
         if (target) {
           const d = Math.hypot(target.pos[0] - a.pos[0], target.pos[1] - a.pos[1]);
           if (d > 120) {
-            const tf = target.areaId != null ? nav.flowField(target.areaId) : null;
+            const tf = target.areaId != null ? navOf(a).flowField(target.areaId) : null;
             moveField(a, tf, target.pos, dt, speed);
           }
-        } else moveField(a, hatchField, objective, dt, speed);
+        } else moveField(a, hatchFieldOf(a), objective, dt, speed);
       } else if (a.state === 'spyLeaveSpawn') {
         if (t >= a.spyAt) {
           const victim = redSpawns[Math.floor(rng() * redSpawns.length)];
@@ -671,7 +807,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       } else if (a.state === 'spyLurk') {
         const d = Math.hypot(a.victim[0] - a.pos[0], a.victim[1] - a.pos[1]);
         if (d > 350) {
-          const vf = hasNav ? nav.flowField((nav.nearestArea(a.victim) || {}).id) : null;
+          const vf = hasNav ? navOf(a).flowField((navOf(a).nearestArea(a.victim) || {}).id) : null;
           moveField(a, vf, a.victim, dt, speed * 0.6);
         }
       } else if (a.state === 'engineerToNest') {
@@ -777,15 +913,18 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     if (!hasNav || !objArea || !hatchField) return null;
     const { startArea, startPt } = routeStart();
     if (!startArea) return null;
+    const g = graphFor(carrierProfile);
+    const field = g.flowField(objArea.id);
+    if (!field) return null;
     const raw = [];
     if (startPt) raw.push([startPt[0], startPt[1]]);
     const seen = new Set();
     let cur = startArea.id, guard = 0;
     while (cur !== objArea.id && guard++ < 4000 && !seen.has(cur)) {
       seen.add(cur);
-      const nxt = nav.nextToward(hatchField, cur);
+      const nxt = g.nextToward(field, cur);
       if (nxt == null) break;
-      const p = nav.portal(cur, nxt) || nav.center(nxt);
+      const p = g.portal(cur, nxt) || g.center(nxt);
       if (p) raw.push([p[0], p[1]]);
       cur = nxt;
     }

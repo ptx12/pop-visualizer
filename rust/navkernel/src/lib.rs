@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 const CELL: f64 = 200.0;
 const PORTAL_SNAP: f64 = 24.0;
-const STRAIGHT_MIN: f64 = 260.0;
+const STRAIGHT_MIN: f64 = 0.0;
 const Z_WEIGHT: f64 = 0.4;
 const STEP_Z_WEIGHT: f64 = 0.5;
 

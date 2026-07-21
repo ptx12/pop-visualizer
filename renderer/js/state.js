@@ -4,7 +4,7 @@ import { simulateWave, DEFAULT_SIM_OPTS } from './sim.js';
 import { lintModel } from './lint.js';
 import { native } from './native.js';
 import { collectIconNames, ensureIcons, getTFPath } from './icons.js';
-import { buildTriggerGraph, analyzeWave, isGated } from './gating.js';
+import { buildTriggerGraph, analyzeWave, isGated, navToggles } from './gating.js';
 
 let fileSeq = 1;
 
@@ -197,6 +197,7 @@ export function rebuild(file, opts = {}) {
   file.model = buildModel(file.doc, file.baseDocs);
   file.simCache = new Map();
   file.gateCache = new Map();
+  file.navToggleCache = new Map();
   file.triggerGraph = null;
   if (!file.lint) file.lint = [];
   if (opts.lazyLint) scheduleLint(file);
@@ -293,6 +294,19 @@ export function gatingFor(file, wave) {
     }
   }
   return file.gateCache.get(wave);
+}
+
+export function navTogglesFor(file, wave) {
+  if (!file.navToggleCache) file.navToggleCache = new Map();
+  if (!file.navToggleCache.has(wave)) {
+    try {
+      if (!file.triggerGraph) file.triggerGraph = buildTriggerGraph(file.doc);
+      file.navToggleCache.set(wave, navToggles(wave, file.triggerGraph));
+    } catch {
+      file.navToggleCache.set(wave, { enabled: [], disabled: [] });
+    }
+  }
+  return file.navToggleCache.get(wave);
 }
 
 function triggerKey(file, wave, ws) {

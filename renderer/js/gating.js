@@ -191,6 +191,18 @@ export function analyzeWave(wave, tg) {
   return result;
 }
 
+export function navToggles(wave, tg) {
+  const enabled = [];
+  const disabled = [];
+  if (!tg) return { enabled, disabled };
+  resolve([...tg.boot, ...seedsForWave(wave)], tg.graph, e => {
+    if (!e.target) return;
+    if (/^enable$/i.test(e.input)) enabled.push(e.target);
+    else if (/^disable$/i.test(e.input)) disabled.push(e.target);
+  });
+  return { enabled, disabled };
+}
+
 export function isGated(g) {
   return !!(g && (g.paused || g.whereDisabled));
 }
