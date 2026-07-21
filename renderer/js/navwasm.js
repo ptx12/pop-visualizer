@@ -2,6 +2,11 @@ let mod = null;
 let loading = null;
 
 async function wasmBytes() {
+  if (typeof window !== 'undefined' && window.popnative && window.popnative.navKernel) {
+    const buf = await window.popnative.navKernel();
+    if (!buf) throw new Error('navkernel.wasm not found');
+    return buf instanceof ArrayBuffer ? buf : new Uint8Array(buf).buffer;
+  }
   const url = new URL('../../shared/navkernel.wasm', import.meta.url);
   if (typeof fetch === 'function' && url.protocol !== 'file:') {
     const res = await fetch(url);

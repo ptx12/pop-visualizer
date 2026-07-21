@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('popnative', {
   exists: (p) => ipcRenderer.invoke('file:exists', p),
   listDir: (p) => ipcRenderer.invoke('dir:list', p),
   paths: () => ipcRenderer.invoke('app:paths'),
+  navKernel: () => ipcRenderer.invoke('wasm:navkernel'),
   pathForFile: (file) => webUtils.getPathForFile(file),
   onCommand: (cb) => ipcRenderer.on('cmd', (e, data) => cb(data)),
   dirDialog: (title) => ipcRenderer.invoke('dialog:dir', title),

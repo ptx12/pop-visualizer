@@ -202,6 +202,14 @@ ipcMain.handle('dir:list', async (e, p) => {
   } catch { return []; }
 });
 
+ipcMain.handle('wasm:navkernel', async () => {
+  try {
+    return await fs.readFile(path.join(__dirname, 'shared', 'navkernel.wasm'));
+  } catch {
+    return null;
+  }
+});
+
 ipcMain.handle('app:paths', () => ({
   base: path.join(__dirname, 'base'),
   vanilla: path.join(__dirname, 'vanilla'),
