@@ -1,71 +1,52 @@
-import { native } from './native.js';
-import { getTFPath } from './icons.js';
+const NS = 'http://www.w3.org/2000/svg';
 
-const CASH_VTF = 'materials/models/items/cash_bundle.vtf';
-const LOGO_VTF = 'materials/vgui/gfx/vgui/tf_logo.vtf';
+export function tfMark(size = 22, style = 'silver') {
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 100 100');
+  svg.setAttribute('width', size);
+  svg.setAttribute('height', size);
+  svg.setAttribute('class', 'tf-mark tf-mark-' + style);
 
-const cache = new Map();
-
-async function loadTexture(rel) {
-  if (cache.has(rel)) return cache.get(rel);
-  const p = (async () => {
-    if (!native.isElectron || !window.popnative.matTexture) return null;
-    try {
-      const t = await window.popnative.matTexture(rel, await getTFPath());
-      if (!t || !t.rgba || !t.width || !t.height) return null;
-      const u8 = t.rgba instanceof Uint8Array ? t.rgba : new Uint8Array(t.rgba);
-      const canvas = document.createElement('canvas');
-      canvas.width = t.width;
-      canvas.height = t.height;
-      canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(u8), t.width, t.height), 0, 0);
-      return canvas;
-    } catch {
-      return null;
-    }
-  })();
-  cache.set(rel, p);
-  return p;
-}
-
-function crop(src, sx, sy, sw, sh, scale = 1) {
-  const c = document.createElement('canvas');
-  c.width = Math.max(1, Math.round(sw * scale));
-  c.height = Math.max(1, Math.round(sh * scale));
-  const g = c.getContext('2d');
-  g.imageSmoothingQuality = 'high';
-  g.drawImage(src, sx, sy, sw, sh, 0, 0, c.width, c.height);
-  return c;
-}
-
-export async function cashSwatch(size = 48) {
-  const src = await loadTexture(CASH_VTF);
-  if (!src) return null;
-  const s = Math.min(src.width, src.height);
-  return crop(src, 0, 0, s, s, size / s).toDataURL('image/png');
-}
-
-export async function tfLogo(size = 20, style = 'silver') {
-  const src = await loadTexture(LOGO_VTF);
-  if (!src) return null;
-  const c = document.createElement('canvas');
-  c.width = size;
-  c.height = size;
-  const g = c.getContext('2d');
-  g.drawImage(src, 0, 0, size, size);
-  g.globalCompositeOperation = 'source-in';
-  if (style === 'blue') {
-    const grad = g.createLinearGradient(0, 0, 0, size);
-    grad.addColorStop(0, '#9dc6ee');
-    grad.addColorStop(1, '#4d6f93');
-    g.fillStyle = grad;
-  } else {
-    const grad = g.createLinearGradient(0, 0, 0, size);
-    grad.addColorStop(0, '#f2f5f8');
-    grad.addColorStop(0.45, '#c3cad2');
-    grad.addColorStop(0.55, '#8b939c');
-    grad.addColorStop(1, '#d8dee5');
-    g.fillStyle = grad;
+  const gid = 'tfmark-' + style;
+  const defs = document.createElementNS(NS, 'defs');
+  const grad = document.createElementNS(NS, 'linearGradient');
+  grad.setAttribute('id', gid);
+  grad.setAttribute('x1', '0');
+  grad.setAttribute('y1', '0');
+  grad.setAttribute('x2', '0');
+  grad.setAttribute('y2', '1');
+  const stops = style === 'blue'
+    ? [['0%', '#a8cff5'], ['45%', '#6a97c4'], ['55%', '#4d6f93'], ['100%', '#7ea9d2']]
+    : [['0%', '#f4f7fa'], ['45%', '#c6ced6'], ['55%', '#868e97'], ['100%', '#dfe5ec']];
+  for (const [off, col] of stops) {
+    const s = document.createElementNS(NS, 'stop');
+    s.setAttribute('offset', off);
+    s.setAttribute('stop-color', col);
+    grad.append(s);
   }
-  g.fillRect(0, 0, size, size);
-  return c.toDataURL('image/png');
+  defs.append(grad);
+  svg.append(defs);
+
+  const ring = document.createElementNS(NS, 'circle');
+  ring.setAttribute('cx', '50');
+  ring.setAttribute('cy', '50');
+  ring.setAttribute('r', '42');
+  ring.setAttribute('fill', 'none');
+  ring.setAttribute('stroke', `url(#${gid})`);
+  ring.setAttribute('stroke-width', '11');
+  svg.append(ring);
+
+  const quarter = (a0, a1) => {
+    const rad = d => (d - 90) * Math.PI / 180;
+    const r = 30;
+    const x0 = 50 + Math.cos(rad(a0)) * r, y0 = 50 + Math.sin(rad(a0)) * r;
+    const x1 = 50 + Math.cos(rad(a1)) * r, y1 = 50 + Math.sin(rad(a1)) * r;
+    const p = document.createElementNS(NS, 'path');
+    p.setAttribute('d', `M 50 50 L ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 0 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z`);
+    p.setAttribute('fill', `url(#${gid})`);
+    return p;
+  };
+  const gap = 7;
+  for (const start of [0, 90, 180, 270]) svg.append(quarter(start + gap, start + 90 - gap));
+  return svg;
 }

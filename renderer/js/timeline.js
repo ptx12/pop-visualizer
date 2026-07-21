@@ -6,7 +6,6 @@ import { CLASS_INFO, botDisplayName } from './popmodel.js';
 import { native } from './native.js';
 import { isGated } from './gating.js';
 import { exportWavePng } from './exportpng.js';
-import { cashSwatch } from './tfart.js';
 
 const zoomMap = new Map();
 const lastPps = new Map();
@@ -366,7 +365,6 @@ function buildActivity(span, pps, sim, wave) {
   const area = `0,${H} ` + line + ` ${(lastT * pps).toFixed(1)},${H}`;
 
   let cashPts = '';
-  let cashArea = '';
   const drops = [];
   let totalCash = 0;
   for (const ws of wave.wavespawns) {
@@ -389,49 +387,20 @@ function buildActivity(span, pps, sim, wave) {
     const endX = (Math.min(span, drops[drops.length - 1][0]) * pps).toFixed(1);
     cpts.push(`${endX},${(H - cum / totalCash * (H - 4)).toFixed(1)}`);
     cashPts = cpts.join(' ');
-    cashArea = cashPts + ` ${endX},${H}`;
   }
 
   const svg = svgEl('svg', { width: w, height: H, class: 'act-svg' },
-    cashPts ? svgEl('polygon', { points: cashArea, class: 'cash-area', fill: 'url(#cashfill)' }) : null,
     svgEl('polygon', { points: area, class: 'act-area' }),
     svgEl('polyline', { points: line, class: 'act-line' }),
     cashPts ? svgEl('polyline', { points: cashPts, class: 'cash-line' }) : null);
   wrap.append(el('div', { class: 'act-holder' }, svg));
-  const cashSwatchEl = el('i');
   wrap.append(el('div', { class: 'act-legend' },
     el('span', { class: 'lg-item lg-bots' }, el('i'), el('span', { text: 'robots' })),
     cashPts ? el('span', {
       class: 'lg-item lg-cash',
       title: 'Currency released, by spawn time — when it drops depends on kill speed'
-    }, cashSwatchEl, el('span', { text: 'money' })) : null));
-  if (cashPts) applyCashArt(svg, cashSwatchEl);
+    }, el('i'), el('span', { text: 'money' })) : null));
   return wrap;
-}
-
-let cashArt = null;
-
-function applyCashArt(svg, swatch) {
-  if (!cashArt) cashArt = cashSwatch(72).catch(() => null);
-  cashArt.then(url => {
-    if (!url || !svg.isConnected) return;
-    const ns = 'http://www.w3.org/2000/svg';
-    const defs = document.createElementNS(ns, 'defs');
-    const pat = document.createElementNS(ns, 'pattern');
-    pat.setAttribute('id', 'cashfill');
-    pat.setAttribute('width', '36');
-    pat.setAttribute('height', '36');
-    pat.setAttribute('patternUnits', 'userSpaceOnUse');
-    const img = document.createElementNS(ns, 'image');
-    img.setAttribute('href', url);
-    img.setAttribute('width', '36');
-    img.setAttribute('height', '36');
-    pat.append(img);
-    defs.append(pat);
-    svg.prepend(defs);
-    svg.classList.add('has-cashart');
-    if (swatch) swatch.style.backgroundImage = `url("${url}")`;
-  });
 }
 
 function svgEl(tag, attrs = {}, ...children) {

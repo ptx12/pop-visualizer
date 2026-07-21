@@ -8,7 +8,7 @@ import { renderMapView, presetMapTime, renderMapInspector } from './mapview.js';
 import { exportWavePng } from './exportpng.js';
 import { icon } from './svgicon.js';
 import { loadTFFonts } from './tffont.js';
-import { tfLogo } from './tfart.js';
+import { tfMark } from './tfart.js';
 import { renderModelBrowser } from './modelbrowser.js';
 import { renderOverview, renderMissions, renderTemplates, renderSettings, renderWelcome, renderRelays, renderDiff, openViaDialog, showVanillaBrowser } from './views.js';
 import { native } from './native.js';
@@ -179,18 +179,20 @@ async function hideDockOnUnsupported() {
 
 function initBrandMark() {
   const brand = document.querySelector('.brand');
-  if (!brand || brand.querySelector('.brand-mark')) return;
-  tfLogo(22, localStorage.getItem('popvis.brandmark') === 'blue' ? 'blue' : 'silver').then(url => {
-    if (!url || brand.querySelector('.brand-mark')) return;
-    const mark = el('img', { class: 'brand-mark', src: url, alt: '', draggable: 'false' });
-    mark.title = 'Team Fortress 2 — click to switch the mark';
-    mark.addEventListener('click', () => {
-      const next = localStorage.getItem('popvis.brandmark') === 'blue' ? 'silver' : 'blue';
-      localStorage.setItem('popvis.brandmark', next);
-      tfLogo(22, next).then(u => { if (u) mark.src = u; });
-    });
-    brand.prepend(mark);
+  if (!brand) return;
+  const style = localStorage.getItem('popvis.brandmark') === 'blue' ? 'blue' : 'silver';
+  const old = brand.querySelector('.tf-mark');
+  if (old) old.remove();
+  const mark = tfMark(22, style);
+  mark.classList.add('brand-mark');
+  const t = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+  t.textContent = 'Team Fortress 2 — click to switch the finish';
+  mark.append(t);
+  mark.addEventListener('click', () => {
+    localStorage.setItem('popvis.brandmark', style === 'blue' ? 'silver' : 'blue');
+    initBrandMark();
   });
+  brand.prepend(mark);
 }
 
 function initToolbarIcons() {
