@@ -1,3 +1,5 @@
+import { buildNavGraphWasm, navWasmReady } from './navwasm.js';
+
 export const CLASS_BASE_SPEED = { scout: 400, soldier: 240, pyro: 300, demoman: 280, heavyweapons: 230, engineer: 300, medic: 320, sniper: 300, spy: 320, unknown: 300 };
 export const TF_MAX_SPEED = 520;
 export const STEP = 0.25;
@@ -103,6 +105,10 @@ function areaWeights(mapData, volumes) {
 
 export function buildNavGraph(mapData, volumes) {
   const weights = areaWeights(mapData, volumes || []);
+  if (navWasmReady()) {
+    const accel = buildNavGraphWasm(mapData, weights);
+    if (accel) return accel;
+  }
   const byId = new Map();
   if (mapData.nav) for (const a of mapData.nav.areas) byId.set(a.id, a);
   const centers = new Map();
@@ -449,6 +455,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   }
 
   function moveAlong(a, targetPt, dt, speed) {
+    if (nav.moveAlong) return nav.moveAlong(a, targetPt, dt, speed);
     const dx0 = targetPt[0] - a.pos[0], dy0 = targetPt[1] - a.pos[1];
     const straight = Math.hypot(dx0, dy0);
     let wp = targetPt;
@@ -477,6 +484,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
   function moveField(a, field, targetPt, dt, speed) {
     if (!hasNav || a.areaId == null || !field) return moveAlong(a, targetPt, dt, speed);
+    if (nav.moveField) return nav.moveField(a, field, targetPt, dt, speed);
     const tArea = nav.areaAt(targetPt, null);
     if (tArea && a.areaId === tArea.id) return moveAlong(a, targetPt, dt, speed);
     const next = nav.nextToward(field, a.areaId);

@@ -1,0 +1,16 @@
+[package]
+name = "navkernel"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+description = "Navigation mesh and bot movement kernel for pop visualizer"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

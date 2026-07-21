@@ -4,3 +4,4 @@
 *.mdl -text
 *.vtf -text
 *.ico -text
+*.wasm -text

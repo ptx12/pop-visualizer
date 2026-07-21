@@ -1,3 +1,4 @@
+import { initNavWasm } from './navwasm.js';
 import { el, clear, toast, isModalOpen, closeMenu, modal, closeModal, closePopover } from './ui.js';
 import { state, activeFile, activateFile, onChange, emit, openFile, closeFile, undo, redo, saveFile, beginEdit, commitEdit, reloadFromDisk, refreshBases, newFile } from './state.js';
 import { renderSidebar } from './sidebar.js';
@@ -849,6 +850,7 @@ initToolbarIcons();
 render();
 loadTFFonts();
 hideDockOnUnsupported();
+initNavWasm();
 
 if (native.isElectron) {
   setTimeout(() => { restoreSession(); }, 400);

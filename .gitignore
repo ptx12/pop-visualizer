@@ -6,3 +6,4 @@ popfile-visualizer.zip
 *.log
 samples_sigdemo.pop
 NOTICE
+rust/navkernel/target/

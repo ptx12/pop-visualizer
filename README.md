@@ -20,6 +20,7 @@ Team Fortress 2 does not need to be running or installed to open and edit popfil
 - Multi-file tabs, undo and redo, crash recovery, and external-change detection
 - Bundled Valve missions and stock bot templates
 - Dock mode for external editors on Windows
+- Rust and WebAssembly navigation kernel for the map simulation
 
 ![Map simulation](docs/map.png)
 
@@ -116,6 +117,19 @@ npm run dist
 ```
 
 Builds are written to `dist/`. Building on the target operating system is recommended.
+
+### Navigation kernel (Rust)
+
+The bot movement hot path — nav mesh lookups, Dijkstra flow fields, and per-step movement — is implemented in Rust under `rust/navkernel` and compiled to WebAssembly at `shared/navkernel.wasm`. On a 91-bot wave this takes the map simulation from about 1000 ms to about 220 ms.
+
+The compiled `.wasm` is committed, so running or packaging the application needs no Rust toolchain. Only rebuilding it does:
+
+```bash
+rustup target add wasm32-unknown-unknown
+npm run build:wasm
+```
+
+The JavaScript implementation is retained and used automatically if the module fails to load, so the application still runs without it. `npm test` checks the two against each other — area lookups, flow field distances, routing decisions and portal midpoints must match exactly.
 
 ## License
 
