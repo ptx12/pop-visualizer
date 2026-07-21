@@ -34,7 +34,7 @@ contextBridge.exposeInMainWorld('popnative', {
   fsxList: (dir) => ipcRenderer.invoke('fsx:list', dir),
   matRead: (rel, tfPath) => ipcRenderer.invoke('mat:read', rel, tfPath),
   matTexture: (rel, tfPath) => ipcRenderer.invoke('mat:texture', rel, tfPath),
-  modelLoad: (src, tfPath) => ipcRenderer.invoke('model:load', src, tfPath),
+  modelLoad: (src) => ipcRenderer.invoke('model:load', src),
   hlmvFind: (tfPath, override) => ipcRenderer.invoke('hlmv:find', tfPath, override),
   hlmvOpen: (exe, tfPath, mdlPath) => ipcRenderer.invoke('hlmv:open', exe, tfPath, mdlPath),
   potatoList: (rel) => ipcRenderer.invoke('potato:list', rel),

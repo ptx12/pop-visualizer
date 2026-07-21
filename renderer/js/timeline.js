@@ -1,7 +1,6 @@
 import { el, clear, fmtNum, fmtTime, fmtCompact, compositionChips, botVisual, tankVisual, contextMenu, toast, showTip, hideTip, popover, closePopover } from './ui.js';
-import { parse } from './kv.js';
+import { parse, setValue, getValue, findAll, cloneNode, removeNode, makeBlock, makeKV } from './kv.js';
 import { state, activeFile, simFor, beginEdit, commitEdit, cancelEdit, emit, matchesSearch, gatingFor, wsTriggerTime, setWsTriggerTime } from './state.js';
-import { setValue, getValue, findAll, cloneNode, removeNode, makeBlock, makeKV } from './kv.js';
 import { CLASS_INFO, botDisplayName } from './popmodel.js';
 import { native } from './native.js';
 import { isGated } from './gating.js';

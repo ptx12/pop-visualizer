@@ -39,8 +39,7 @@ function pumpThumbs() {
   (async () => {
     try {
       if (!job.img.isConnected) return;
-      const tfPath = await getTFPath();
-      const payload = await window.popnative.modelLoad(job.src, tfPath);
+      const payload = await window.popnative.modelLoad(job.src);
       if (payload && !payload.error && payload.positions) {
         const url = await renderThumbnail(payload);
         if (url) {
@@ -100,8 +99,7 @@ export async function viewerModal(src, title) {
 
   const scene = createModelScene(canvas);
   if (!scene) { status.textContent = 'WebGL unavailable'; return; }
-  const tfPath = await getTFPath();
-  const payload = await window.popnative.modelLoad(src, tfPath);
+  const payload = await window.popnative.modelLoad(src);
   if (!canvas.isConnected) return;
   if (!payload || payload.error || !payload.positions) {
     status.textContent = 'Could not load model' + (payload && payload.error ? ': ' + payload.error : '');
@@ -198,7 +196,7 @@ async function downloadModel(rel) {
 async function defaultLocalPath() {
   const tfPath = await getTFPath();
   if (!tfPath) return null;
-  for (const cand of [tfPath + '\\download\\models', tfPath + '\\download', tfPath]) {
+  for (const cand of [native.join(tfPath, 'download', 'models'), native.join(tfPath, 'download'), tfPath]) {
     if (await native.exists(cand)) return cand;
   }
   return tfPath;

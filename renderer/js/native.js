@@ -86,7 +86,9 @@ export const native = {
   },
 
   join(...parts) {
-    const sep = hasElectron && cachedPaths ? cachedPaths.sep : '/';
+    const sep = cachedPaths ? cachedPaths.sep
+      : parts.some(p => String(p).includes('\\')) ? '\\'
+      : '/';
     return parts.join(sep).replace(/[\\/]+/g, sep === '\\' ? '\\' : '/');
   },
 
