@@ -427,6 +427,21 @@ textarea.inp { height: auto; padding: 6px 8px; }
 .nav-gate-status { color: var(--fg-dim); font-size: var(--fs-meta); min-height: 16px; }
 .nav-gate-list { display: flex; flex-direction: column; gap: var(--sp-1); align-items: flex-start; }
 .nav-cand { font-family: var(--mono); }
+.nav-gate-msg.warn { color: var(--warn); }
+
+.nav-approx {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: 6px var(--sp-3);
+  background: color-mix(in srgb, var(--warn) 14%, var(--bg1));
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  font-size: var(--fs-meta);
+}
+.nav-approx-tag {
+  font-size: var(--fs-micro); letter-spacing: .06em;
+  color: var(--warn); flex: none;
+}
+.nav-approx-msg { color: var(--fg-dim); flex: 1; min-width: 0; }
+body:not(.zen) .nav-approx { padding-right: 150px; }
 
 .inf-mark {
   display: inline-block; font-size: 21px; line-height: 12px;

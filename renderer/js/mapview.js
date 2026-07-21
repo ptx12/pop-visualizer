@@ -17,6 +17,7 @@ const imgCache = new Map();
 const paintCache = new Map();
 const paintVersions = new Map();
 const mapDlActive = new Set();
+const approxDismissed = new Set();
 const WORLD_MAX = 4096;
 const KILL_RADIUS = 200;
 const GIANT_BG = '#c01c00';
@@ -418,6 +419,10 @@ export function presetMapTime(file, waveIndex, t) {
   playStateFor(file, waveIndex).t = Math.max(0, t);
 }
 
+function popDirOf(file) {
+  return file && file.path ? native.dirname(file.path) : null;
+}
+
 function reloadMapData(file) {
   file.mapData = undefined;
   file.mapGeo = undefined;
@@ -427,23 +432,74 @@ function reloadMapData(file) {
   emit('map');
 }
 
+function navReasonText(reason) {
+  if (!reason || reason === 'missing') return null;
+  if (reason === 'unreadable') return 'A matching nav file was found but could not be read.';
+  return 'A matching nav file was found but could not be parsed — ' + String(reason).replace(/^error: /, '') + '.';
+}
+
+function navFinder(file, mapName, status, list, btn) {
+  return async () => {
+    if (!native.isElectron) { status.textContent = 'Desktop app only.'; return; }
+    btn.disabled = true;
+    status.textContent = 'Searching the index…';
+    clear(list);
+    try {
+      const res = await window.popnative.potatoNavs(mapName);
+      if (!res || res.error) { status.textContent = res && res.error ? res.error : 'Search failed.'; return; }
+      if (!res.candidates.length) { status.textContent = 'No nav for this map on the index.'; return; }
+      const exact = res.candidates.filter(c => c.exact);
+      status.textContent = exact.length
+        ? 'Found ' + exact[0].name + '.nav.'
+        : 'No exact match — pick the closest of ' + res.candidates.length + ':';
+      for (const c of res.candidates) {
+        list.append(el('button', {
+          class: 'btn nav-cand' + (c.exact ? ' primary' : ''),
+          text: c.name + '.nav' + (c.exact ? '  (exact)' : ''),
+          onclick: async () => {
+            status.textContent = 'Downloading ' + c.name + '.nav…';
+            const tfPath = await getTFPath();
+            const dl = await window.popnative.potatoNav(mapName, c.name, tfPath);
+            if (!dl || dl.error) { status.textContent = dl && dl.error ? dl.error : 'Download failed.'; return; }
+            status.textContent = 'Saved as ' + mapName + '.nav' + (dl.renamed ? ' (from ' + dl.source + ')' : '');
+            await window.popnative.mapFlush();
+            reloadMapData(file);
+          }
+        }));
+      }
+    } catch (err) {
+      status.textContent = 'Search failed: ' + err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+}
+
+function navSearchNote(search) {
+  const out = [];
+  if (search.near && search.near.length) {
+    out.push(el('div', { class: 'nav-gate-sub' },
+      el('span', { text: 'Nearby nav files found: ' }),
+      el('span', { class: 'nav-gate-mono', text: search.near.join(', ') })));
+  }
+  if (search.searched && search.searched.length) {
+    out.push(el('div', { class: 'nav-gate-sub' },
+      el('span', { text: 'Searched: ' }),
+      el('span', { class: 'nav-gate-mono', text: search.searched.join('  ') }),
+      el('span', { text: '  plus tf2_misc_dir.vpk and the map pakfile.' })));
+  }
+  return out;
+}
+
 function renderNavGate(container, file, mapData) {
   clear(container);
   const search = mapData.navSearch || {};
   const panel = el('div', { class: 'nav-gate' });
   panel.append(el('div', { class: 'panel-title', text: 'NO NAV MESH' }));
   panel.append(el('div', { class: 'nav-gate-msg', text: 'The simulation needs ' + mapData.map + '.nav. Without it bots have no walkable graph, so it will not run.' }));
-  if (search.near && search.near.length) {
-    panel.append(el('div', { class: 'nav-gate-sub' },
-      el('span', { text: 'Nearby nav files found: ' }),
-      el('span', { class: 'nav-gate-mono', text: search.near.join(', ') })));
-  }
-  if (search.searched && search.searched.length) {
-    panel.append(el('div', { class: 'nav-gate-sub' },
-      el('span', { text: 'Searched: ' }),
-      el('span', { class: 'nav-gate-mono', text: search.searched.join('  ') }),
-      el('span', { text: '  plus tf2_misc_dir.vpk and the map pakfile.' })));
-  }
+  const why = navReasonText(search.reason);
+  if (why) panel.append(el('div', { class: 'nav-gate-msg warn', text: why }));
+  for (const n of navSearchNote(search)) panel.append(n);
 
   const status = el('div', { class: 'nav-gate-status' });
   const list = el('div', { class: 'nav-gate-list' });
@@ -458,46 +514,32 @@ function renderNavGate(container, file, mapData) {
     }
   });
 
-  const findBtn = el('button', {
-    class: 'btn primary', text: 'Find on potato.tf',
-    onclick: async () => {
-      if (!native.isElectron) { status.textContent = 'Desktop app only.'; return; }
-      findBtn.disabled = true;
-      status.textContent = 'Searching the index…';
-      clear(list);
-      try {
-        const res = await window.popnative.potatoNavs(mapData.map);
-        if (!res || res.error) { status.textContent = res && res.error ? res.error : 'Search failed.'; return; }
-        if (!res.candidates.length) { status.textContent = 'No nav for this map on the index.'; return; }
-        const exact = res.candidates.filter(c => c.exact);
-        status.textContent = exact.length
-          ? 'Found ' + exact[0].name + '.nav.'
-          : 'No exact match — pick the closest ' + res.candidates.length + ':';
-        for (const c of res.candidates) {
-          list.append(el('button', {
-            class: 'btn nav-cand' + (c.exact ? ' primary' : ''),
-            text: c.name + '.nav' + (c.exact ? '  (exact)' : ''),
-            onclick: async () => {
-              status.textContent = 'Downloading ' + c.name + '.nav…';
-              const tfPath = await getTFPath();
-              const dl = await window.popnative.potatoNav(mapData.map, c.name, tfPath);
-              if (!dl || dl.error) { status.textContent = dl && dl.error ? dl.error : 'Download failed.'; return; }
-              status.textContent = 'Saved as ' + mapData.map + '.nav' + (dl.renamed ? ' (from ' + dl.source + ')' : '');
-              await window.popnative.mapFlush();
-              reloadMapData(file);
-            }
-          }));
-        }
-      } catch (err) {
-        status.textContent = 'Search failed: ' + err.message;
-      } finally {
-        findBtn.disabled = false;
-      }
-    }
-  });
+  const findBtn = el('button', { class: 'btn primary', text: 'Find on potato.tf' });
+  findBtn.addEventListener('click', navFinder(file, mapData.map, status, list, findBtn));
 
   panel.append(el('div', { class: 'btn-row' }, refreshBtn, findBtn), status, list);
   container.append(panel);
+}
+
+function buildApproxBanner(file, mapData) {
+  const nav = mapData.nav;
+  const bar = el('div', { class: 'nav-approx' });
+  const status = el('div', { class: 'nav-gate-status' });
+  const list = el('div', { class: 'nav-gate-list' });
+  const findBtn = el('button', { class: 'btn sm', text: 'Find the right one' });
+  findBtn.addEventListener('click', navFinder(file, mapData.map, status, list, findBtn));
+  bar.append(
+    el('span', { class: 'nav-approx-tag', text: 'APPROXIMATE NAV' }),
+    el('span', {
+      class: 'nav-approx-msg',
+      text: 'Using ' + nav.name + '.nav for ' + mapData.map + '. Routes and reachability are only as accurate as that mesh.'
+    }),
+    findBtn,
+    el('button', {
+      class: 'btn sm', text: 'Dismiss',
+      onclick: () => { approxDismissed.add(mapData.map); emit('map'); }
+    }));
+  return el('div', {}, bar, status, list);
 }
 
 function playStateFor(file, waveIndex) {
@@ -570,7 +612,7 @@ function requestMapTexture(file) {
   const reqName = file.name;
   file.mapTexReq = (async () => {
     try {
-      const t = await window.popnative.mapTexture(file.name, await getTFPath());
+      const t = await window.popnative.mapTexture(file.name, await getTFPath(), popDirOf(file));
       if (file.name !== reqName) return;
       if (t && t.rgba && t.width && t.height) {
         const u8 = t.rgba instanceof Uint8Array ? t.rgba : new Uint8Array(t.rgba);
@@ -713,8 +755,8 @@ export function renderMapView(container, file, waveIndex) {
         try {
           const tfPath = await getTFPath();
           const [md, mg] = await Promise.all([
-            window.popnative.mapData(file.name, tfPath),
-            window.popnative.mapGeo(file.name, tfPath)
+            window.popnative.mapData(file.name, tfPath, popDirOf(file)),
+            window.popnative.mapGeo(file.name, tfPath, popDirOf(file))
           ]);
           if (file.name !== reqName) return;
           file.mapData = md;
@@ -974,7 +1016,10 @@ export function renderMapView(container, file, waveIndex) {
   canvas.addEventListener('contextmenu', e => { if (ps.tool) e.preventDefault(); });
   const canvasWrap = el('div', { class: 'map-canvaswrap' }, canvas);
   if (resimulating) canvasWrap.append(el('div', { class: 'map-resim', text: 'Re-simulating…' }));
-  container.append(el('div', { class: 'mapview' }, bar, canvasWrap));
+  const approx = mapData.nav.approx && !approxDismissed.has(mapData.map)
+    ? buildApproxBanner(file, mapData)
+    : null;
+  container.append(el('div', { class: 'mapview' }, approx, bar, canvasWrap));
   if (ps.optionsOpen) canvasWrap.append(buildOptionsPanel());
 
   const ctx = canvas.getContext('2d');

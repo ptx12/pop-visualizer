@@ -224,7 +224,7 @@ function loadTankPathsFor(file) {
   (async () => {
     try {
       const tfPath = await getTFPath();
-      const res = await window.popnative.tankPath(file.name, tfPath, [...starts]);
+      const res = await window.popnative.tankPath(file.name, tfPath, [...starts], native.dirname(file.path));
       if (file.tankPathsKey !== key || file.name !== reqName) return;
       file.tankPaths = res;
       if (res && res.results && Object.keys(res.results).length) {

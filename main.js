@@ -466,8 +466,14 @@ ipcMain.handle('icons:list', async (e, extraDirs, tfPathOverride) => {
 
 const bspTrackCache = new Map();
 
-async function mapDirs(tfPath) {
-  const dirs = [path.join(tfPath, 'maps'), path.join(tfPath, 'download', 'maps')];
+async function mapDirs(tfPath, popDir) {
+  const dirs = [];
+  if (popDir) {
+    dirs.push(popDir);
+    dirs.push(path.join(popDir, 'maps'));
+    dirs.push(path.join(path.dirname(popDir), 'maps'));
+  }
+  dirs.push(path.join(tfPath, 'maps'), path.join(tfPath, 'download', 'maps'));
   try {
     const customs = await fs.readdir(path.join(tfPath, 'custom'), { withFileTypes: true });
     for (const c of customs) {
@@ -479,9 +485,9 @@ async function mapDirs(tfPath) {
   return dirs;
 }
 
-async function listBSPs(tfPath) {
+async function listBSPs(tfPath, popDir) {
   const out = [];
-  for (const d of await mapDirs(tfPath)) {
+  for (const d of await mapDirs(tfPath, popDir)) {
     try {
       for (const n of await fs.readdir(d)) {
         if (n.toLowerCase().endsWith('.bsp')) out.push({ name: n.toLowerCase().replace(/\.bsp$/, ''), full: path.join(d, n) });
@@ -502,9 +508,9 @@ function bspTracksFor(bspPath) {
   return tracks;
 }
 
-async function findBSPFor(popName, tfPath) {
+async function findBSPFor(popName, tfPath, popDir) {
   const base = String(popName).toLowerCase().replace(/\.pop$/, '');
-  const bsps = await listBSPs(tfPath);
+  const bsps = await listBSPs(tfPath, popDir);
   let best = null;
   for (const b of bsps) {
     if ((base === b.name || base.startsWith(b.name + '_')) && (!best || b.name.length > best.name.length)) best = b;
@@ -512,10 +518,10 @@ async function findBSPFor(popName, tfPath) {
   return best;
 }
 
-ipcMain.handle('tank:path', async (e, popName, tfPathOverride, starts) => {
+ipcMain.handle('tank:path', async (e, popName, tfPathOverride, starts, popDir) => {
   const tfPath = tfPathOverride || await detectTFPath();
   if (!tfPath) return null;
-  const best = await findBSPFor(popName, tfPath);
+  const best = await findBSPFor(popName, tfPath, popDir);
   if (!best) return null;
   const tracks = bspTracksFor(best.full);
   if (!tracks) return { map: best.name, results: {}, unreadable: true };
@@ -598,9 +604,9 @@ function buildBombPaths(ents, navVolumes) {
   return paths;
 }
 
-async function looseNavs(tfPath) {
+async function looseNavs(tfPath, popDir) {
   const out = [];
-  for (const d of await mapDirs(tfPath)) {
+  for (const d of await mapDirs(tfPath, popDir)) {
     try {
       for (const n of await fs.readdir(d)) {
         if (n.toLowerCase().endsWith('.nav')) out.push({ name: n.toLowerCase().replace(/\.nav$/, ''), kind: 'file', where: path.join(d, n) });
@@ -628,9 +634,9 @@ function sharedPrefixLen(a, b) {
   return i;
 }
 
-async function loadNavFor(bsp, tfPath) {
-  const searched = await mapDirs(tfPath);
-  const candidates = [...await looseNavs(tfPath), ...vpkNavs(tfPath)];
+async function loadNavFor(bsp, tfPath, popDir) {
+  const searched = await mapDirs(tfPath, popDir);
+  const candidates = [...await looseNavs(tfPath, popDir), ...vpkNavs(tfPath)];
   try {
     for (const p of pakEntries(bsp.full)) {
       if (p.name.endsWith('.nav')) candidates.push({ name: p.name.split('/').pop().replace(/\.nav$/, ''), kind: 'pak', where: bsp.full, entry: p });
@@ -674,10 +680,10 @@ async function loadNavFor(bsp, tfPath) {
   }
 }
 
-ipcMain.handle('map:data', async (e, popName, tfPathOverride) => {
+ipcMain.handle('map:data', async (e, popName, tfPathOverride, popDir) => {
   const tfPath = tfPathOverride || await detectTFPath();
   if (!tfPath) return null;
-  const best = await findBSPFor(popName, tfPath);
+  const best = await findBSPFor(popName, tfPath, popDir);
   if (!best) return null;
   if (mapDataCache.has(best.full)) return mapDataCache.get(best.full);
   let result = null;
@@ -772,7 +778,7 @@ ipcMain.handle('map:data', async (e, popName, tfPathOverride) => {
         startDisabled: String(en.startdisabled ?? en.start_disabled ?? '0') === '1'
       });
     }
-    const navLookup = await loadNavFor(best, tfPath);
+    const navLookup = await loadNavFor(best, tfPath, popDir);
     result = {
       map: best.name, spawns, flags, capzones, tracks, spawnRooms, bombPaths, nav: navLookup.nav,
       navSearch: { searched: navLookup.searched, near: navLookup.near, reason: navLookup.reason || null },
@@ -787,10 +793,10 @@ ipcMain.handle('map:data', async (e, popName, tfPathOverride) => {
 
 const mapGeoCache = new Map();
 
-ipcMain.handle('map:geo', async (e, popName, tfPathOverride) => {
+ipcMain.handle('map:geo', async (e, popName, tfPathOverride, popDir) => {
   const tfPath = tfPathOverride || await detectTFPath();
   if (!tfPath) return null;
-  const best = await findBSPFor(popName, tfPath);
+  const best = await findBSPFor(popName, tfPath, popDir);
   if (!best) return null;
   if (mapGeoCache.has(best.full)) return mapGeoCache.get(best.full);
   let result = null;
@@ -854,16 +860,16 @@ function makeMaterialLoader(tfPath) {
 
 const mapTexCache = new Map();
 
-ipcMain.handle('map:texture', async (e, popName, tfPathOverride) => {
+ipcMain.handle('map:texture', async (e, popName, tfPathOverride, popDir) => {
   const tfPath = tfPathOverride || await detectTFPath();
   if (!tfPath) return null;
-  const best = await findBSPFor(popName, tfPath);
+  const best = await findBSPFor(popName, tfPath, popDir);
   if (!best) return null;
   if (mapTexCache.has(best.full)) return mapTexCache.get(best.full);
   let result = null;
   try {
     const cachedData = mapDataCache.get(best.full);
-    const nav = cachedData ? cachedData.nav : (await loadNavFor(best, tfPath)).nav;
+    const nav = cachedData ? cachedData.nav : (await loadNavFor(best, tfPath, popDir)).nav;
     const baked = await bakeTopDown(best.full, makeMaterialLoader(tfPath), {
       nav,
       spawns: cachedData ? cachedData.spawns : [],
