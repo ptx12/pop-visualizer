@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;">
+<title>pop visualizer</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="toolbar">
+  <div class="brand">pop visualizer<span class="brand-by">by ptyx</span></div>
+  <div class="tb-cluster">
+    <div class="tb-group">
+      <button class="btn" id="btn-open" title="Open popfile (Ctrl+O)">Open</button>
+      <button class="btn" id="btn-vanilla" title="Browse bundled Valve missions">Vanilla</button>
+    </div>
+    <div class="tb-group">
+      <button class="btn" id="btn-save" title="Save (Ctrl+S)">Save</button>
+      <button class="btn" id="btn-saveas" title="Save As (Ctrl+Shift+S)">Save As</button>
+    </div>
+    <div class="tb-group">
+      <button class="icon-btn tb-arrow" id="btn-undo" title="Undo (Ctrl+Z)">&#x21B6;</button>
+      <button class="icon-btn tb-arrow" id="btn-redo" title="Redo (Ctrl+Y)">&#x21B7;</button>
+    </div>
+  </div>
+  <input id="searchbox" type="search" placeholder="Filter wavespawns — name, bot, template…  (Ctrl+F)">
+  <div class="grow"></div>
+  <div class="tb-cluster">
+    <div class="tb-group">
+      <button class="btn" id="btn-models" title="Browse and preview models">Models</button>
+      <button class="btn" id="btn-dock" title="Dock the diagram onto an editor window">Dock</button>
+    </div>
+    <button class="btn" id="btn-help" title="Keyboard shortcuts and how-to">Help</button>
+  </div>
+</div>
+<div id="zenbar">
+  <span id="zen-name"></span>
+  <select id="zen-wave" class="inp"></select>
+  <button class="btn sm" id="zen-side" title="Switch dock side">Side</button>
+  <button class="btn sm" id="zen-modify" title="Show the full editor UI while staying docked">Modify</button>
+  <button class="btn sm" id="zen-exit" title="Leave dock mode">Exit</button>
+  <span class="zen-by">ptyx</span>
+</div>
+<div id="tabs"></div>
+<div id="banner"></div>
+<div id="layout">
+  <div id="sidebar"></div>
+  <div class="splitter" id="split-side" title="Drag to resize, double-click to reset"></div>
+  <div id="main"></div>
+  <div class="splitter" id="split-insp" title="Drag to resize, double-click to reset"></div>
+  <div id="inspector"></div>
+</div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

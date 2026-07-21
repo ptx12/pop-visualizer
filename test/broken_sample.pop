@@ -1,0 +1,16 @@
+WaveSchedule
+{
+	StartingCurrency	400
+	Wave
+	{
+		WaveSpawn
+		{
+			Name "a1"
+			TotalCount 4
+			Where spawnbot
+			TFBot
+			{
+				Class Scout
+			}
+	}
+}

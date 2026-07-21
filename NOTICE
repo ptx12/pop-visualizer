@@ -1,0 +1,32 @@
+This project is an unofficial, non-commercial fan tool. It is not affiliated
+with, endorsed by, or sponsored by Valve Corporation.
+
+Team Fortress 2, Mann vs. Machine, and all related assets are trademarks and
+copyright of Valve Corporation.
+
+Bundled third-party content
+---------------------------
+
+vanilla/   The 29 stock Mann vs. Machine mission scripts that ship with
+           Team Fortress 2. Copyright Valve Corporation. Included so the
+           app has a reference corpus to open and to test the parser
+           against; they are plain-text game scripts present in every
+           TF2 installation.
+
+base/      robot_standard.pop, robot_giant.pop and robot_gatebot.pop, the
+           stock #base bot template files. Copyright Valve Corporation.
+           Required to resolve template inheritance in any mission.
+
+samples_sigdemo.pop
+           Sample popfile demonstrating sigsegv-mvm (rafmod) extensions,
+           used as a parser test fixture.
+
+Robot class icons are NOT bundled. They are read at runtime from your own
+Team Fortress 2 installation (loose files, tf/custom, or tf2_textures_dir.vpk).
+Missions that reference custom icons resolve them from the mission folder.
+
+Bot movement behaviour in the map simulation is modelled on the publicly
+released Source SDK 2013 (ValveSoftware/source-sdk-2013), used as reference
+only; no Valve code is included in this repository.
+
+If you are Valve and want any of the above removed, open an issue.

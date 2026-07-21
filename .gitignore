@@ -1,0 +1,8 @@
+node_modules/
+dist/
+out/
+icons/
+popfile-visualizer.zip
+*.log
+samples_sigdemo.pop
+NOTICE

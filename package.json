@@ -1,0 +1,109 @@
+{
+  "name": "pop-visualizer",
+  "productName": "pop visualizer",
+  "version": "1.0.0",
+  "description": "Timeline visualizer, editor and wave simulator for Team Fortress 2 Mann vs. Machine popfiles",
+  "keywords": [
+    "tf2",
+    "mvm",
+    "popfile",
+    "team-fortress-2",
+    "mann-vs-machine",
+    "electron"
+  ],
+  "homepage": "https://github.com/ptx12/pop-visualizer",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ptx12/pop-visualizer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ptx12/pop-visualizer/issues"
+  },
+  "author": "ptyx",
+  "license": "MIT",
+  "main": "main.js",
+  "type": "module",
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/roundtrip.mjs && node test/model.mjs && node test/hardening.mjs",
+    "dev": "node test/devserver.mjs",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "tf.ptyx.pop-visualizer",
+    "productName": "pop visualizer",
+    "copyright": "Copyright (c) 2026 ptyx",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.cjs",
+      "renderer/**/*",
+      "shared/**/*",
+      "base/**/*",
+      "vanilla/**/*",
+      "tools/dockwatch.ps1",
+      "build/icon.png",
+      "LICENSE",
+      "NOTICE"
+    ],
+    "asarUnpack": [
+      "tools/**"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Development",
+      "executableName": "pop-visualizer",
+      "synopsis": "TF2 Mann vs. Machine popfile visualizer and editor",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "tar.gz",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "pop-visualizer-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "pop visualizer",
+      "artifactName": "pop-visualizer-${version}-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "pop-visualizer-${version}-portable.${ext}"
+    }
+  }
+}
