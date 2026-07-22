@@ -222,10 +222,16 @@ function drawFlippedTimeline(canvas, view, sim) {
     if (gate > 0.01) {
       const gy = yOf(gate), sy = yOf(Math.min(...rs.map(v => Math.max(v.start, v.firstSpawn))));
       if (sy - gy > 1) {
-        c.strokeStyle = 'rgba(255,255,255,.18)';
-        c.setLineDash([3, 3]);
-        c.beginPath(); c.moveTo(Math.round(cx) + .5, gy); c.lineTo(Math.round(cx) + .5, sy); c.stroke();
+        const gx = Math.round(cx) + .5;
+        c.save();
+        c.strokeStyle = color;
+        c.globalAlpha = .55;
+        c.lineWidth = 2;
+        c.setLineDash([4, 4]);
+        c.beginPath(); c.moveTo(gx, gy); c.lineTo(gx, sy); c.stroke();
         c.setLineDash([]);
+        c.beginPath(); c.moveTo(gx - 5, gy + 1); c.lineTo(gx + 5, gy + 1); c.stroke();
+        c.restore();
       }
     }
 
