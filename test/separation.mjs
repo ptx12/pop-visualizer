@@ -1,6 +1,6 @@
 import { parse } from '../renderer/js/kv.js';
 import { buildModel } from '../renderer/js/popmodel.js';
-import { simulateBotAI, actorPosAt, actorZAt, STEP } from '../renderer/js/botai.js';
+import { simulateBotAI, actorPosAt, actorZAt } from '../renderer/js/botai.js';
 import { simulateWave } from '../renderer/js/sim.js';
 
 let pass = 0, fail = 0;
