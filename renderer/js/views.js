@@ -67,7 +67,7 @@ function waveTable(file) {
   const m = file.model;
   const table = el('table', { class: 'wtable' });
   table.append(el('thead', {}, el('tr', {},
-    ...['Wave', 'Robots', 'Support', 'Tanks', 'Currency', 'HP', 'Est. length', 'Peak', 'Composition'].map(h => el('th', { text: h })))));
+    ...['Wave', 'Robots', 'Support', 'Tanks', 'Currency', 'HP', 'Est. length', 'Composition'].map(h => el('th', { text: h })))));
   const tbody = el('tbody');
   for (const w of m.waves) {
     const sim = simFor(file, w);
@@ -84,7 +84,6 @@ function waveTable(file) {
       el('td', { class: 'cash', text: '$' + w.totalCurrency }),
       el('td', { text: w.totalHP ? '≈' + fmtCompact(w.totalHP) : '—' }),
       el('td', { text: '~' + fmtTime(sim.waveEnd) }),
-      el('td', { text: sim.peak.active + ' bots' }),
       el('td', {}, compositionChips(pseudoWs, 10))
     );
     tbody.append(row);

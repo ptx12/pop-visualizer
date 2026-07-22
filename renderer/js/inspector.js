@@ -161,7 +161,6 @@ function waveAnalysis(file, waveIndex) {
   if (!wave) return fileSummary(file);
   const sim = simFor(file, wave);
   const waveEnd = sim.waveEnd;
-  const limit = sim.robotLimit || file.model.robotLimit || 22;
   const gaps = deadAirGaps(sim, waveEnd);
   const idle = gaps.reduce((s, [a, b]) => s + (b - a), 0);
 
@@ -173,11 +172,6 @@ function waveAnalysis(file, waveIndex) {
   wrap.append(comp.bots.length
     ? el('div', { class: 'wa-chips' }, compositionChips(comp, 40))
     : el('div', { class: 'wa-none', text: 'No robots in this wave' }));
-
-  if (sim.peak.active >= limit) {
-    wrap.append(el('div', { class: 'insp-sectitle', text: 'THROTTLED' }));
-    wrap.append(metric('Peak hits limit', `${sim.peak.active} / ${limit}`, 'warn'));
-  }
 
   if (gaps.length) {
     wrap.append(el('div', { class: 'insp-sectitle', text: `DEAD AIR — ${Math.round(idle)}s IDLE` }));
