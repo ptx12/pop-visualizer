@@ -1,12 +1,16 @@
 import { buildNavGraphWasm, navWasmReady } from './navwasm.js';
+import { buildPipeline } from './sim/systems.js';
+import { RANGES, healTarget } from './sim/systems/healing.js';
+import {
+  CLASS_BASE_SPEED, TF_MAX_SPEED, STEP, CARRIER_PENALTY,
+  botScale, hasDemoShield, botMaxSpeed, mulberry32, dpsProfile
+} from './sim/bots.js';
 
-export const CLASS_BASE_SPEED = { scout: 400, soldier: 240, pyro: 300, demoman: 280, heavyweapons: 230, engineer: 300, medic: 320, sniper: 300, spy: 320, unknown: 300 };
-export const TF_MAX_SPEED = 520;
-export const STEP = 0.25;
+export { CLASS_BASE_SPEED, TF_MAX_SPEED, STEP, botScale, hasDemoShield, botMaxSpeed, mulberry32, dpsProfile };
+
 const FLAG_ESCORT_RANGE = 500;
 const SQUAD_ESCORT_RANGE = 500;
 const DEPLOY_TIME = 1.9;
-const CARRIER_PENALTY = 0.5;
 const PICKUP_RANGE = 64;
 const AUTO_FLAG_AGE = 1.0;
 const SPY_TELEPORT_RING = 1500;
@@ -22,54 +26,7 @@ const CHARGE_SPEED = 750;
 const CHARGE_TIME = 1.5;
 const CHARGE_REGEN = 8.3;
 const TF_NAV_SPAWN_ROOM_BLUE = 0x4;
-const SHIELD_RE = /targe|splendid screen|tide turner|shield/i;
-const HULL_HALF_XY = 24;
-const HULL_HEIGHT = 82;
-const MINIBOSS_SCALE = 1.75;
-const MAX_SEPARATION_FORCE = 256;
-const SEPARATION_SUBSTEPS = 2;
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
-const MEDIC_STOP_FOLLOW_RANGE = 75;
-const MEDIC_START_FOLLOW_RANGE = 250;
-const MEDIC_MAX_HEAL_RANGE = 600;
-const MEDIGUN_HEAL_RATE = 24;
-const MEDIGUN_HEAL_RAMP = 3;
-const MEDIGUN_RAMP_DELAY = 10;
-
-export function botScale(bot) {
-  if (!bot) return 1;
-  if (Number.isFinite(bot.scale) && bot.scale > 0) return bot.scale;
-  return bot.isGiant || bot.isBoss ? MINIBOSS_SCALE : 1;
-}
-
-export function hasDemoShield(bot) {
-  if (!bot || bot.cls !== 'demoman') return false;
-  if (bot.chargeRechargeMult !== 1 || bot.chargeTimeMult !== 1) return true;
-  if ((bot.items || []).some(i => SHIELD_RE.test(i))) return true;
-  return /demoknight|samurai/i.test(bot.icon || '');
-}
-
-export function botMaxSpeed(bot, hasFlag) {
-  let s = CLASS_BASE_SPEED[bot.cls] ?? 300;
-  s *= bot.moveSpeedMult || 1;
-  if (hasFlag && !bot.isGiant) s *= CARRIER_PENALTY;
-  return Math.min(s, TF_MAX_SPEED);
-}
-
-export function mulberry32(seed) {
-  let a = seed >>> 0;
-  return () => {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-export function dpsProfile(u) {
-  if (u > 0.93) return 0;
-  return Math.exp(-((u / 0.16) ** 2)) + 0.85 * Math.exp(-(((u - 0.8) / 0.2) ** 2)) + 0.08;
-}
 
 const AVOID_COST = 25;
 const PREFER_COST = 0.04;
@@ -772,107 +729,6 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     a.pos[1] = Math.min(Math.max(ny, cur.nw[1]), cur.se[1]);
   }
 
-  const sepAct = new Array(actors.length);
-  const sepHX = new Float64Array(actors.length);
-  const sepHZ = new Float64Array(actors.length);
-  const sepZC = new Float64Array(actors.length);
-  const sepDX = new Float64Array(actors.length);
-  const sepDY = new Float64Array(actors.length);
-  const sepHit = new Int32Array(actors.length);
-  const sepPX = new Float64Array(actors.length);
-  const sepPY = new Float64Array(actors.length);
-
-  function separate(dt) {
-    for (let s = 0; s < SEPARATION_SUBSTEPS; s++) separatePass(dt / SEPARATION_SUBSTEPS);
-  }
-
-  function separatePass(dt) {
-    let n = 0;
-    for (const a of live) {
-      if (a.kind !== 'bot' || !a.pos) continue;
-      const s = botScale(a.bot);
-      sepAct[n] = a;
-      sepPX[n] = a.pos[0];
-      sepPY[n] = a.pos[1];
-      sepHX[n] = HULL_HALF_XY * s;
-      sepHZ[n] = HULL_HEIGHT * s;
-      sepZC[n] = (a.z || 0) + HULL_HEIGHT * s / 2;
-      n++;
-    }
-    if (n < 2) return;
-    let moves = 0;
-    for (let i = 0; i < n; i++) {
-      let hx = 0, hy = 0, hj = -1;
-      for (let j = 0; j < n; j++) {
-        if (i === j) continue;
-        const dx = sepPX[j] - sepPX[i], dy = sepPY[j] - sepPY[i];
-        const rx = sepHX[i] + sepHX[j];
-        if (dx >= rx || dx <= -rx || dy >= rx || dy <= -rx) continue;
-        const dz = sepZC[j] - sepZC[i];
-        const rz = (sepHZ[i] + sepHZ[j]) / 2;
-        if (dz >= rz || dz <= -rz) continue;
-        hx = dx; hy = dy; hj = j;
-        break;
-      }
-      if (hj < 0) continue;
-      const a = sepAct[i];
-      const dist = Math.hypot(hx, hy);
-      const avoidRadius = sepHX[hj] * 2 * Math.SQRT2;
-      const push = avoidRadius > 0
-        ? Math.min(MAX_SEPARATION_FORCE, Math.max(0, (avoidRadius - dist) / avoidRadius * MAX_SEPARATION_FORCE))
-        : 0;
-      if (push < 0.01) continue;
-      let ddx = hx, ddy = hy;
-      if (ddx * ddx + ddy * ddy < 1e-4) { ddx = a.jx; ddy = a.jy; }
-      const sn = a.samples.length;
-      let vx = sn >= 2 ? a.pos[0] - a.samples[sn - 2] : 0;
-      let vy = sn >= 2 ? a.pos[1] - a.samples[sn - 1] : 0;
-      if (Math.hypot(vx, vy) < 0.1) { vx = Math.cos(a.heading || 0); vy = Math.sin(a.heading || 0); }
-      let px = -vy, py = vx;
-      const plen = Math.hypot(px, py) || 1;
-      px /= plen; py /= plen;
-      if (ddx * px + ddy * py >= 0) { px = -px; py = -py; }
-      const slide = Math.min(push, botMaxSpeed(a.bot, bomb.carrier === a)) * dt;
-      sepHit[moves] = i;
-      sepDX[moves] = px * slide;
-      sepDY[moves] = py * slide;
-      moves++;
-    }
-    for (let k = 0; k < moves; k++) nudge(sepAct[sepHit[k]], sepDX[k], sepDY[k]);
-  }
-
-  function healTarget(a) {
-    if (a.patient && a.patient.alive) return a.patient;
-    let best = null, bestD = Infinity;
-    if (a.squadId) {
-      const lead = squadLeaders.get(a.squadId);
-      if (lead && lead.alive && lead !== a) return lead;
-    }
-    for (const x of live) {
-      if (x === a || x.kind !== 'bot' || clsOf(x) === 'medic') continue;
-      if (a.squadId && x.squadId !== a.squadId) continue;
-      const d = (x.pos[0] - a.pos[0]) ** 2 + (x.pos[1] - a.pos[1]) ** 2;
-      if (d < bestD) { bestD = d; best = x; }
-    }
-    return best;
-  }
-
-  function healPass(t, dt) {
-    for (const a of live) {
-      if (a.kind !== 'bot' || clsOf(a) !== 'medic') continue;
-      a.patient = healTarget(a);
-      const p = a.patient;
-      if (!p || !p.alive || p.hp == null) continue;
-      const max = p.bot.health || 100;
-      if (p.hp >= max) continue;
-      const d = Math.hypot(p.pos[0] - a.pos[0], p.pos[1] - a.pos[1]);
-      if (d > MEDIC_MAX_HEAL_RANGE) continue;
-      const ramp = t - (p.lastHurtT ?? -Infinity) >= MEDIGUN_RAMP_DELAY ? MEDIGUN_HEAL_RAMP : 1;
-      p.hp = Math.min(max, p.hp + MEDIGUN_HEAL_RATE * ramp * dt);
-      a.healed += MEDIGUN_HEAL_RATE * ramp * dt;
-    }
-  }
-
   function dropBomb() {
     if (!bomb.carrier) return;
     const prev = bomb.carrier;
@@ -945,6 +801,20 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   const sorted = [...actors].sort((x, y) => x.spawnT - y.spawnT);
 
   const maxT = damageOn ? sim.waveEnd + 600 : sim.waveEnd + 90;
+
+  const ctx = {
+    wave, sim, mapData, opts,
+    rng, deathModel, teamDPS, robotLimit,
+    actors, live, bomb, bombSamples, squadLeaders,
+    nav, hasNav, navOf, graphFor, objective, objArea, chains,
+    clsOf, zoneW, killActor, nudge, areaOf, holds, placeActor,
+    hatchFieldOf, bombFieldOf, resolvePoint
+  };
+
+  const capabilities = new Set();
+  if (hasNav) capabilities.add('nav');
+  if (damageOn) capabilities.add('damage');
+  const pipeline = buildPipeline(ctx, capabilities);
 
   function step() {
     const t = si * STEP;
@@ -1065,12 +935,12 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
           }
         }
       } else if (a.state === 'medicHeal') {
-        const target = healTarget(a);
+        const target = healTarget(ctx, a);
         a.patient = target;
         if (target) {
           const d = Math.hypot(target.pos[0] - a.pos[0], target.pos[1] - a.pos[1]);
-          if (d > MEDIC_START_FOLLOW_RANGE) a.following = true;
-          else if (d < MEDIC_STOP_FOLLOW_RANGE) a.following = false;
+          if (d > RANGES.START_FOLLOW_RANGE) a.following = true;
+          else if (d < RANGES.STOP_FOLLOW_RANGE) a.following = false;
           if (a.following) {
             const tf = target.areaId != null ? navOf(a).flowField(target.areaId) : null;
             moveField(a, tf, target.pos, dt, speed);
@@ -1131,38 +1001,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
     }
 
-    separate(STEP);
-    healPass(t, STEP);
-    if (bomb.carrier && bomb.carrier.pos) bomb.pos = bomb.carrier.pos.slice();
-    for (const a of live) {
-      const n = a.samples.length;
-      if (n >= 2) {
-        const px = a.samples[n - 2], py = a.samples[n - 1];
-        if (Math.hypot(a.pos[0] - px, a.pos[1] - py) > 1) a.heading = Math.atan2(a.pos[1] - py, a.pos[0] - px);
-      }
-      a.samples.push(a.pos[0], a.pos[1]);
-      a.zs.push(a.z || 0);
-    }
-
-    if (damageOn && live.size) {
-      let W = 0;
-      const parts = [];
-      for (const a of live) {
-        if (a.kind !== 'bot' && a.kind !== 'tank') continue;
-        const w = zoneW(a) * (a.kind === 'tank' ? 1.5 : 1);
-        if (w <= 0) continue;
-        parts.push([a, w]);
-        W += w;
-      }
-      if (W > 0) {
-        for (const [a, w] of parts) {
-          a.hp -= teamDPS * STEP * w / (W + 2);
-          a.lastHurtT = t;
-          if (a.hp <= 0) killActor(a, t);
-        }
-      }
-    }
-    bombSamples.push(bomb.carrier ? bomb.carrier.pos.slice() : bomb.pos.slice());
+    pipeline.run(t, STEP);
     si++;
     return true;
   }
