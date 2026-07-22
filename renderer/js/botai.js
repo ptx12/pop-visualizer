@@ -23,6 +23,23 @@ const CHARGE_TIME = 1.5;
 const CHARGE_REGEN = 8.3;
 const TF_NAV_SPAWN_ROOM_BLUE = 0x4;
 const SHIELD_RE = /targe|splendid screen|tide turner|shield/i;
+const HULL_HALF_XY = 24;
+const HULL_HEIGHT = 82;
+const MINIBOSS_SCALE = 1.75;
+const MAX_SEPARATION_FORCE = 256;
+const SEPARATION_SUBSTEPS = 2;
+const MEDIC_STOP_FOLLOW_RANGE = 75;
+const MEDIC_START_FOLLOW_RANGE = 250;
+const MEDIC_MAX_HEAL_RANGE = 600;
+const MEDIGUN_HEAL_RATE = 24;
+const MEDIGUN_HEAL_RAMP = 3;
+const MEDIGUN_RAMP_DELAY = 10;
+
+export function botScale(bot) {
+  if (!bot) return 1;
+  if (Number.isFinite(bot.scale) && bot.scale > 0) return bot.scale;
+  return bot.isGiant || bot.isBoss ? MINIBOSS_SCALE : 1;
+}
 
 export function hasDemoShield(bot) {
   if (!bot || bot.cls !== 'demoman') return false;
@@ -521,7 +538,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     const a = nav.nearestArea(flagHome || objective);
     bomb.areaId = a ? a.id : null;
   }
-  let bombField = bomb.areaId != null ? nav.flowField(bomb.areaId) : null;
+  const bombFieldOf = a => (bomb.areaId != null ? navOf(a).flowField(bomb.areaId) : null);
 
   for (const a of actors) {
     a.samples = [];
@@ -620,7 +637,9 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     a.homeArea = a.areaId;
     a.jx = (rng() * 2 - 1) * 26;
     a.jy = (rng() * 2 - 1) * 26;
+    a.zs = [];
     if (a.kind === 'tank') { a.state = 'tank'; return; }
+    if (clsOf(a) === 'medic') { a.patient = null; a.following = false; a.healed = 0; }
     const ia = (a.bot.interrupts || [])[0] || null;
     if (ia) {
       const dest = resolvePoint(ia.point ? { point: ia.point } : { target: ia.target });
@@ -724,6 +743,119 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     return Math.hypot(targetPt[0] - a.pos[0], targetPt[1] - a.pos[1]);
   }
 
+  function areaOf(a) {
+    return a.areaId == null ? null : navOf(a).byId.get(a.areaId);
+  }
+
+  function holds(ar, x, y) {
+    return ar && x >= ar.nw[0] && x <= ar.se[0] && y >= ar.nw[1] && y <= ar.se[1];
+  }
+
+  function nudge(a, dx, dy) {
+    const nx = a.pos[0] + dx, ny = a.pos[1] + dy;
+    if (!hasNav || a.areaId == null) { a.pos[0] = nx; a.pos[1] = ny; return; }
+    const cur = areaOf(a);
+    if (holds(cur, nx, ny)) { a.pos[0] = nx; a.pos[1] = ny; return; }
+    const near = navOf(a).areaAt([nx, ny, a.z], a.areaId);
+    if (holds(near, nx, ny)) {
+      a.pos[0] = nx; a.pos[1] = ny;
+      a.areaId = near.id;
+      a.z = (near.nw[2] + near.se[2]) / 2;
+      return;
+    }
+    if (!cur) return;
+    a.pos[0] = Math.min(Math.max(nx, cur.nw[0]), cur.se[0]);
+    a.pos[1] = Math.min(Math.max(ny, cur.nw[1]), cur.se[1]);
+  }
+
+  function hullOf(a) {
+    const s = botScale(a.bot);
+    return { xy: HULL_HALF_XY * s, z: HULL_HEIGHT * s };
+  }
+
+  function separate(dt) {
+    for (let s = 0; s < SEPARATION_SUBSTEPS; s++) separatePass(dt / SEPARATION_SUBSTEPS);
+  }
+
+  function separatePass(dt) {
+    const list = [];
+    for (const a of live) {
+      if (a.kind !== 'bot' || !a.pos) continue;
+      const h = hullOf(a);
+      list.push({ a, hx: h.xy, hz: h.z, zc: (a.z || 0) + h.z / 2 });
+    }
+    if (list.length < 2) return;
+    const moves = [];
+    for (let i = 0; i < list.length; i++) {
+      const me = list[i];
+      let hit = null;
+      for (let j = 0; j < list.length; j++) {
+        if (i === j) continue;
+        const other = list[j];
+        const dx = other.a.pos[0] - me.a.pos[0], dy = other.a.pos[1] - me.a.pos[1];
+        const rx = me.hx + other.hx;
+        if (Math.abs(dx) >= rx || Math.abs(dy) >= rx) continue;
+        if (Math.abs(other.zc - me.zc) >= (me.hz + other.hz) / 2) continue;
+        hit = { other, dx, dy };
+        break;
+      }
+      if (!hit) continue;
+      let ddx = hit.dx, ddy = hit.dy;
+      if (ddx * ddx + ddy * ddy < 1e-4) { ddx = me.a.jx; ddy = me.a.jy; }
+      const dist = Math.hypot(hit.dx, hit.dy);
+      const avoidRadius = hit.other.hx * 2 * Math.SQRT2;
+      const push = avoidRadius > 0
+        ? Math.min(MAX_SEPARATION_FORCE, Math.max(0, (avoidRadius - dist) / avoidRadius * MAX_SEPARATION_FORCE))
+        : 0;
+      if (push < 0.01) continue;
+      const a = me.a;
+      const n = a.samples.length;
+      let vx = n >= 2 ? a.pos[0] - a.samples[n - 2] : 0;
+      let vy = n >= 2 ? a.pos[1] - a.samples[n - 1] : 0;
+      const moved = Math.hypot(vx, vy);
+      if (moved < 0.1) { vx = Math.cos(a.heading || 0); vy = Math.sin(a.heading || 0); }
+      let px = -vy, py = vx;
+      const plen = Math.hypot(px, py) || 1;
+      px /= plen; py /= plen;
+      if (ddx * px + ddy * py >= 0) { px = -px; py = -py; }
+      const slide = Math.min(push, botMaxSpeed(a.bot, bomb.carrier === a)) * dt;
+      moves.push([a, px * slide, py * slide]);
+    }
+    for (const [a, dx, dy] of moves) nudge(a, dx, dy);
+  }
+
+  function healTarget(a) {
+    if (a.patient && a.patient.alive) return a.patient;
+    let best = null, bestD = Infinity;
+    if (a.squadId) {
+      const lead = squadLeaders.get(a.squadId);
+      if (lead && lead.alive && lead !== a) return lead;
+    }
+    for (const x of live) {
+      if (x === a || x.kind !== 'bot' || clsOf(x) === 'medic') continue;
+      if (a.squadId && x.squadId !== a.squadId) continue;
+      const d = (x.pos[0] - a.pos[0]) ** 2 + (x.pos[1] - a.pos[1]) ** 2;
+      if (d < bestD) { bestD = d; best = x; }
+    }
+    return best;
+  }
+
+  function healPass(t, dt) {
+    for (const a of live) {
+      if (a.kind !== 'bot' || clsOf(a) !== 'medic') continue;
+      a.patient = healTarget(a);
+      const p = a.patient;
+      if (!p || !p.alive || p.hp == null) continue;
+      const max = p.bot.health || 100;
+      if (p.hp >= max) continue;
+      const d = Math.hypot(p.pos[0] - a.pos[0], p.pos[1] - a.pos[1]);
+      if (d > MEDIC_MAX_HEAL_RANGE) continue;
+      const ramp = t - (p.lastHurtT ?? -Infinity) >= MEDIGUN_RAMP_DELAY ? MEDIGUN_HEAL_RAMP : 1;
+      p.hp = Math.min(max, p.hp + MEDIGUN_HEAL_RATE * ramp * dt);
+      a.healed += MEDIGUN_HEAL_RATE * ramp * dt;
+    }
+  }
+
   function dropBomb() {
     if (!bomb.carrier) return;
     const prev = bomb.carrier;
@@ -733,7 +865,6 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     if (hasNav) {
       const a = nav.areaAt(bomb.pos, null);
       bomb.areaId = a ? a.id : null;
-      bombField = bomb.areaId != null ? nav.flowField(bomb.areaId) : null;
     }
   }
 
@@ -835,9 +966,8 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
         if (tculled) continue;
         if (hasNav) {
           const na = nav.areaAt(a.pos, a.areaId);
-          if (na) a.areaId = na.id;
+          if (na) { a.areaId = na.id; a.z = (na.nw[2] + na.se[2]) / 2; }
         }
-        a.samples.push(a.pos[0], a.pos[1]);
         continue;
       }
       const cls = clsOf(a);
@@ -846,7 +976,6 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       if (a.shield) speed = chargeStep(a, t, dt, speed);
       if (t < (a.tauntUntil || 0)) {
         if (hasFlag) bomb.pos = a.pos.slice();
-        a.samples.push(a.pos[0], a.pos[1]);
         continue;
       }
 
@@ -861,7 +990,6 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
       if (a.ia && stepInterrupt(a, t, dt, speed)) {
         if (hasFlag) bomb.pos = a.pos.slice();
-        a.samples.push(a.pos[0], a.pos[1]);
         continue;
       }
 
@@ -885,7 +1013,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
         if (bomb.deliveredAt != null) a.state = 'pushToPoint';
         else if (bomb.carrier) a.state = 'escortFlagCarrier';
         else {
-          const d = moveField(a, bombField, bomb.pos, dt, speed);
+          const d = moveField(a, bombFieldOf(a), bomb.pos, dt, speed);
           if (d < PICKUP_RANGE && eligible(a)) takeBomb(a);
         }
       } else if (a.state === 'escortFlagCarrier') {
@@ -899,8 +1027,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
           }
         }
       } else if (a.state === 'pushToPoint') {
-        const d = moveField(a, hatchFieldOf(a), objective, dt, speed);
-        if (d < 150) { a.pos[0] += (rng() - 0.5) * 8; a.pos[1] += (rng() - 0.5) * 8; }
+        moveField(a, hatchFieldOf(a), objective, dt, speed);
       } else if (a.state === 'escortSquadLeader') {
         const leader = squadLeaders.get(a.squadId);
         if (!leader || !leader.alive) {
@@ -921,16 +1048,13 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
           }
         }
       } else if (a.state === 'medicHeal') {
-        let target = null, bestD = Infinity;
-        for (const x of live) {
-          if (x === a || x.kind !== 'bot' || clsOf(x) === 'medic') continue;
-          if (a.squadId && x.squadId !== a.squadId) continue;
-          const d = (x.pos[0] - a.pos[0]) ** 2 + (x.pos[1] - a.pos[1]) ** 2;
-          if (d < bestD) { bestD = d; target = x; }
-        }
+        const target = healTarget(a);
+        a.patient = target;
         if (target) {
           const d = Math.hypot(target.pos[0] - a.pos[0], target.pos[1] - a.pos[1]);
-          if (d > 120) {
+          if (d > MEDIC_START_FOLLOW_RANGE) a.following = true;
+          else if (d < MEDIC_STOP_FOLLOW_RANGE) a.following = false;
+          if (a.following) {
             const tf = target.areaId != null ? navOf(a).flowField(target.areaId) : null;
             moveField(a, tf, target.pos, dt, speed);
           }
@@ -988,10 +1112,19 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
         }
       }
 
-      const px = a.samples.length >= 2 ? a.samples[a.samples.length - 2] : a.pos[0];
-      const py = a.samples.length >= 2 ? a.samples[a.samples.length - 1] : a.pos[1];
-      if (Math.hypot(a.pos[0] - px, a.pos[1] - py) > 1) a.heading = Math.atan2(a.pos[1] - py, a.pos[0] - px);
+    }
+
+    separate(STEP);
+    healPass(t, STEP);
+    if (bomb.carrier && bomb.carrier.pos) bomb.pos = bomb.carrier.pos.slice();
+    for (const a of live) {
+      const n = a.samples.length;
+      if (n >= 2) {
+        const px = a.samples[n - 2], py = a.samples[n - 1];
+        if (Math.hypot(a.pos[0] - px, a.pos[1] - py) > 1) a.heading = Math.atan2(a.pos[1] - py, a.pos[0] - px);
+      }
       a.samples.push(a.pos[0], a.pos[1]);
+      a.zs.push(a.z || 0);
     }
 
     if (damageOn && live.size) {
@@ -1007,6 +1140,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       if (W > 0) {
         for (const [a, w] of parts) {
           a.hp -= teamDPS * STEP * w / (W + 2);
+          a.lastHurtT = t;
           if (a.hp <= 0) killActor(a, t);
         }
       }
@@ -1029,7 +1163,9 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     stepMany(Infinity);
     for (const a of actors) {
       a.track = new Float32Array(a.samples);
+      a.ztrack = new Float32Array(a.zs || []);
       delete a.samples;
+      delete a.zs;
     }
     finalized = {
       actors, objective, chains, nav, end: Math.max(endT, 10), teamDPS, deathModel,
@@ -1113,6 +1249,13 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
 export function simulateBotAI(wave, sim, mapData, opts = {}) {
   return createBotSim(wave, sim, mapData, opts).result();
+}
+
+export function actorZAt(a, t) {
+  const z = a.ztrack;
+  if (!z || !z.length) return a.z ?? 0;
+  const idx = Math.round((t - a.sampleStart) / STEP);
+  return z[Math.max(0, Math.min(z.length - 1, idx))];
 }
 
 export function actorPosAt(a, t) {

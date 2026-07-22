@@ -3,7 +3,7 @@ import { simFor, emit, onChange, deathModel, navTogglesFor, bombPathRerollsFor }
 import { CLASS_INFO, botDisplayName } from './popmodel.js';
 import { getTFPath, iconURL, iconNameFor, classIconName, tankIconName } from './icons.js';
 import { native } from './native.js';
-import { createBotSim, actorPosAt, botMaxSpeed, buildTrackChains, dpsProfile, objectiveCandidates, bombPathGroups, STEP } from './botai.js';
+import { createBotSim, actorPosAt, actorZAt, botMaxSpeed, buildTrackChains, dpsProfile, objectiveCandidates, bombPathGroups, STEP } from './botai.js';
 import { primaryColor } from './timeline.js';
 import { simOptsPanel } from './inspector.js';
 import { icon } from './svgicon.js';
@@ -25,13 +25,28 @@ const NORMAL_BG = '#ebe2ca';
 const CRIT_BG = ['#0099c5', '#00ceeb'];
 const CRIT_FPS = 5;
 const TANK_PATH = '#cfa35a';
+const CLUSTER_GAP = 0.92;
+const SPREAD_LIMIT = 0.9;
+const SPREAD_PASSES = 3;
+const LIFT_SHADOW = 0.5;
+const LIFT_SCALE = 0.14;
 
 onChange(what => { if (what === 'icons') imgCache.clear(); });
 
 let waPanel = null;
 let mapRedraw = null;
 
-function drawRoute(ctx, pts, toScreen, phase) {
+function routeProgress(pts, bombPos) {
+  if (!pts || !bombPos) return 0;
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i < pts.length; i++) {
+    const d = (pts[i][0] - bombPos[0]) ** 2 + (pts[i][1] - bombPos[1]) ** 2;
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
+function drawRoute(ctx, pts, toScreen, phase, covered) {
   if (!pts || pts.length < 2) return;
   const scr = pts.map(p => toScreen(p[0], p[1]));
   ctx.save();
@@ -46,6 +61,17 @@ function drawRoute(ctx, pts, toScreen, phase) {
   for (let i = 1; i < scr.length; i++) ctx.lineTo(scr[i][0], scr[i][1]);
   ctx.stroke();
   ctx.setLineDash([]);
+  if (covered > 0) {
+    ctx.strokeStyle = '#a7d0ff';
+    ctx.lineWidth = 3.5;
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.moveTo(scr[0][0], scr[0][1]);
+    for (let i = 1; i <= Math.min(covered, scr.length - 1); i++) ctx.lineTo(scr[i][0], scr[i][1]);
+    ctx.stroke();
+    ctx.lineWidth = 2.5;
+    ctx.globalAlpha = 0.85;
+  }
   const SP = 72;
   let acc = 0;
   ctx.fillStyle = '#a7d0ff';
@@ -895,6 +921,16 @@ export function renderMapView(container, file, waveIndex) {
   const chains = buildTrackChains(mapData);
   const areasById = new Map();
   if (mapData.nav) for (const a of mapData.nav.areas) areasById.set(a.id, a);
+  let zLow = Infinity, zHigh = -Infinity;
+  if (mapData.nav) {
+    for (const a of mapData.nav.areas) {
+      const z = (a.nw[2] + a.se[2]) / 2;
+      if (z < zLow) zLow = z;
+      if (z > zHigh) zHigh = z;
+    }
+  }
+  if (!Number.isFinite(zLow)) { zLow = 0; zHigh = 0; }
+  const zSpan = zHigh - zLow;
 
   const navNote = mapData.nav
     ? 'nav: ' + mapData.nav.name + (mapData.nav.approx ? ' (approximate)' : '')
@@ -1276,11 +1312,54 @@ export function renderMapView(container, file, waveIndex) {
     return a.lastAngle;
   }
 
-  function drawActor(a, t, sx, sy) {
+  function plateSize(a) {
+    if (a.kind === 'tank') return 34;
+    return a.bot.isBoss ? 34 : a.bot.isGiant ? 28 : 20;
+  }
+
+  function heightFrac(a, t) {
+    if (!zSpan) return 0;
+    return Math.max(0, Math.min(1, (actorZAt(a, t) - zLow) / zSpan));
+  }
+
+  function drawLift(sx, sy, plate, zf) {
+    if (zf < 0.02) return;
+    const off = zf * plate * LIFT_SHADOW;
+    ctx.save();
+    ctx.fillStyle = 'rgba(6,8,11,' + (0.2 + zf * 0.4).toFixed(3) + ')';
+    ctx.beginPath();
+    ctx.ellipse(sx + off * 0.55, sy + off, plate * 0.5, plate * 0.34, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawStack(sx, sy, plate, r, n, fill) {
+    const layers = Math.min(2, n - 1);
+    for (let i = layers; i >= 1; i--) {
+      const off = i * plate * 0.16;
+      ctx.fillStyle = fill;
+      ctx.globalAlpha = 0.45 - (i - 1) * 0.14;
+      ctx.beginPath();
+      ctx.roundRect(sx - plate / 2 - off, sy - plate / 2 - off, plate, plate, r);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(0,0,0,.5)';
+      ctx.stroke();
+    }
+  }
+
+  function stackScale(n) {
+    return n > 1 ? 1 + Math.min(0.5, Math.log2(n) * 0.12) : 1;
+  }
+
+  function drawActor(a, t, sx, sy, zf, n) {
+    const lift = (1 + (zf || 0) * LIFT_SCALE) * stackScale(n);
     if (a.kind === 'tank') {
       const img = iconImage(tankIconName(a.tank), scheduleDraw) || iconImage('leaderboard_class_tank', scheduleDraw);
-      const s = 34;
+      const s = 34 * lift;
       const ang = actorHeading(a, t);
+      drawLift(sx, sy, 34, zf || 0);
       ctx.save();
       ctx.translate(sx, sy);
       if (ang !== null) ctx.rotate(-ang);
@@ -1294,8 +1373,10 @@ export function renderMapView(container, file, waveIndex) {
       return;
     }
     const bot = a.bot;
-    const plate = bot.isBoss ? 34 : bot.isGiant ? 28 : 20;
+    const plate = plateSize(a) * lift;
     const r = plate * 0.25;
+    drawLift(sx, sy, plate, zf || 0);
+    if (n > 1) drawStack(sx, sy, plate, r, n, bot.isGiant || bot.isBoss ? GIANT_BG : NORMAL_BG);
     if (bot.alwaysCrit) {
       const halo = plate * 1.125;
       ctx.fillStyle = CRIT_BG[Math.floor(performance.now() / 1000 * CRIT_FPS) % CRIT_BG.length];
@@ -1320,6 +1401,93 @@ export function renderMapView(container, file, waveIndex) {
       ctx.arc(sx, sy, s / 3, 0, Math.PI * 2);
       ctx.fill();
     }
+  }
+
+  function drawCount(sx, sy, plate, n) {
+    const label = '×' + n;
+    ctx.save();
+    ctx.font = 'bold 10px sans-serif';
+    const w = ctx.measureText(label).width + 6;
+    const bx = sx + plate * 0.3, by = sy + plate * 0.36;
+    ctx.fillStyle = 'rgba(12,15,19,.88)';
+    ctx.beginPath();
+    ctx.roundRect(bx, by, w, 13, 3);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.22)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#e6e9ec';
+    ctx.fillText(label, bx + 3, by + 10);
+    ctx.restore();
+  }
+
+  function declutter(shown) {
+    const n = shown.length;
+    for (const q of shown) { q.dx = 0; q.dy = 0; q.n = 1; }
+    if (n < 2) return shown;
+    const order = shown.map((q, i) => i).sort((i, j) =>
+      shown[j].plate - shown[i].plate || shown[i].a.spawnT - shown[j].a.spawnT || i - j);
+    const taken = new Array(n).fill(false);
+    const groups = [];
+    for (const i of order) {
+      if (taken[i]) continue;
+      taken[i] = true;
+      const members = [shown[i]];
+      const reach = shown[i].plate * CLUSTER_GAP;
+      for (const j of order) {
+        if (taken[j]) continue;
+        const dx = shown[i].sx - shown[j].sx, dy = shown[i].sy - shown[j].sy;
+        if (dx * dx + dy * dy >= reach * reach) continue;
+        taken[j] = true;
+        members.push(shown[j]);
+      }
+      groups.push(members);
+    }
+    const out = [];
+    for (const members of groups) {
+      if (members.length === 1) { out.push(members[0]); continue; }
+      const plate = members.reduce((m, q) => Math.max(m, q.plate), 0);
+      const room = plate * SPREAD_LIMIT;
+      const capacity = Math.max(2, Math.floor(Math.PI * 2 * room / plate));
+      if (members.length > capacity) {
+        let cx = 0, cy = 0;
+        for (const q of members) { cx += q.sx; cy += q.sy; }
+        const lead = members[0];
+        lead.sx = cx / members.length;
+        lead.sy = cy / members.length;
+        lead.n = members.length;
+        out.push(lead);
+        continue;
+      }
+      for (let pass = 0; pass < SPREAD_PASSES; pass++) {
+        for (let i = 0; i < members.length; i++) {
+          for (let j = i + 1; j < members.length; j++) {
+            const p = members[i], q = members[j];
+            const need = (p.plate + q.plate) / 2 * CLUSTER_GAP;
+            let dx = p.sx + p.dx - (q.sx + q.dx), dy = p.sy + p.dy - (q.sy + q.dy);
+            let d = Math.hypot(dx, dy);
+            if (d >= need) continue;
+            if (d < 0.01) {
+              const ang = (i * 2.399963 + j * 0.7);
+              dx = Math.cos(ang); dy = Math.sin(ang); d = 1;
+            }
+            const push = (need - d) / 2;
+            p.dx += dx / d * push; p.dy += dy / d * push;
+            q.dx -= dx / d * push; q.dy -= dy / d * push;
+          }
+        }
+      }
+      for (const q of members) {
+        const d = Math.hypot(q.dx, q.dy);
+        const cap = q.plate * SPREAD_LIMIT;
+        if (d > cap) { q.dx *= cap / d; q.dy *= cap / d; }
+        q.sx += q.dx;
+        q.sy += q.dy;
+        out.push(q);
+      }
+    }
+    out.sort((p, q) => p.zf - q.zf);
+    return out;
   }
 
   function drawSquadLinks(positions) {
@@ -1393,10 +1561,13 @@ export function renderMapView(container, file, waveIndex) {
     if (model === 'damage' && zMode !== 'off' && mapData.nav) drawZones();
     drawOverlayStatic();
     const t = ps.t;
-    if (ps.showRoute !== false && ai.route) drawRoute(ctx, ai.route, toScreen, t);
+    if (ps.showRoute !== false && ai.route) {
+      const bi = Math.max(0, Math.min(ai.bomb.samples.length - 1, Math.round(t / STEP)));
+      drawRoute(ctx, ai.route, toScreen, t, routeProgress(ai.route, ai.bomb.samples[bi]));
+    }
     let alive = 0;
     lastPositions = [];
-    const shown = [];
+    const visible = [];
     const pad = 40;
     for (const a of ai.actors) {
       if (t < a.spawnT || t > a.dieT) continue;
@@ -1405,11 +1576,16 @@ export function renderMapView(container, file, waveIndex) {
       alive++;
       const [sx, sy] = toScreen(p[0], p[1]);
       if (sx < -pad || sy < -pad || sx > w + pad || sy > h + pad) continue;
-      shown.push({ a, sx, sy });
+      visible.push({ a, sx, sy, plate: plateSize(a), zf: heightFrac(a, t) });
     }
+    visible.sort((p, q) => p.zf - q.zf);
+    const shown = declutter(visible);
     lastPositions = shown;
     drawSquadLinks(shown);
-    for (const q of shown) drawActor(q.a, t, q.sx, q.sy);
+    for (const q of shown) drawActor(q.a, t, q.sx, q.sy, q.zf, q.n);
+    for (const q of shown) {
+      if (q.n > 1) drawCount(q.sx, q.sy, q.plate * (1 + q.zf * LIFT_SCALE) * stackScale(q.n), q.n);
+    }
     drawBomb(t);
     timeLbl.textContent = fmtTime(t) + ' / ' + fmtTime(waveEnd) + ' — ' + alive + ' active';
     drawMini();
@@ -1586,16 +1762,18 @@ export function renderMapView(container, file, waveIndex) {
     if (ps.hover) { ps.hover = null; scheduleDraw(); }
     if (e.target !== canvas) { hideTip(); return; }
     const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-    let best = null, bestD = 240;
+    let hit = null, bestD = 240;
     for (const lp of lastPositions) {
       const d = (lp.sx - mx) ** 2 + (lp.sy - my) ** 2;
-      if (d < bestD) { bestD = d; best = lp.a; }
+      if (d < bestD) { bestD = d; hit = lp; }
     }
-    if (best) {
+    if (hit) {
+      const best = hit.a;
       const died = Number.isFinite(best.dieT) ? ' · dies ' + fmtTime(best.dieT) : '';
+      const stacked = hit.n > 1 ? `\nstacked with ${hit.n - 1} more here` : '';
       const label = best.kind === 'tank'
-        ? `Tank — ${best.tank.health} HP · ${best.tank.speed} HU/s${died}\nfrom "${best.ws.name || 'unnamed'}"`
-        : `${botDisplayName(best.bot)} — ${best.bot.health} HP · ${Math.round(botMaxSpeed(best.bot, false))} HU/s\n${best.state}${best.squadId ? ' · squad ' + best.squadRole : ''}\nfrom "${best.ws.name || 'unnamed'}" · spawned ${fmtTime(best.spawnT)}${died}`;
+        ? `Tank — ${best.tank.health} HP · ${best.tank.speed} HU/s${died}\nfrom "${best.ws.name || 'unnamed'}"${stacked}`
+        : `${botDisplayName(best.bot)} — ${best.bot.health} HP · ${Math.round(botMaxSpeed(best.bot, false))} HU/s\n${best.state}${best.squadId ? ' · squad ' + best.squadRole : ''}\nfrom "${best.ws.name || 'unnamed'}" · spawned ${fmtTime(best.spawnT)}${died}${stacked}`;
       showTip(label, e.clientX, e.clientY);
     } else hideTip();
   }
