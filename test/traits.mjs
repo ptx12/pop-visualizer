@@ -59,6 +59,30 @@ check('an attribute selector may be a plain string', (() => {
   return botOf('Class Pyro ItemAttributes { "rafmod flat bonus" 7 }').flatBonus === 7;
 })());
 
+const STOCK_FLAGS = ['removeondeath', 'aggressive', 'isnpc', 'suppressfire', 'disabledodge',
+  'becomespectatorondeath', 'quotamananged', 'retainbuildings', 'spawnwithfullcharge', 'alwayscrit',
+  'ignoreenemies', 'holdfireuntilfullreload', 'prioritizedefense', 'alwaysfireweapon', 'teleporttohint',
+  'miniboss', 'usebosshealthbar', 'ignoreflag', 'autojump', 'airchargeonly', 'prefervaccinatorbullets',
+  'prefervaccinatorblast', 'prefervaccinatorfire', 'bulletimmune', 'blastimmune', 'fireimmune',
+  'parachute', 'projectileshield'];
+check('every attribute in the TF2 AttributeType enum is registered',
+  STOCK_FLAGS.every(f => knownBotFlags().includes(f)),
+  STOCK_FLAGS.filter(f => !knownBotFlags().includes(f)).join(','));
+check('the popfile spelling of the vaccinator attributes is registered',
+  ['vaccinatorbullets', 'vaccinatorblast', 'vaccinatorfire'].every(f => knownBotFlags().includes(f)));
+
+const raf = botOf('Class Soldier NoPushAway 1 NoBombUpgrades 1 BehaviorModifiers push MaxVisionRange 900 Attributes BulletImmune Attributes BlastImmune ItemAttributes { "cannot pick up intelligence" 1 } CharacterAttributes { "health from healers reduced" 0.25  "health regen" -1 }');
+check('NoPushAway is read', raf.noPushAway === true);
+check('NoBombUpgrades is read', raf.noBombUpgrades === true);
+check('BehaviorModifiers push marks the bot aggressive', raf.aggressive === true);
+check('BehaviorModifiers is recorded verbatim too', raf.behaviorModifiers.join(',') === 'push', raf.behaviorModifiers.join(','));
+check('MaxVisionRange lands in the combat bag', raf.combat.maxvisionrange === '900', JSON.stringify(raf.combat));
+check('immunities collect into a set', raf.immune.has('bullet') && raf.immune.has('blast'));
+check('"cannot pick up intelligence" implies IgnoreFlag', raf.ignoreFlag === true);
+check('"health from healers reduced" scales the heal rate', raf.healRateMult === 0.25, String(raf.healRateMult));
+check('negative "health regen" is kept as a drain', raf.healthRegen === -1, String(raf.healthRegen));
+check('a mobber modifier is distinct from push', botOf('Class Soldier BehaviorModifiers mobber').mobber === true);
+
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');
 if (fail) process.exit(1);

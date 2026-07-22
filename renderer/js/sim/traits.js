@@ -127,7 +127,9 @@ registerTraits([
 const KNOWN_FLAGS = [
   'removeondeath', 'suppressfire', 'disabledodge', 'becomespectatorondeath', 'quotamananged',
   'retainbuildings', 'spawnwithfullcharge', 'holdfireuntilfullreload', 'prioritizedefense',
-  'alwaysfireweapon', 'prefervaccinatorbullets', 'prefervaccinatorblast', 'prefervaccinatorfire', 'isnpc'
+  'alwaysfireweapon', 'isnpc',
+  'prefervaccinatorbullets', 'prefervaccinatorblast', 'prefervaccinatorfire',
+  'vaccinatorbullets', 'vaccinatorblast', 'vaccinatorfire'
 ];
 registerTraits(KNOWN_FLAGS.map(f => ({ id: 'flag-' + f, flag: f, apply(info) { info.knownFlags.add(f); } })));
 
