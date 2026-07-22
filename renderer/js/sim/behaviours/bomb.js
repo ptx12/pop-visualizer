@@ -2,7 +2,15 @@ const DEPLOY_TIME = 1.9;
 const PICKUP_RANGE = 64;
 const AUTO_FLAG_AGE = 1.0;
 const FLAG_ESCORT_RANGE = 500;
+const FLAG_ESCORT_GIVE_UP_RANGE = 1000;
+const FLAG_ESCORT_MAX_COUNT = 4;
 const DEPLOY_RANGE = 60;
+
+function escortCount(ctx) {
+  let n = 0;
+  for (const x of ctx.live) if (x.state === 'escortFlagCarrier') n++;
+  return n;
+}
 
 export const fetchFlag = {
   id: 'fetchFlag',
@@ -60,7 +68,9 @@ export const escortFlagCarrier = {
     }
     const c = bomb.carrier.pos;
     const d = Math.hypot(c[0] - a.pos[0], c[1] - a.pos[1]);
+    if (d > FLAG_ESCORT_GIVE_UP_RANGE) { a.state = 'pushToPoint'; return; }
     if (d <= FLAG_ESCORT_RANGE * 0.5) return;
+    if (escortCount(ctx) > FLAG_ESCORT_MAX_COUNT) { a.state = 'pushToPoint'; return; }
     const field = bomb.carrier.areaId != null ? ctx.navOf(a).flowField(bomb.carrier.areaId) : null;
     ctx.moveField(a, field, [c[0] + a.jx, c[1] + a.jy], dt, speed);
   }

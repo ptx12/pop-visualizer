@@ -3,13 +3,14 @@ import { separation } from './systems/separation.js';
 import { healing } from './systems/healing.js';
 import { bombFollow, record, bombTrail } from './systems/record.js';
 import { damageZones } from './systems/damage.js';
+import { carrierRegen } from './systems/regen.js';
 
 export const systems = createRegistry('system', {
   required: ['step'],
   optional: ['init', 'spawn', 'requires']
 });
 
-systems.registerAll([separation, healing, bombFollow, record, damageZones, bombTrail]);
+systems.registerAll([separation, healing, carrierRegen, bombFollow, record, damageZones, bombTrail]);
 
 export function buildPipeline(ctx, capabilities) {
   const active = systems.enabled(capabilities);
