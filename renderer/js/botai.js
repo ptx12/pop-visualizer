@@ -28,6 +28,7 @@ const HULL_HEIGHT = 82;
 const MINIBOSS_SCALE = 1.75;
 const MAX_SEPARATION_FORCE = 256;
 const SEPARATION_SUBSTEPS = 2;
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 const MEDIC_STOP_FOLLOW_RANGE = 75;
 const MEDIC_START_FOLLOW_RANGE = 250;
 const MEDIC_MAX_HEAL_RANGE = 600;
@@ -467,6 +468,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
   const actors = [];
   let squadSeq = 0;
+  let jitterSeq = 0;
   for (const ws of wave.wavespawns) {
     if (ws.isLogic) continue;
     const r = sim.results.get(ws);
@@ -635,8 +637,10 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     }
     a.areaId = home ? home.id : null;
     a.homeArea = a.areaId;
-    a.jx = (rng() * 2 - 1) * 26;
-    a.jy = (rng() * 2 - 1) * 26;
+    const jang = jitterSeq++ * GOLDEN_ANGLE + rng() * 0.5;
+    const jr = 18 + rng() * 8;
+    a.jx = Math.cos(jang) * jr;
+    a.jy = Math.sin(jang) * jr;
     a.zs = [];
     if (a.kind === 'tank') { a.state = 'tank'; return; }
     if (clsOf(a) === 'medic') { a.patient = null; a.following = false; a.healed = 0; }
