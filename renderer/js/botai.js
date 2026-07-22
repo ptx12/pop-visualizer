@@ -768,60 +768,73 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     a.pos[1] = Math.min(Math.max(ny, cur.nw[1]), cur.se[1]);
   }
 
-  function hullOf(a) {
-    const s = botScale(a.bot);
-    return { xy: HULL_HALF_XY * s, z: HULL_HEIGHT * s };
-  }
+  const sepAct = new Array(actors.length);
+  const sepHX = new Float64Array(actors.length);
+  const sepHZ = new Float64Array(actors.length);
+  const sepZC = new Float64Array(actors.length);
+  const sepDX = new Float64Array(actors.length);
+  const sepDY = new Float64Array(actors.length);
+  const sepHit = new Int32Array(actors.length);
+  const sepPX = new Float64Array(actors.length);
+  const sepPY = new Float64Array(actors.length);
 
   function separate(dt) {
     for (let s = 0; s < SEPARATION_SUBSTEPS; s++) separatePass(dt / SEPARATION_SUBSTEPS);
   }
 
   function separatePass(dt) {
-    const list = [];
+    let n = 0;
     for (const a of live) {
       if (a.kind !== 'bot' || !a.pos) continue;
-      const h = hullOf(a);
-      list.push({ a, hx: h.xy, hz: h.z, zc: (a.z || 0) + h.z / 2 });
+      const s = botScale(a.bot);
+      sepAct[n] = a;
+      sepPX[n] = a.pos[0];
+      sepPY[n] = a.pos[1];
+      sepHX[n] = HULL_HALF_XY * s;
+      sepHZ[n] = HULL_HEIGHT * s;
+      sepZC[n] = (a.z || 0) + HULL_HEIGHT * s / 2;
+      n++;
     }
-    if (list.length < 2) return;
-    const moves = [];
-    for (let i = 0; i < list.length; i++) {
-      const me = list[i];
-      let hit = null;
-      for (let j = 0; j < list.length; j++) {
+    if (n < 2) return;
+    let moves = 0;
+    for (let i = 0; i < n; i++) {
+      let hx = 0, hy = 0, hj = -1;
+      for (let j = 0; j < n; j++) {
         if (i === j) continue;
-        const other = list[j];
-        const dx = other.a.pos[0] - me.a.pos[0], dy = other.a.pos[1] - me.a.pos[1];
-        const rx = me.hx + other.hx;
-        if (Math.abs(dx) >= rx || Math.abs(dy) >= rx) continue;
-        if (Math.abs(other.zc - me.zc) >= (me.hz + other.hz) / 2) continue;
-        hit = { other, dx, dy };
+        const dx = sepPX[j] - sepPX[i], dy = sepPY[j] - sepPY[i];
+        const rx = sepHX[i] + sepHX[j];
+        if (dx >= rx || dx <= -rx || dy >= rx || dy <= -rx) continue;
+        const dz = sepZC[j] - sepZC[i];
+        const rz = (sepHZ[i] + sepHZ[j]) / 2;
+        if (dz >= rz || dz <= -rz) continue;
+        hx = dx; hy = dy; hj = j;
         break;
       }
-      if (!hit) continue;
-      let ddx = hit.dx, ddy = hit.dy;
-      if (ddx * ddx + ddy * ddy < 1e-4) { ddx = me.a.jx; ddy = me.a.jy; }
-      const dist = Math.hypot(hit.dx, hit.dy);
-      const avoidRadius = hit.other.hx * 2 * Math.SQRT2;
+      if (hj < 0) continue;
+      const a = sepAct[i];
+      const dist = Math.hypot(hx, hy);
+      const avoidRadius = sepHX[hj] * 2 * Math.SQRT2;
       const push = avoidRadius > 0
         ? Math.min(MAX_SEPARATION_FORCE, Math.max(0, (avoidRadius - dist) / avoidRadius * MAX_SEPARATION_FORCE))
         : 0;
       if (push < 0.01) continue;
-      const a = me.a;
-      const n = a.samples.length;
-      let vx = n >= 2 ? a.pos[0] - a.samples[n - 2] : 0;
-      let vy = n >= 2 ? a.pos[1] - a.samples[n - 1] : 0;
-      const moved = Math.hypot(vx, vy);
-      if (moved < 0.1) { vx = Math.cos(a.heading || 0); vy = Math.sin(a.heading || 0); }
+      let ddx = hx, ddy = hy;
+      if (ddx * ddx + ddy * ddy < 1e-4) { ddx = a.jx; ddy = a.jy; }
+      const sn = a.samples.length;
+      let vx = sn >= 2 ? a.pos[0] - a.samples[sn - 2] : 0;
+      let vy = sn >= 2 ? a.pos[1] - a.samples[sn - 1] : 0;
+      if (Math.hypot(vx, vy) < 0.1) { vx = Math.cos(a.heading || 0); vy = Math.sin(a.heading || 0); }
       let px = -vy, py = vx;
       const plen = Math.hypot(px, py) || 1;
       px /= plen; py /= plen;
       if (ddx * px + ddy * py >= 0) { px = -px; py = -py; }
       const slide = Math.min(push, botMaxSpeed(a.bot, bomb.carrier === a)) * dt;
-      moves.push([a, px * slide, py * slide]);
+      sepHit[moves] = i;
+      sepDX[moves] = px * slide;
+      sepDY[moves] = py * slide;
+      moves++;
     }
-    for (const [a, dx, dy] of moves) nudge(a, dx, dy);
+    for (let k = 0; k < moves; k++) nudge(sepAct[sepHit[k]], sepDX[k], sepDY[k]);
   }
 
   function healTarget(a) {
