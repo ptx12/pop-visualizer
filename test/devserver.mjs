@@ -15,7 +15,14 @@ const types = {
 createServer(async (req, res) => {
   try {
     let url = decodeURIComponent(req.url.split('?')[0]);
-    if (url === '/') url = '/renderer/index.html';
+    if (url === '/') {
+      // index.html loads js/app.js relative to its own URL; redirect so the base
+      // becomes /renderer/ (serving index.html at / would 404 every relative import).
+      const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+      res.writeHead(302, { Location: '/renderer/index.html' + query });
+      res.end();
+      return;
+    }
     const file = normalize(join(root, url));
     if (!file.startsWith(normalize(root))) { res.writeHead(403); res.end(); return; }
     const st = await stat(file);
