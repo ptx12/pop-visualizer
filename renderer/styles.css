@@ -304,6 +304,11 @@ body.no-file #sidebar, body.no-file #inspector { display: none; }
 .nav-wave-bots { color: var(--fg-faint); font-size: var(--fs-meta); flex: none; }
 .nav-wave-chips { margin-top: 6px; }
 
+.nav-waves { display: flex; flex-direction: column; gap: 5px; }
+.nav-wave { background: var(--bg1); border-color: var(--line); }
+.nav-wave:hover { border-color: var(--line2); }
+.nav-wave.active { border-color: var(--accent-dim); }
+
 .lint-badge {
   font-size: var(--fs-micro); padding: 0 4px; border-radius: var(--r-sm); font-weight: 700;
 }

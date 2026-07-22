@@ -310,8 +310,7 @@ function buildHeader(container, file, wave, sim, waveIndex, refit) {
       el('span', { class: 'muted', text: `${wave.totalBots} bots` + (wave.supportBots ? ` +${wave.supportBots} support` : '') + (wave.tankCount ? ` · ${wave.tankCount} tank${wave.tankCount > 1 ? 's' : ''}` : '') }),
       el('span', { class: 'cash', text: '$' + wave.totalCurrency }),
       wave.totalHP > 0 ? el('span', { class: 'muted', title: 'Combined robot health (support excluded, RandomChoice averaged)', text: '≈' + fmtCompact(wave.totalHP) + ' HP' }) : null,
-      el('span', { class: 'muted', text: '~' + fmtTime(sim.waveEnd) }),
-      sim.peak.active > 0 ? el('span', { class: 'muted', title: 'Peak simultaneous robots (simulated) / mission RobotLimit', text: `peak ${sim.peak.active} @ ${fmtTime(sim.peak.t)} / ${sim.robotLimit}` }) : null
+      el('span', { class: 'muted', text: '~' + fmtTime(sim.waveEnd) })
     ),
     actions);
 }
@@ -1041,17 +1040,6 @@ function buildInsights(file, wave, sim) {
   const fact = (label, value, title) => facts.push(el('span', { class: 'insight-fact', title: title || '' },
     el('span', { class: 'insight-k', text: label }),
     el('span', { class: 'insight-v', text: value })));
-  const peak = sim.peak;
-  if (peak.active > 0) {
-    const contributors = [];
-    for (const ws of wave.wavespawns) {
-      const r = sim.results.get(ws);
-      if (!r) continue;
-      const active = r.events.some(ev => ev.t <= peak.t && peak.t <= ev.t + r.life);
-      if (active) contributors.push(ws.name || (ws.bots[0] && ws.bots[0].bot ? ws.bots[0].bot.cls : 'ws'));
-    }
-    fact('Peak robots', `${peak.active} @ ${fmtTime(peak.t)}`, contributors.join(', '));
-  }
   const supports = wave.wavespawns.filter(w => w.support === 'unlimited');
   if (supports.length) fact('Endless support', String(supports.length), supports.map(w => w.name || 'unnamed').join(', '));
   const logic = wave.wavespawns.filter(w => w.isLogic);
