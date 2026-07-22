@@ -42,6 +42,10 @@ export function classIconName(cls) {
   return null;
 }
 
+export function tankIconName(tank) {
+  return tank && tank.icon ? 'leaderboard_class_' + tank.icon.toLowerCase() : 'leaderboard_class_tank';
+}
+
 export function iconURL(name) {
   if (!name) return null;
   const hit = cache.get(name.toLowerCase());
@@ -58,7 +62,10 @@ export function collectIconNames(model) {
   };
   for (const wave of model.waves) {
     for (const ws of wave.wavespawns) {
-      for (const b of ws.bots) if (b.bot) addBot(b.bot);
+      for (const b of ws.bots) {
+        if (b.bot) addBot(b.bot);
+        else if (b.tank) names.add(tankIconName(b.tank));
+      }
     }
   }
   for (const m of model.missions) {

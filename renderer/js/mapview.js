@@ -1,7 +1,7 @@
 import { el, clear, showTip, hideTip, fmtTime, loader } from './ui.js';
 import { simFor, emit, onChange, deathModel, navTogglesFor, bombPathRerollsFor } from './state.js';
 import { CLASS_INFO, botDisplayName } from './popmodel.js';
-import { getTFPath, iconURL, iconNameFor, classIconName } from './icons.js';
+import { getTFPath, iconURL, iconNameFor, classIconName, tankIconName } from './icons.js';
 import { native } from './native.js';
 import { createBotSim, actorPosAt, botMaxSpeed, buildTrackChains, dpsProfile, objectiveCandidates, bombPathGroups, STEP } from './botai.js';
 import { primaryColor } from './timeline.js';
@@ -137,10 +137,10 @@ function wsIconNames(members) {
   for (const ws of members) {
     for (const b of ws.bots) {
       if (names.length >= 3) break;
-      if (b.tank) push('leaderboard_class_tank');
+      if (b.tank) push(tankIconName(b.tank));
       else if (b.bot) push(iconNameFor(b.bot) || classIconName(b.bot.cls));
     }
-    if (!names.length && ws.isTank) push('leaderboard_class_tank');
+    if (!names.length && ws.isTank) push(tankIconName((ws.bots.find(b => b.tank) || {}).tank));
   }
   return names;
 }
@@ -875,6 +875,13 @@ export function renderMapView(container, file, waveIndex) {
     return;
   }
   const resimulating = !run.ai;
+  if (resimulating) {
+    if (ps.playing) ps.resumeAfterSim = true;
+    ps.playing = false;
+  } else if (ps.resumeAfterSim) {
+    ps.resumeAfterSim = false;
+    ps.playing = true;
+  }
   const ai = run.ai || run.staleAi;
   const waveEnd = ai.end;
   ps.t = Math.min(ps.t, waveEnd);
@@ -935,7 +942,8 @@ export function renderMapView(container, file, waveIndex) {
     mini, timeLbl, nextLbl,
     el('span', { class: 'map-group' }, fitBtn, modeSeg),
     displayBtn,
-    el('span', { class: 'map-note', text: mapData.map + ' — ' + navNote }));
+    el('span', { class: 'map-note', text: mapData.map + ' — ' + navNote }),
+    file.mapTexReq ? el('span', { class: 'map-baking', title: 'Reading the map textures — surfaces stay flat until this finishes', text: 'baking textures…' }) : null);
 
   function buildOptionsPanel() {
     const panel = el('div', { class: 'map-opts map-tools' });
@@ -1264,7 +1272,7 @@ export function renderMapView(container, file, waveIndex) {
 
   function drawActor(a, t, sx, sy) {
     if (a.kind === 'tank') {
-      const img = iconImage('leaderboard_class_tank', scheduleDraw);
+      const img = iconImage(tankIconName(a.tank), scheduleDraw) || iconImage('leaderboard_class_tank', scheduleDraw);
       const s = 34;
       const ang = actorHeading(a, t);
       ctx.save();

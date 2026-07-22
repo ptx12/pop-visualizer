@@ -744,18 +744,17 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       }
       const dt = STEP;
       if (a.kind === 'tank') {
-        let tculled = false;
-        for (const kp of killPoints) {
-          const p0 = a.pos || (a.spawnPos ? a.spawnPos : objective);
-          const dx = kp[0] - p0[0], dy = kp[1] - p0[1];
-          const rr = kp[2] || 200;
-          if (dx * dx + dy * dy < rr * rr) { killActor(a, t); tculled = true; break; }
-        }
-        if (tculled) continue;
         if (a.chain) {
           const p = chainPointAt(a.chain, a.speed * (t - a.spawnT));
           a.pos = [p[0], p[1]];
         } else a.pos = a.pos || (a.spawnPos ? a.spawnPos.slice(0, 2) : objective.slice(0, 2));
+        let tculled = false;
+        for (const kp of killPoints) {
+          const dx = kp[0] - a.pos[0], dy = kp[1] - a.pos[1];
+          const rr = kp[2] || 200;
+          if (dx * dx + dy * dy < rr * rr) { killActor(a, t); tculled = true; break; }
+        }
+        if (tculled) continue;
         if (hasNav) {
           const na = nav.areaAt(a.pos, a.areaId);
           if (na) a.areaId = na.id;

@@ -1,5 +1,5 @@
 import { CLASS_INFO, botDisplayName } from './popmodel.js';
-import { iconURL, iconNameFor, classIconName } from './icons.js';
+import { iconURL, iconNameFor, classIconName, tankIconName } from './icons.js';
 
 const SKILL_COLORS = { easy: '#74c66a', normal: '#e3c74e', hard: '#e2913c', expert: '#d4504a' };
 
@@ -78,7 +78,7 @@ export function botVisual(bot, opts = {}) {
 }
 
 export function tankVisual(tank, opts = {}) {
-  const url = iconURL('leaderboard_class_tank');
+  const url = iconURL(tankIconName(tank)) || iconURL('leaderboard_class_tank');
   if (!url) return tankChip(tank, opts);
   const wrap = el('span', {
     class: 'boticon bi-tankicon' + (opts.random ? ' bi-random' : '') + (opts.size ? ' bi-' + opts.size : ''),

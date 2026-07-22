@@ -3,9 +3,20 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { decodeVTF } from '../shared/vtf.js';
 import { indexVPK, readVPKEntry } from '../shared/vpk.js';
+import { pakEntries, readPakEntry } from '../shared/bsp.js';
 import { detectTFPath } from './tfpath.js';
 
 const matVpkIndexes = new Map();
+
+function pakIndexFor(bspPath) {
+  const index = new Map();
+  try {
+    for (const e of pakEntries(bspPath)) {
+      if (/^materials\/.*\.(vmt|vtf)$/.test(e.name)) index.set(e.name, e);
+    }
+  } catch {}
+  return index;
+}
 
 function matVpkIndex(vpkPath, ext) {
   const key = vpkPath + ':' + ext;
@@ -18,7 +29,7 @@ function matVpkIndex(vpkPath, ext) {
   return map;
 }
 
-export async function readMaterialFile(rel, tfPath) {
+export async function readMaterialFile(rel, tfPath, pak) {
   rel = rel.replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
   const ext = rel.split('.').pop();
   for (const root of [path.join(tfPath, 'download'), tfPath]) {
@@ -31,6 +42,10 @@ export async function readMaterialFile(rel, tfPath) {
       try { return await fs.readFile(path.join(tfPath, 'custom', c.name, rel)); } catch {}
     }
   } catch {}
+  if (pak) {
+    const entry = pak.index.get(rel);
+    if (entry) { try { return readPakEntry(pak.path, entry); } catch {} }
+  }
   for (const vpkName of ext === 'vtf' ? ['tf2_textures_dir.vpk', 'tf2_misc_dir.vpk'] : ['tf2_misc_dir.vpk']) {
     const vpk = path.join(tfPath, vpkName);
     const entry = matVpkIndex(vpk, ext).get(rel);
@@ -39,14 +54,15 @@ export async function readMaterialFile(rel, tfPath) {
   return null;
 }
 
-export function makeMaterialLoader(tfPath) {
+export function makeMaterialLoader(tfPath, bspPath) {
   const vmtCache = new Map();
   const decCache = new Map();
+  const pak = bspPath ? { path: bspPath, index: pakIndexFor(bspPath) } : null;
   return async name => {
     if (decCache.has(name)) return decCache.get(name);
     let base = vmtCache.get(name);
     if (base === undefined) {
-      const vmtBuf = await readMaterialFile('materials/' + name + '.vmt', tfPath);
+      const vmtBuf = await readMaterialFile('materials/' + name + '.vmt', tfPath, pak);
       const text = vmtBuf ? vmtBuf.toString('latin1') : '';
       let m = text.match(/["']?\$basetexture["']?\s+["']?([^"'\r\n]+?)["']?\s*$/im);
       if (!m) m = text.match(/["']?\$basetexture2["']?\s+["']?([^"'\r\n]+?)["']?\s*$/im);
@@ -58,7 +74,7 @@ export function makeMaterialLoader(tfPath) {
       const key = 'materials/' + base + '.vtf';
       if (decCache.has(key)) out = decCache.get(key);
       else {
-        const vtfBuf = await readMaterialFile(key, tfPath);
+        const vtfBuf = await readMaterialFile(key, tfPath, pak);
         if (vtfBuf) { try { const d = decodeVTF(vtfBuf); if (d) out = { rgba: d.rgba, width: d.width, height: d.height }; } catch {} }
         decCache.set(key, out);
       }

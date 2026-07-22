@@ -226,7 +226,7 @@ export function register() {
     let result = null;
     try {
       const data = await mapDataFor(best, tfPath, popDir);
-      const baked = await bakeTopDown(best.full, makeMaterialLoader(tfPath), {
+      const baked = await bakeTopDown(best.full, makeMaterialLoader(tfPath, best.full), {
         nav: data ? data.nav : (await loadNavFor(best, tfPath, popDir)).nav,
         spawns: data ? data.spawns : [],
         tracks: data ? data.tracks : []

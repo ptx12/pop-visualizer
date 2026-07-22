@@ -310,7 +310,8 @@ function buildHeader(container, file, wave, sim, waveIndex, refit) {
       el('span', { class: 'muted', text: `${wave.totalBots} bots` + (wave.supportBots ? ` +${wave.supportBots} support` : '') + (wave.tankCount ? ` · ${wave.tankCount} tank${wave.tankCount > 1 ? 's' : ''}` : '') }),
       el('span', { class: 'cash', text: '$' + wave.totalCurrency }),
       wave.totalHP > 0 ? el('span', { class: 'muted', title: 'Combined robot health (support excluded, RandomChoice averaged)', text: '≈' + fmtCompact(wave.totalHP) + ' HP' }) : null,
-      el('span', { class: 'muted', text: '~' + fmtTime(sim.waveEnd) })
+      el('span', { class: 'muted', text: '~' + fmtTime(sim.waveEnd) }),
+      el('span', { class: 'muted', title: 'Mission RobotLimit — the most robots that can be alive at once', text: 'limit ' + sim.robotLimit })
     ),
     actions);
 }

@@ -148,6 +148,7 @@ export function parseSpawner(node, templates) {
       health: getNumber(node, 'Health', 50000),
       speed: getNumber(node, 'Speed', 75),
       name: getValue(node, 'Name', 'tankboss'),
+      icon: getValue(node, 'ClassIcon', null),
       startNode: getValue(node, 'StartingPathTrackNode', null)
     };
   }
