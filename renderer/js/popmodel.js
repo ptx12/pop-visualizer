@@ -1,3 +1,4 @@
+import { SPAWNER_KEYS, parseSpawnerNode } from './sim/spawners.js';
 import { findAll, findFirst, getValue, getNumber } from './kv.js';
 
 export const CLASS_INFO = {
@@ -28,7 +29,7 @@ export function normalizeClass(name) {
   return CLASS_ALIASES[String(name).toLowerCase().replace(/[^a-z]/g, '')] || null;
 }
 
-export const SPAWNER_KEYS = new Set(['tfbot', 'tank', 'squad', 'randomchoice', 'mob', 'sentrygun', 'randomplacement', 'halloweenboss', 'botnpc', 'pointtemplate']);
+export { SPAWNER_KEYS };
 const WS_OUTPUT_KEYS = ['firstspawnoutput', 'lastspawnoutput', 'doneoutput', 'startwaveoutput'];
 const WS_SOUND_KEYS = ['firstspawnwarningsound', 'lastspawnwarningsound', 'donewarningsound', 'startwavewarningsound', 'sound'];
 const WAVE_NONSPAWN_BLOCKS = new Set(['startwaveoutput', 'doneoutput', 'initwaveoutput', 'explanation', 'soundloop']);
@@ -200,47 +201,14 @@ function applyBotBlock(node, info, templates, stack) {
 }
 
 export function parseSpawner(node, templates) {
-  const key = node.key.toLowerCase();
-  if (key === 'tfbot') {
-    const bot = resolveBot(node, templates);
-    return { kind: 'bot', node, bot, count: 1 };
-  }
-  if (key === 'tank') {
-    return {
-      kind: 'tank', node, count: 1,
-      health: getNumber(node, 'Health', 50000),
-      speed: getNumber(node, 'Speed', 75),
-      name: getValue(node, 'Name', 'tankboss'),
-      icon: getValue(node, 'ClassIcon', null),
-      startNode: getValue(node, 'StartingPathTrackNode', null)
-    };
-  }
-  if (key === 'squad') {
-    const children = node.children.filter(c => c.type === 'block' && SPAWNER_KEYS.has(c.key.toLowerCase())).map(c => parseSpawner(c, templates));
-    return { kind: 'squad', node, children, count: children.reduce((s, c) => s + c.count, 0) };
-  }
-  if (key === 'randomchoice' || key === 'randomplacement') {
-    const children = node.children.filter(c => c.type === 'block' && SPAWNER_KEYS.has(c.key.toLowerCase())).map(c => parseSpawner(c, templates));
-    const cnt = key === 'randomplacement' ? Math.max(1, getNumber(node, 'Count', children.length)) : 1;
-    return { kind: 'random', node, children, count: cnt, placement: key === 'randomplacement' };
-  }
-  if (key === 'mob') {
-    const inner = node.children.filter(c => c.type === 'block' && SPAWNER_KEYS.has(c.key.toLowerCase())).map(c => parseSpawner(c, templates));
-    return { kind: 'mob', node, children: inner, count: Math.max(1, getNumber(node, 'Count', 1)) };
-  }
-  if (key === 'sentrygun') {
-    return { kind: 'sentry', node, count: 1, level: getNumber(node, 'Level', 1) };
-  }
-  if (key === 'botnpc') {
-    return { kind: 'other', node, label: getValue(node, 'Name', 'BotNpc'), health: getNumber(node, 'Health', 0), count: 1 };
-  }
-  if (key === 'halloweenboss') {
-    return { kind: 'other', node, label: getValue(node, 'BossType', 'HalloweenBoss'), count: 1 };
-  }
-  if (key === 'pointtemplate') {
-    return { kind: 'other', node, label: getValue(node, 'Name', 'PointTemplate'), count: 1 };
-  }
-  return { kind: 'other', node, label: node.key, count: 1 };
+  return parseSpawnerNode(node, {
+    templates,
+    getValue, getNumber,
+    resolveBot: n => resolveBot(n, templates),
+    parseChildren: n => n.children
+      .filter(c => c.type === 'block' && SPAWNER_KEYS.has(c.key.toLowerCase()))
+      .map(c => parseSpawner(c, templates))
+  });
 }
 
 export function flattenBots(spawner, out = [], mult = 1) {

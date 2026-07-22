@@ -1,6 +1,7 @@
 import { buildNavGraphWasm, navWasmReady } from './navwasm.js';
 import { buildPipeline } from './sim/systems.js';
 import { behaviours, selectBehaviour } from './sim/behaviours.js';
+import { instantiateSpawner } from './sim/spawners.js';
 import { RANGES, healTarget } from './sim/systems/healing.js';
 import {
   CLASS_BASE_SPEED, TF_MAX_SPEED, STEP, CARRIER_PENALTY,
@@ -433,28 +434,18 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       }
       continue;
     }
-    const instantiate = sp => {
-      if (!sp) return { entries: [], squad: false };
-      if (sp.kind === 'bot') return { entries: [{ bot: sp.bot }], squad: false };
-      if (sp.kind === 'randomchoice') {
-        const kids = (sp.children || []).filter(Boolean);
-        if (!kids.length) return { entries: [], squad: false };
-        return instantiate(kids[Math.floor(rng() * kids.length)]);
-      }
+    const collect = sp => {
       const entries = [];
       const walk = s => {
         if (!s) return;
         if (s.kind === 'bot') entries.push({ bot: s.bot });
-        else if (s.kind === 'randomchoice') {
-          const kids = (s.children || []).filter(Boolean);
-          if (kids.length) walk(kids[Math.floor(rng() * kids.length)]);
-        } else if (s.children) {
-          for (const c of s.children) walk(c);
-        }
+        else if (s.children) for (const c of s.children) walk(c);
       };
       walk(sp);
-      return { entries, squad: sp.kind === 'squad' };
+      return entries;
     };
+    const instantiate = sp => instantiateSpawner(sp, { rng, collect });
+
     let pending = [];
     let pendingSquadId = null;
     let pendingIdx = 0;
