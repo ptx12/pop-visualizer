@@ -30,6 +30,9 @@ const SPREAD_LIMIT = 0.9;
 const SPREAD_PASSES = 3;
 const LIFT_SHADOW = 0.5;
 const LIFT_SCALE = 0.14;
+const PLATE_REF_SCALE = 20 / 48;
+const PLATE_ZOOM_MIN = 0.6;
+const PLATE_ZOOM_MAX = 1.7;
 
 onChange(what => { if (what === 'icons') imgCache.clear(); });
 
@@ -1313,8 +1316,9 @@ export function renderMapView(container, file, waveIndex) {
   }
 
   function plateSize(a) {
-    if (a.kind === 'tank') return 34;
-    return a.bot.isBoss ? 34 : a.bot.isGiant ? 28 : 20;
+    const base = a.kind === 'tank' ? 34 : a.bot.isBoss ? 34 : a.bot.isGiant ? 28 : 20;
+    const zoom = Math.min(PLATE_ZOOM_MAX, Math.max(PLATE_ZOOM_MIN, (vs ? vs.scale : PLATE_REF_SCALE) / PLATE_REF_SCALE));
+    return base * zoom;
   }
 
   function heightFrac(a, t) {
@@ -1357,9 +1361,9 @@ export function renderMapView(container, file, waveIndex) {
     const lift = (1 + (zf || 0) * LIFT_SCALE) * stackScale(n);
     if (a.kind === 'tank') {
       const img = iconImage(tankIconName(a.tank), scheduleDraw) || iconImage('leaderboard_class_tank', scheduleDraw);
-      const s = 34 * lift;
+      const s = plateSize(a) * lift;
       const ang = actorHeading(a, t);
-      drawLift(sx, sy, 34, zf || 0);
+      drawLift(sx, sy, s, zf || 0);
       ctx.save();
       ctx.translate(sx, sy);
       if (ang !== null) ctx.rotate(-ang);
@@ -1403,21 +1407,48 @@ export function renderMapView(container, file, waveIndex) {
     }
   }
 
+  let labelRects = [];
+
+  function placeLabel(sx, sy, plate, w, h) {
+    const r = plate * 0.3;
+    const spots = [
+      [sx + r, sy + r * 1.1],
+      [sx - r - w, sy + r * 1.1],
+      [sx + r, sy - r * 1.1 - h],
+      [sx - r - w, sy - r * 1.1 - h],
+      [sx - w / 2, sy + plate * 0.55]
+    ];
+    for (const [x, y] of spots) {
+      let clash = false;
+      for (const q of labelRects) {
+        if (x < q[0] + q[2] && x + w > q[0] && y < q[1] + q[3] && y + h > q[1]) { clash = true; break; }
+      }
+      if (clash) continue;
+      labelRects.push([x, y, w, h]);
+      return [x, y];
+    }
+    return null;
+  }
+
   function drawCount(sx, sy, plate, n) {
     const label = '×' + n;
+    const fs = Math.max(8, Math.min(11, plate * 0.42));
     ctx.save();
-    ctx.font = 'bold 10px sans-serif';
-    const w = ctx.measureText(label).width + 6;
-    const bx = sx + plate * 0.3, by = sy + plate * 0.36;
+    ctx.font = 'bold ' + fs.toFixed(1) + 'px sans-serif';
+    const w = ctx.measureText(label).width + 5;
+    const h = fs + 3;
+    const spot = placeLabel(sx, sy, plate, w, h);
+    if (!spot) { ctx.restore(); return; }
+    const bx = spot[0], by = spot[1];
     ctx.fillStyle = 'rgba(12,15,19,.88)';
     ctx.beginPath();
-    ctx.roundRect(bx, by, w, 13, 3);
+    ctx.roundRect(bx, by, w, h, 3);
     ctx.fill();
     ctx.strokeStyle = 'rgba(255,255,255,.22)';
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.fillStyle = '#e6e9ec';
-    ctx.fillText(label, bx + 3, by + 10);
+    ctx.fillText(label, bx + 2.5, by + h - 3);
     ctx.restore();
   }
 
@@ -1447,8 +1478,7 @@ export function renderMapView(container, file, waveIndex) {
     for (const members of groups) {
       if (members.length === 1) { out.push(members[0]); continue; }
       const plate = members.reduce((m, q) => Math.max(m, q.plate), 0);
-      const room = plate * SPREAD_LIMIT;
-      const capacity = Math.max(2, Math.floor(Math.PI * 2 * room / plate));
+      const capacity = Math.max(2, Math.floor(Math.PI * 2 * SPREAD_LIMIT));
       if (members.length > capacity) {
         let cx = 0, cy = 0;
         for (const q of members) { cx += q.sx; cy += q.sy; }
@@ -1456,38 +1486,44 @@ export function renderMapView(container, file, waveIndex) {
         lead.sx = cx / members.length;
         lead.sy = cy / members.length;
         lead.n = members.length;
+        lead.plate = plate;
         out.push(lead);
         continue;
       }
-      for (let pass = 0; pass < SPREAD_PASSES; pass++) {
-        for (let i = 0; i < members.length; i++) {
-          for (let j = i + 1; j < members.length; j++) {
-            const p = members[i], q = members[j];
-            const need = (p.plate + q.plate) / 2 * CLUSTER_GAP;
-            let dx = p.sx + p.dx - (q.sx + q.dx), dy = p.sy + p.dy - (q.sy + q.dy);
-            let d = Math.hypot(dx, dy);
-            if (d >= need) continue;
-            if (d < 0.01) {
-              const ang = (i * 2.399963 + j * 0.7);
-              dx = Math.cos(ang); dy = Math.sin(ang); d = 1;
-            }
-            const push = (need - d) / 2;
-            p.dx += dx / d * push; p.dy += dy / d * push;
-            q.dx -= dx / d * push; q.dy -= dy / d * push;
-          }
-        }
-      }
-      for (const q of members) {
-        const d = Math.hypot(q.dx, q.dy);
-        const cap = q.plate * SPREAD_LIMIT;
-        if (d > cap) { q.dx *= cap / d; q.dy *= cap / d; }
-        q.sx += q.dx;
-        q.sy += q.dy;
-        out.push(q);
-      }
+      for (const q of members) out.push(q);
     }
+    spread(out);
     out.sort((p, q) => p.zf - q.zf);
     return out;
+  }
+
+  function spread(list) {
+    const size = q => q.plate * stackScale(q.n);
+    for (let pass = 0; pass < SPREAD_PASSES; pass++) {
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          const p = list[i], q = list[j];
+          const need = (size(p) + size(q)) / 2 * CLUSTER_GAP;
+          let dx = p.sx + p.dx - (q.sx + q.dx), dy = p.sy + p.dy - (q.sy + q.dy);
+          let d = Math.hypot(dx, dy);
+          if (d >= need) continue;
+          if (d < 0.01) {
+            const ang = i * 2.399963 + j * 0.7;
+            dx = Math.cos(ang); dy = Math.sin(ang); d = 1;
+          }
+          const push = (need - d) / 2;
+          p.dx += dx / d * push; p.dy += dy / d * push;
+          q.dx -= dx / d * push; q.dy -= dy / d * push;
+        }
+      }
+    }
+    for (const q of list) {
+      const d = Math.hypot(q.dx, q.dy);
+      const cap = size(q) * SPREAD_LIMIT;
+      if (d > cap) { q.dx *= cap / d; q.dy *= cap / d; }
+      q.sx += q.dx;
+      q.sy += q.dy;
+    }
   }
 
   function drawSquadLinks(positions) {
@@ -1583,6 +1619,7 @@ export function renderMapView(container, file, waveIndex) {
     lastPositions = shown;
     drawSquadLinks(shown);
     for (const q of shown) drawActor(q.a, t, q.sx, q.sy, q.zf, q.n);
+    labelRects = [];
     for (const q of shown) {
       if (q.n > 1) drawCount(q.sx, q.sy, q.plate * (1 + q.zf * LIFT_SCALE) * stackScale(q.n), q.n);
     }
