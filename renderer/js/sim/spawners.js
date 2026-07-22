@@ -35,7 +35,9 @@ spawners.registerAll([
       return { kind: 'squad', node, children, count: children.reduce((s, c) => s + c.count, 0) };
     },
     instantiate(sp, api) {
-      return { entries: api.collect(sp), squad: true };
+      const entries = [];
+      for (const c of sp.children || []) entries.push(...api.instantiate(c).entries);
+      return { entries, squad: true };
     }
   },
   {
@@ -43,6 +45,11 @@ spawners.registerAll([
     parse(node, api) {
       const children = api.parseChildren(node);
       return { kind: 'random', node, children, count: 1, placement: false };
+    },
+    instantiate(sp, api) {
+      const kids = (sp.children || []).filter(Boolean);
+      if (!kids.length) return { entries: [], squad: false };
+      return api.instantiate(kids[Math.floor(api.rng() * kids.length)]);
     }
   },
   {

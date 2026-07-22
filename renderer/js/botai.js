@@ -444,7 +444,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       walk(sp);
       return entries;
     };
-    const instantiate = sp => instantiateSpawner(sp, { rng, collect });
+    const instantiate = sp => instantiateSpawner(sp, { rng, collect, instantiate });
 
     let pending = [];
     let pendingSquadId = null;
