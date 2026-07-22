@@ -2,7 +2,7 @@ import { SPAWNER_KEYS, parseSpawnerNode } from './sim/spawners.js';
 import { traitForKey, traitForBlock, traitForFlag, traitsForAttribute } from './sim/traits.js';
 
 const GIANT_SCALE = 1.6;
-const TRAIT_API = { normalizeClass, parseInterruptBlock };
+const TRAIT_API = { normalizeClass, parseInterruptBlock, parseActionBlock, getValue };
 import { findAll, findFirst, getValue, getNumber } from './kv.js';
 
 export const CLASS_INFO = {
@@ -134,7 +134,8 @@ export function resolveBot(node, templates, stack = []) {
     noBombUpgrades: false, noPushAway: false, healRateMult: 1, healthRegen: 0,
     immune: new Set(), knownFlags: new Set(), loadout: {}, combat: {},
     behaviorModifiers: [], extAttrs: [], spawnTemplates: [], itemNames: [],
-    action: null, teleportWhere: null,
+    stripItems: [], teleportWhere: [], eventAttributes: [], firedTargets: [],
+    action: null,
     cls: null, clsRaw: null, name: null, health: null, scale: null, skill: null,
     icon: null, attrs: [], items: [], tags: [], restriction: null, templateChain: [],
     missingTemplates: [], moveSpeedMult: 1, chargeTimeMult: 1, chargeRechargeMult: 1,
@@ -148,6 +149,14 @@ export function resolveBot(node, templates, stack = []) {
     info.healthIsDefault = true;
   }
   info.teleports = info.actions.filter(a => a.teleport);
+  const fired = new Set();
+  const FIRE_RE = /^on[a-z]*output$|^fireinput$/i;
+  for (const a of info.actions) if (a.target && FIRE_RE.test(a.kind || '')) fired.add(String(a.target).trim());
+  for (const st of info.eventAttributes) {
+    for (const fi of st.fireInputs) if (fi.target) fired.add(String(fi.target).trim());
+    for (const ia of st.interrupts) if (ia.target && !ia.point) fired.add(String(ia.target).trim());
+  }
+  info.firedTargets = [...fired];
   for (const raw of info.attrs) {
     const flag = traitForFlag(raw);
     if (flag) flag.apply(info, raw, TRAIT_API);

@@ -91,6 +91,24 @@ registerTraits([
   { id: 'weaponrestrictions', key: 'weaponrestrictions', apply(info, value) { info.restriction = value; } },
 
   { id: 'interruptaction', block: 'interruptaction', apply(info, node, api) { info.interrupts.push(api.parseInterruptBlock(node)); } },
+  { id: 'eventchangeattributes', block: 'eventchangeattributes', apply(info, node, api) {
+    for (const ev of node.children || []) {
+      if (ev.type !== 'block') continue;
+      const state = { event: ev.key, node: ev, fireInputs: [], interrupts: [], onDoneChangeAttributes: [] };
+      for (const c of ev.children || []) {
+        if (c.type !== 'block') continue;
+        const ck = c.key.toLowerCase();
+        if (ck === 'fireinput') state.fireInputs.push(api.parseActionBlock(c));
+        else if (ck === 'interruptaction') {
+          const ia = api.parseInterruptBlock(c);
+          state.interrupts.push(ia);
+          const next = api.getValue(c, 'OnDoneChangeAttributes', null);
+          if (next) state.onDoneChangeAttributes.push(next);
+        }
+      }
+      info.eventAttributes.push(state);
+    }
+  } },
 
   {
     id: 'move-speed',
@@ -153,11 +171,12 @@ registerTraits([
     if (v === 'mobber') info.mobber = true;
   } },
   { id: 'action', key: 'action', apply(info, value) { info.action = String(value || '').trim(); } },
-  { id: 'teleportwhere', key: 'teleportwhere', apply(info, value) { info.teleportWhere = value; } },
+  { id: 'teleportwhere', key: 'teleportwhere', apply(info, value) { if (value) info.teleportWhere.push(String(value)); } },
   { id: 'nobombupgrades', key: 'nobombupgrades', apply(info, value) { info.noBombUpgrades = String(value) !== '0'; } },
   { id: 'nopushaway', key: 'nopushaway', apply(info, value) { info.noPushAway = String(value) !== '0'; } },
   { id: 'extattr', key: 'extattr', apply(info, value) { info.extAttrs.push(String(value).trim()); } },
   { id: 'spawntemplate', key: 'spawntemplate', apply(info, value) { info.spawnTemplates.push(value); } },
+  { id: 'stripitem', key: 'stripitem', apply(info, value) { info.stripItems.push(value); } },
   { id: 'itemname-attr', attribute: /^itemname$/i, apply(info, value) { info.itemNames.push(value); } },
   { id: 'cannot-pick-up-intel', attribute: /^cannot pick up intelligence$/i, apply(info) { info.ignoreFlag = true; } },
   { id: 'health-from-healers', attribute: /^health from healers (reduced|increased)$/i, apply(info, value) {

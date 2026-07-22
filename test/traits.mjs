@@ -83,6 +83,35 @@ check('"health from healers reduced" scales the heal rate', raf.healRateMult ===
 check('negative "health regen" is kept as a drain', raf.healthRegen === -1, String(raf.healthRegen));
 check('a mobber modifier is distinct from push', botOf('Class Soldier BehaviorModifiers mobber').mobber === true);
 
+// A real HellOnEarth VIP Giant Engineer — the whole feature surface in one bot.
+const VIP = `Class Engineer Name "Giant Engineer" ClassIcon vip_blu Health 5000 Skill Expert
+	Item "The Death Ranger" Item "Scrap Sentinel"
+	Attributes MiniBoss Attributes UseBossHealthBar Scale 1.7
+	TeleportWhere spawnbot_allies_l TeleportWhere spawnbot_carrier
+	SpawnTemplate EngineerCapzone Tag "bot_vip" Tag "common"
+	StripItem "Zombie Engineer" UseCustomModel "models/bots/engineer/bot_engineer.mdl" AimTrackingInterval 0.05
+	FireInput { Target engie_hint_node_final Action ForceSpawn Delay 1 Repeats 1 }
+	EventChangeAttributes {
+		FINAL_NODE_REACHED {
+			FireInput { Target node_final_reached Action Trigger Delay 1 Repeats 1 }
+			InterruptAction { Target "2289 -2440 250" WaitUntilDone 1 OnDoneChangeAttributes "ENGY_DISSAPEAR" }
+		}
+		ENGY_DISSAPEAR { FireInput { Target !activator Action runscriptcode Param "self.Destroy()" } }
+	}
+	CharacterAttributes { "move speed bonus" 0.5  "health regen" 35  "dmg taken from fire reduced" 0.8 }`;
+const vip = botOf(VIP);
+check('VIP: giant engineer core is read', vip.cls === 'engineer' && vip.health === 5000 && vip.isGiant && vip.isBoss && vip.scale === 1.7, JSON.stringify([vip.cls, vip.health, vip.isGiant, vip.isBoss]));
+check('VIP: both TeleportWhere values are kept', vip.teleportWhere.length === 2 && vip.teleportWhere[0] === 'spawnbot_allies_l', JSON.stringify(vip.teleportWhere));
+check('VIP: StripItem is captured', vip.stripItems.join() === 'Zombie Engineer');
+check('VIP: SpawnTemplate + custom model + aim interval', vip.spawnTemplates[0] === 'EngineerCapzone' && vip.loadout.usecustommodel && vip.combat.aimtrackinginterval === '0.05');
+check('VIP: move speed 0.5 and health regen 35', vip.moveSpeedMult === 0.5 && vip.healthRegen === 35, JSON.stringify([vip.moveSpeedMult, vip.healthRegen]));
+check('VIP: EventChangeAttributes states parsed', vip.eventAttributes.length === 2 && vip.eventAttributes.map(s => s.event).join() === 'FINAL_NODE_REACHED,ENGY_DISSAPEAR');
+const finalNode = vip.eventAttributes[0];
+check('VIP: the event state captures its FireInputs and interrupt', finalNode.fireInputs.length === 1 && finalNode.interrupts.length === 1);
+check('VIP: the OnDoneChangeAttributes chain is captured', finalNode.onDoneChangeAttributes[0] === 'ENGY_DISSAPEAR');
+check('VIP: the interrupt point is parsed', JSON.stringify(finalNode.interrupts[0].point) === '[2289,-2440,250]');
+check('VIP: every relay the bot fires is surfaced', vip.firedTargets.join() === 'engie_hint_node_final,node_final_reached,!activator', JSON.stringify(vip.firedTargets));
+
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');
 if (fail) process.exit(1);
