@@ -604,6 +604,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   function initActor(a, t) {
     a.alive = true;
     a.sampleStart = t;
+    a.spawnT = t;
     a.hp = a.kind === 'tank' ? (a.tank.health || 20000) : (a.bot.health || 100);
     if (a.squadRole === 'leader' && a.squadId) squadLeaders.set(a.squadId, a);
     a.pos = a.spawnPos ? a.spawnPos.slice(0, 2) : [0, 0];
@@ -787,6 +788,8 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   }
 
   const live = new Set();
+  const waiting = [];
+  const robotLimit = Math.max(1, Math.round(opts.robotLimit || sim.robotLimit || 22));
   let cursor = 0;
   let si = 0;
   let endT = 0;
@@ -797,12 +800,20 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
   function step() {
     const t = si * STEP;
-    if (si >= MAX_STEPS || t > maxT || (cursor >= sorted.length && live.size === 0 && t > sim.waveEnd)) return false;
+    if (si >= MAX_STEPS || t > maxT || (cursor >= sorted.length && !waiting.length && live.size === 0 && t > sim.waveEnd)) return false;
     endT = t;
-    while (cursor < sorted.length && sorted[cursor].spawnT <= t) {
-      const a = sorted[cursor++];
-      initActor(a, t);
-      live.add(a);
+    while (cursor < sorted.length && sorted[cursor].spawnT <= t) waiting.push(sorted[cursor++]);
+    if (waiting.length) {
+      let bots = 0;
+      for (const a of live) if (a.kind !== 'tank') bots++;
+      for (let i = 0; i < waiting.length;) {
+        const a = waiting[i];
+        if (a.kind !== 'tank' && bots >= robotLimit) { i++; continue; }
+        waiting.splice(i, 1);
+        initActor(a, t);
+        live.add(a);
+        if (a.kind !== 'tank') bots++;
+      }
     }
     for (const a of live) {
       if (t >= a.dieT || a.done) {

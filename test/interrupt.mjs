@@ -1,7 +1,7 @@
 import { parse } from '../renderer/js/kv.js';
 import { buildModel, parsePoint } from '../renderer/js/popmodel.js';
 import { buildTriggerGraph, analyzeWave, eventGate, isGated } from '../renderer/js/gating.js';
-import { simulateBotAI, actorPosAt } from '../renderer/js/botai.js';
+import { simulateBotAI, actorPosAt, STEP } from '../renderer/js/botai.js';
 import { simulateWave } from '../renderer/js/sim.js';
 
 let pass = 0, fail = 0;
@@ -230,6 +230,67 @@ check('wavespawn is gated', isGated(lateGate));
 const eg = eventGate(lateGate);
 check('gate is attributed to the runtime event', !!eg && /bot dying/.test(eg.why || ''), JSON.stringify(eg));
 check('the firing entity is named', !!eg && !!eg.by);
+
+// --- the global robot limit is enforced by the AI sim, not just the spawn sim ---
+const POP_MANY = `WaveSchedule
+{
+	Wave
+	{
+		WaveSpawn
+		{
+			Name	flood
+			TotalCount	60
+			MaxActive	60
+			SpawnCount	10
+			Where	spawnbot
+			WaitBeforeStarting	0
+			WaitBetweenSpawns	1
+			TotalCurrency	100
+			TFBot
+			{
+				Class	Heavyweapons
+				Skill	Easy
+			}
+		}
+	}
+}
+`;
+const LONG = 60;
+const longMap = {
+  ...mapData,
+  nav: corridor(LONG),
+  spawns: [{ name: 'spawnbot', origin: AT(0) }],
+  capzones: [AT(LONG - 1)]
+};
+const mm = modelFor(POP_MANY);
+const floodWave = mm.waves[0];
+const floodSim = simulateWave(floodWave, { robotLimit: mm.robotLimit });
+const flood = simulateBotAI(floodWave, floodSim, longMap, { deathModel: 'hatch' });
+const uncapped = simulateBotAI(floodWave, floodSim, longMap, { deathModel: 'hatch', robotLimit: 9999 });
+
+function peakAlive(res) {
+  const spans = [];
+  for (const a of res.actors) {
+    if (a.sampleStart == null || !a.track) continue;
+    spans.push([a.sampleStart, a.sampleStart + (a.track.length / 2) * STEP]);
+  }
+  let peak = 0;
+  for (let t = 0; t <= res.end; t += STEP) {
+    let n = 0;
+    for (const [s, e] of spans) if (t >= s && t < e) n++;
+    if (n > peak) peak = n;
+  }
+  return peak;
+}
+
+const limit = mm.robotLimit || 22;
+const spawned = flood.actors.filter(a => a.sampleStart != null).length;
+const peak = peakAlive(flood);
+check('default robot limit is 22', limit === 22, String(limit));
+check('the AI sim never exceeds the robot limit', peak <= limit, `peak ${peak} vs limit ${limit}`);
+check('every robot still spawns eventually', spawned === 60, String(spawned));
+check('the case would breach the limit without the cap',
+  peakAlive(uncapped) > limit, `uncapped peak ${peakAlive(uncapped)}`);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

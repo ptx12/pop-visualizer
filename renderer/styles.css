@@ -295,13 +295,13 @@ body.no-file #sidebar, body.no-file #inspector { display: none; }
 
 .nav-wave-top { display: flex; align-items: center; gap: var(--sp-2); }
 .nav-wave-num {
-  font: 600 var(--fs-meta)/1 var(--mono);
+  font: 600 var(--fs-body)/1 var(--mono);
   color: var(--fg); background: var(--bg3);
   border-radius: var(--r-sm); padding: 4px 5px;
   min-width: 28px; text-align: center; flex: none;
 }
 .nav-wave-cash { color: var(--fg); font-size: var(--fs-meta); font-weight: 600; min-width: 42px; flex: none; }
-.nav-wave-bots { color: var(--fg-faint); font-size: var(--fs-meta); flex: none; }
+.nav-wave-bots { color: var(--fg-dim); font-size: var(--fs-body); flex: none; }
 .nav-wave-chips { margin-top: 6px; }
 
 .nav-waves { display: flex; flex-direction: column; gap: 5px; }
@@ -1166,11 +1166,11 @@ body.zen .act-holder svg { height: 30px; }
 .tl-gutter .bi-skill { bottom: -1px; }
 .nav-wave-chips {
   display: flex; align-items: center; flex-wrap: nowrap;
-  gap: 3px; height: 30px; overflow: hidden;
+  gap: 3px; height: 38px; overflow: hidden;
   mask-image: linear-gradient(90deg, #000 calc(100% - 16px), transparent);
 }
 .nav-wave-chips .chips { flex-wrap: nowrap; }
-.nav-wave-chips .boticon img { width: 20px; height: 20px; }
+.nav-wave-chips .boticon img { width: 27px; height: 27px; }
 
 .tooltip {
   position: fixed; z-index: 700; display: none;

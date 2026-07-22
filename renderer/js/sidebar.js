@@ -119,7 +119,6 @@ export function renderSidebar(container, file) {
           el('div', { class: 'nav-wave-top' },
             dragHandle,
             el('span', { class: 'nav-wave-num', text: 'W' + (w.index + 1) }),
-            el('span', { class: 'nav-wave-cash', text: '$' + w.totalCurrency }),
             el('span', { class: 'nav-wave-bots', text: w.totalBots + (w.supportBots || w.wavespawns.some(x => x.support === 'unlimited') ? '+' : '') }),
             w.tankCount ? el('span', { class: 'badge tank sm', text: w.tankCount > 1 ? 'TANK ×' + w.tankCount : 'TANK' }) : null,
             state.search && matches ? el('span', { class: 'lint-badge match', text: matches }) : null
