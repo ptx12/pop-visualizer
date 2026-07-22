@@ -26,6 +26,12 @@ export function healTarget(ctx, a) {
 export const healing = {
   id: 'healing',
   order: 20,
+  spawn(a, ctx) {
+    if (a.kind !== 'bot' || ctx.clsOf(a) !== 'medic') return;
+    a.patient = null;
+    a.following = false;
+    a.healed = 0;
+  },
   step(ctx, t, dt) {
     for (const a of ctx.live) {
       if (a.kind !== 'bot' || ctx.clsOf(a) !== 'medic') continue;

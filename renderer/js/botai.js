@@ -1,5 +1,6 @@
 import { buildNavGraphWasm, navWasmReady } from './navwasm.js';
 import { buildPipeline } from './sim/systems.js';
+import { behaviours, selectBehaviour } from './sim/behaviours.js';
 import { RANGES, healTarget } from './sim/systems/healing.js';
 import {
   CLASS_BASE_SPEED, TF_MAX_SPEED, STEP, CARRIER_PENALTY,
@@ -8,14 +9,6 @@ import {
 
 export { CLASS_BASE_SPEED, TF_MAX_SPEED, STEP, botScale, hasDemoShield, botMaxSpeed, mulberry32, dpsProfile };
 
-const FLAG_ESCORT_RANGE = 500;
-const SQUAD_ESCORT_RANGE = 500;
-const DEPLOY_TIME = 1.9;
-const PICKUP_RANGE = 64;
-const AUTO_FLAG_AGE = 1.0;
-const SPY_TELEPORT_RING = 1500;
-const SPY_RING_STEP = 500;
-const SPY_RING_MAX = 6000;
 const MAX_STEPS = 6000;
 const BOMB_UPGRADE_1 = 5;
 const BOMB_UPGRADE_2 = 15;
@@ -600,7 +593,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     a.jy = Math.sin(jang) * jr;
     a.zs = [];
     if (a.kind === 'tank') { a.state = 'tank'; return; }
-    if (clsOf(a) === 'medic') { a.patient = null; a.following = false; a.healed = 0; }
+    pipeline.spawn(a, t);
     const ia = (a.bot.interrupts || [])[0] || null;
     if (ia) {
       const dest = resolvePoint(ia.point ? { point: ia.point } : { target: ia.target });
@@ -608,27 +601,10 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     }
     const tps = a.bot.teleports || [];
     if (tps.length) a.tp = tps.map(x => ({ spec: x, at: t + Math.max(0, x.delay || 0), done: false }));
-    const cls = clsOf(a);
-    if (a.squadRole === 'member') a.state = 'escortSquadLeader';
-    else if (cls === 'spy') { a.state = 'spyLeaveSpawn'; a.spyAt = t + 2 + rng(); a.spyAttempt = 0; }
-    else if (cls === 'engineer') {
-      a.state = 'engineerToNest';
-      let best = null, bestD = Infinity;
-      for (const n of nests) {
-        const d = (n.origin[0] - bomb.pos[0]) ** 2 + (n.origin[1] - bomb.pos[1]) ** 2;
-        if (d < bestD) { bestD = d; best = n; }
-      }
-      a.nest = best ? best.origin : (a.spawnPos || objective);
-      a.nestField = hasNav ? navOf(a).flowField((navOf(a).nearestArea(a.nest) || { id: -1 }).id) : null;
-    }
-    else if (cls === 'medic') a.state = 'medicHeal';
-    else if (a.bot.ignoreFlag) a.state = 'pushToPoint';
-    else {
-      a.state = 'fetchFlag';
-      if (!bomb.carrier && bomb.deliveredAt == null && eligible(a) && bomb.home &&
-          Math.abs(bomb.pos[0] - bomb.home[0]) + Math.abs(bomb.pos[1] - bomb.home[1]) < 1 && t - a.spawnT <= AUTO_FLAG_AGE) {
-        takeBomb(a);
-      }
+    const behaviour = selectBehaviour(a, ctx, capabilities);
+    if (behaviour) {
+      a.state = behaviour.id;
+      if (behaviour.enter) behaviour.enter(a, ctx, t);
     }
   }
 
@@ -807,8 +783,10 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     rng, deathModel, teamDPS, robotLimit,
     actors, live, bomb, bombSamples, squadLeaders,
     nav, hasNav, navOf, graphFor, objective, objArea, chains,
-    clsOf, zoneW, killActor, nudge, areaOf, holds, placeActor,
-    hatchFieldOf, bombFieldOf, resolvePoint
+    nests, redSpawns, spawnsByName, namedPoints,
+    clsOf, eligible, zoneW, killActor, nudge, areaOf, holds, placeActor,
+    hatchFieldOf, bombFieldOf, resolvePoint,
+    moveAlong, moveField, takeBomb, dropBomb, upgradeOverTime
   };
 
   const capabilities = new Set();
@@ -880,107 +858,8 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
         continue;
       }
 
-      if (a.state === 'deliverFlag') {
-        upgradeOverTime(a, t);
-        const d = moveField(a, hatchFieldOf(a), objective, dt, speed);
-        bomb.pos = a.pos.slice();
-        if (d < 60) {
-          a.state = 'deployBomb';
-          a.deployUntil = t + DEPLOY_TIME;
-        }
-      } else if (a.state === 'deployBomb') {
-        bomb.pos = a.pos.slice();
-        if (t >= a.deployUntil) {
-          bomb.deliveredAt = t;
-          bomb.carrier = null;
-          a.done = true;
-          a.dieT = t;
-        }
-      } else if (a.state === 'fetchFlag') {
-        if (bomb.deliveredAt != null) a.state = 'pushToPoint';
-        else if (bomb.carrier) a.state = 'escortFlagCarrier';
-        else {
-          const d = moveField(a, bombFieldOf(a), bomb.pos, dt, speed);
-          if (d < PICKUP_RANGE && eligible(a)) takeBomb(a);
-        }
-      } else if (a.state === 'escortFlagCarrier') {
-        if (!bomb.carrier) a.state = bomb.deliveredAt != null ? 'pushToPoint' : 'fetchFlag';
-        else {
-          const c = bomb.carrier.pos;
-          const d = Math.hypot(c[0] - a.pos[0], c[1] - a.pos[1]);
-          if (d > FLAG_ESCORT_RANGE * 0.5) {
-            const carrierField = bomb.carrier.areaId != null ? navOf(a).flowField(bomb.carrier.areaId) : null;
-            moveField(a, carrierField, [c[0] + a.jx, c[1] + a.jy], dt, speed);
-          }
-        }
-      } else if (a.state === 'pushToPoint') {
-        moveField(a, hatchFieldOf(a), objective, dt, speed);
-      } else if (a.state === 'escortSquadLeader') {
-        const leader = squadLeaders.get(a.squadId);
-        if (!leader || !leader.alive) {
-          a.squadRole = 'leader';
-          squadLeaders.set(a.squadId, a);
-          a.state = a.bot.ignoreFlag || !eligible(a) ? 'pushToPoint' : 'fetchFlag';
-        } else {
-          const slotAng = (a.memberIdx % 2 ? 1 : -1) * (Math.PI / 6) * (1 + (a.memberIdx >> 1) * 0.5);
-          const heading = leader.heading ?? 0;
-          const sx = leader.pos[0] - Math.cos(heading + slotAng) * 90;
-          const sy = leader.pos[1] - Math.sin(heading + slotAng) * 90;
-          const d = Math.hypot(leader.pos[0] - a.pos[0], leader.pos[1] - a.pos[1]);
-          if (d > SQUAD_ESCORT_RANGE) {
-            const lf = leader.areaId != null ? navOf(a).flowField(leader.areaId) : null;
-            moveField(a, lf, leader.pos, dt, speed * 1.15);
-          } else {
-            moveAlong(a, [sx, sy], dt, speed);
-          }
-        }
-      } else if (a.state === 'medicHeal') {
-        const target = healTarget(ctx, a);
-        a.patient = target;
-        if (target) {
-          const d = Math.hypot(target.pos[0] - a.pos[0], target.pos[1] - a.pos[1]);
-          if (d > RANGES.START_FOLLOW_RANGE) a.following = true;
-          else if (d < RANGES.STOP_FOLLOW_RANGE) a.following = false;
-          if (a.following) {
-            const tf = target.areaId != null ? navOf(a).flowField(target.areaId) : null;
-            moveField(a, tf, target.pos, dt, speed);
-          }
-        } else moveField(a, hatchFieldOf(a), objective, dt, speed);
-      } else if (a.state === 'spyLeaveSpawn') {
-        if (t >= a.spyAt) {
-          const victim = redSpawns[Math.floor(rng() * redSpawns.length)];
-          let placed = false;
-          for (let attempt = 0; attempt <= 9 && !placed; attempt++) {
-            const ring = Math.min(SPY_TELEPORT_RING + a.spyAttempt * SPY_RING_STEP, SPY_RING_MAX);
-            const cand = [];
-            for (const ar of nav.byId.values()) {
-              const c = nav.center(ar.id);
-              const d = Math.hypot(c[0] - victim[0], c[1] - victim[1]);
-              if (d > ring * 0.4 && d < ring) cand.push(ar);
-            }
-            if (cand.length) {
-              const ar = cand[Math.floor(rng() * cand.length)];
-              const c = nav.center(ar.id);
-              a.pos = [c[0], c[1]];
-              a.areaId = ar.id;
-              a.state = 'spyLurk';
-              a.victim = victim;
-              placed = true;
-            } else a.spyAttempt++;
-          }
-          if (!placed) { a.state = 'spyLurk'; a.victim = victim; }
-        }
-      } else if (a.state === 'spyLurk') {
-        const d = Math.hypot(a.victim[0] - a.pos[0], a.victim[1] - a.pos[1]);
-        if (d > 350) {
-          const vf = hasNav ? navOf(a).flowField((navOf(a).nearestArea(a.victim) || {}).id) : null;
-          moveField(a, vf, a.victim, dt, speed * 0.6);
-        }
-      } else if (a.state === 'engineerToNest') {
-        const d = moveField(a, a.nestField, a.nest, dt, speed);
-        if (d < 40) a.state = 'engineerBuild';
-      } else if (a.state === 'engineerBuild') {
-      }
+      const behaviour = behaviours.get(a.state);
+      if (behaviour) behaviour.step(a, ctx, t, dt, speed);
 
       let culled = false;
       for (const kp of killPoints) {

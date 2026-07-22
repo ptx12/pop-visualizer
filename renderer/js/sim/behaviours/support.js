@@ -1,0 +1,100 @@
+import { RANGES, healTarget } from '../systems/healing.js';
+
+const SPY_TELEPORT_RING = 1500;
+const SPY_RING_STEP = 500;
+const SPY_RING_MAX = 6000;
+const SPY_ATTEMPTS = 9;
+const SPY_LURK_RANGE = 350;
+const SPY_LURK_SPEED = 0.6;
+const NEST_ARRIVE_RANGE = 40;
+
+export const medicHeal = {
+  id: 'medicHeal',
+  order: 40,
+  selects(a, ctx) { return ctx.clsOf(a) === 'medic'; },
+  step(a, ctx, t, dt, speed) {
+    const target = healTarget(ctx, a);
+    a.patient = target;
+    if (!target) {
+      ctx.moveField(a, ctx.hatchFieldOf(a), ctx.objective, dt, speed);
+      return;
+    }
+    const d = Math.hypot(target.pos[0] - a.pos[0], target.pos[1] - a.pos[1]);
+    if (d > RANGES.START_FOLLOW_RANGE) a.following = true;
+    else if (d < RANGES.STOP_FOLLOW_RANGE) a.following = false;
+    if (!a.following) return;
+    const field = target.areaId != null ? ctx.navOf(a).flowField(target.areaId) : null;
+    ctx.moveField(a, field, target.pos, dt, speed);
+  }
+};
+
+export const spyLeaveSpawn = {
+  id: 'spyLeaveSpawn',
+  order: 20,
+  selects(a, ctx) { return ctx.clsOf(a) === 'spy'; },
+  enter(a, ctx, t) {
+    a.spyAt = t + 2 + ctx.rng();
+    a.spyAttempt = 0;
+  },
+  step(a, ctx, t) {
+    if (t < a.spyAt) return;
+    const victim = ctx.redSpawns[Math.floor(ctx.rng() * ctx.redSpawns.length)];
+    const nav = ctx.nav;
+    for (let attempt = 0; attempt <= SPY_ATTEMPTS; attempt++) {
+      const ring = Math.min(SPY_TELEPORT_RING + a.spyAttempt * SPY_RING_STEP, SPY_RING_MAX);
+      const cand = [];
+      for (const ar of nav.byId.values()) {
+        const c = nav.center(ar.id);
+        const d = Math.hypot(c[0] - victim[0], c[1] - victim[1]);
+        if (d > ring * 0.4 && d < ring) cand.push(ar);
+      }
+      if (cand.length) {
+        const ar = cand[Math.floor(ctx.rng() * cand.length)];
+        const c = nav.center(ar.id);
+        a.pos = [c[0], c[1]];
+        a.areaId = ar.id;
+        a.state = 'spyLurk';
+        a.victim = victim;
+        return;
+      }
+      a.spyAttempt++;
+    }
+    a.state = 'spyLurk';
+    a.victim = victim;
+  }
+};
+
+export const spyLurk = {
+  id: 'spyLurk',
+  step(a, ctx, t, dt, speed) {
+    const d = Math.hypot(a.victim[0] - a.pos[0], a.victim[1] - a.pos[1]);
+    if (d <= SPY_LURK_RANGE) return;
+    const g = ctx.navOf(a);
+    const field = ctx.hasNav ? g.flowField((g.nearestArea(a.victim) || {}).id) : null;
+    ctx.moveField(a, field, a.victim, dt, speed * SPY_LURK_SPEED);
+  }
+};
+
+export const engineerToNest = {
+  id: 'engineerToNest',
+  order: 30,
+  selects(a, ctx) { return ctx.clsOf(a) === 'engineer'; },
+  enter(a, ctx) {
+    let best = null, bestD = Infinity;
+    for (const n of ctx.nests) {
+      const d = (n.origin[0] - ctx.bomb.pos[0]) ** 2 + (n.origin[1] - ctx.bomb.pos[1]) ** 2;
+      if (d < bestD) { bestD = d; best = n; }
+    }
+    a.nest = best ? best.origin : (a.spawnPos || ctx.objective);
+    a.nestField = ctx.hasNav ? ctx.navOf(a).flowField((ctx.navOf(a).nearestArea(a.nest) || { id: -1 }).id) : null;
+  },
+  step(a, ctx, t, dt, speed) {
+    const d = ctx.moveField(a, a.nestField, a.nest, dt, speed);
+    if (d < NEST_ARRIVE_RANGE) a.state = 'engineerBuild';
+  }
+};
+
+export const engineerBuild = {
+  id: 'engineerBuild',
+  step() {}
+};
