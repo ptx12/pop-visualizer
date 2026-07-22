@@ -24,6 +24,10 @@ export function createRegistry(name, contract = {}) {
     }
     if (entry.order !== undefined && !Number.isFinite(entry.order)) fail(name, id, 'order must be a number');
     if (entry.requires !== undefined && !Array.isArray(entry.requires)) fail(name, id, 'requires must be an array');
+    if (contract.validate) {
+      const problem = contract.validate(entry);
+      if (problem) fail(name, id, problem);
+    }
     items.set(id, Object.freeze({ order: DEFAULT_ORDER, requires: [], ...entry }));
     sorted = null;
     return id;

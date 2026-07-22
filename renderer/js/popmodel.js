@@ -1,4 +1,8 @@
 import { SPAWNER_KEYS, parseSpawnerNode } from './sim/spawners.js';
+import { traitForKey, traitForBlock, traitForFlag, traitsForAttribute } from './sim/traits.js';
+
+const GIANT_SCALE = 1.6;
+const TRAIT_API = { normalizeClass, parseInterruptBlock };
 import { findAll, findFirst, getValue, getNumber } from './kv.js';
 
 export const CLASS_INFO = {
@@ -124,6 +128,7 @@ function parseInterruptBlock(node) {
 
 export function resolveBot(node, templates, stack = []) {
   const info = {
+    isGiant: false, isBoss: false, alwaysCrit: false, ignoreFlag: false,
     cls: null, clsRaw: null, name: null, health: null, scale: null, skill: null,
     icon: null, attrs: [], items: [], tags: [], restriction: null, templateChain: [],
     missingTemplates: [], moveSpeedMult: 1, chargeTimeMult: 1, chargeRechargeMult: 1,
@@ -137,10 +142,11 @@ export function resolveBot(node, templates, stack = []) {
     info.healthIsDefault = true;
   }
   info.teleports = info.actions.filter(a => a.teleport);
-  info.isGiant = info.attrs.some(a => /^miniboss$/i.test(a)) || (info.scale != null && info.scale >= 1.6);
-  info.isBoss = info.attrs.some(a => /^usebosshealthbar$/i.test(a));
-  info.alwaysCrit = info.attrs.some(a => /^alwayscrit$/i.test(a));
-  info.ignoreFlag = info.attrs.some(a => /^ignoreflag$/i.test(a));
+  for (const raw of info.attrs) {
+    const flag = traitForFlag(raw);
+    if (flag) flag.apply(info, raw, TRAIT_API);
+  }
+  if (info.scale != null && info.scale >= GIANT_SCALE) info.isGiant = true;
   return info;
 }
 
@@ -160,8 +166,9 @@ function applyBotBlock(node, info, templates, stack) {
   for (const c of node.children) {
     if (c.type === 'block') {
       const bk = c.key.toLowerCase();
-      if (bk === 'interruptaction') {
-        info.interrupts.push(parseInterruptBlock(c));
+      const blockTrait = traitForBlock(bk);
+      if (blockTrait) {
+        blockTrait.apply(info, c, TRAIT_API);
         continue;
       }
       if (ACTION_BLOCK_KEYS.has(bk)) {
@@ -171,32 +178,14 @@ function applyBotBlock(node, info, templates, stack) {
       if (bk === 'characterattributes' || bk === 'itemattributes') {
         for (const a of c.children) {
           if (a.type !== 'kv') continue;
-          if (/^(move speed bonus|move speed penalty|card: move speed bonus)$/i.test(a.key)) {
-            const v = parseFloat(a.value);
-            if (Number.isFinite(v) && v > 0) info.moveSpeedMult *= v;
-          } else if (/^charge time increased$/i.test(a.key)) {
-            const v = parseFloat(a.value);
-            if (Number.isFinite(v) && v > 0) info.chargeTimeMult *= v;
-          } else if (/^charge recharge rate increased$/i.test(a.key)) {
-            const v = parseFloat(a.value);
-            if (Number.isFinite(v) && v > 0) info.chargeRechargeMult *= v;
-          }
+          for (const t of traitsForAttribute(a.key)) t.apply(info, a.value, TRAIT_API);
         }
       }
       continue;
     }
     if (c.type !== 'kv') continue;
-    const k = c.key.toLowerCase();
-    if (k === 'class') { info.cls = normalizeClass(c.value) || 'unknown'; info.clsRaw = c.value; }
-    else if (k === 'name') info.name = c.value;
-    else if (k === 'health') info.health = parseFloat(c.value) || info.health;
-    else if (k === 'scale') info.scale = parseFloat(c.value);
-    else if (k === 'skill') info.skill = c.value;
-    else if (k === 'classicon') info.icon = c.value;
-    else if (k === 'attributes') info.attrs.push(c.value);
-    else if (k === 'item') info.items.push(c.value);
-    else if (k === 'tag') { if (c.value) info.tags.push(String(c.value).toLowerCase()); }
-    else if (k === 'weaponrestrictions') info.restriction = c.value;
+    const trait = traitForKey(c.key);
+    if (trait) trait.apply(info, c.value, TRAIT_API);
   }
 }
 
