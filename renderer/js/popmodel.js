@@ -68,11 +68,65 @@ export function collectTemplates(doc, baseDocs) {
   return templates;
 }
 
+export function parsePoint(v) {
+  if (v == null) return null;
+  const p = String(v).trim().replace(/^["']|["']$/g, '').split(/[\s,]+/).map(parseFloat);
+  return p.length >= 3 && p.slice(0, 3).every(Number.isFinite) ? p.slice(0, 3) : null;
+}
+
+export const ACTION_BLOCK_KEYS = new Set([
+  'fireinput', 'onspawnoutput', 'onkilledoutput', 'onbombdroppedoutput',
+  'onparentkilledoutput', 'missionunloadoutput'
+]);
+
+const TELEPORT_TO_ENTITY = /^\$teleporttoentity$/i;
+const TELEPORT_TO_POINT = /^\$(setlocalorigin|setorigin)$/i;
+
+function parseActionBlock(node) {
+  const action = getValue(node, 'Action', null);
+  const param = getValue(node, 'Param', null);
+  const out = {
+    kind: node.key.toLowerCase(),
+    target: getValue(node, 'Target', null),
+    action,
+    param,
+    delay: getNumber(node, 'Delay', 0),
+    repeats: getNumber(node, 'Repeats', 0),
+    node
+  };
+  if (action && TELEPORT_TO_POINT.test(action)) {
+    out.teleport = { kind: 'point', point: parsePoint(param), raw: param };
+  } else if (action && TELEPORT_TO_ENTITY.test(action)) {
+    out.teleport = { kind: 'entity', entity: param ? String(param).trim() : null, raw: param };
+  }
+  return out;
+}
+
+function parseInterruptBlock(node) {
+  const target = getValue(node, 'Target', null);
+  return {
+    target,
+    point: parsePoint(target),
+    aimTarget: getValue(node, 'AimTarget', null),
+    action: getValue(node, 'Action', null),
+    duration: getNumber(node, 'Duration', 0),
+    delay: getNumber(node, 'Delay', 10),
+    cooldown: getNumber(node, 'Cooldown', 0),
+    repeats: getNumber(node, 'Repeats', 0),
+    distance: getNumber(node, 'Distance', 0),
+    waitUntilDone: getNumber(node, 'WaitUntilDone', 0) === 1,
+    killAimTarget: getNumber(node, 'KillAimTarget', 0) === 1,
+    alwaysLook: getNumber(node, 'AlwaysLook', 0) === 1,
+    node
+  };
+}
+
 export function resolveBot(node, templates, stack = []) {
   const info = {
     cls: null, clsRaw: null, name: null, health: null, scale: null, skill: null,
     icon: null, attrs: [], items: [], tags: [], restriction: null, templateChain: [],
-    missingTemplates: [], moveSpeedMult: 1, chargeTimeMult: 1, chargeRechargeMult: 1, node
+    missingTemplates: [], moveSpeedMult: 1, chargeTimeMult: 1, chargeRechargeMult: 1,
+    interrupts: [], actions: [], node
   };
   applyBotBlock(node, info, templates, stack);
   if (!info.cls) info.cls = 'unknown';
@@ -81,6 +135,7 @@ export function resolveBot(node, templates, stack = []) {
     info.health = base;
     info.healthIsDefault = true;
   }
+  info.teleports = info.actions.filter(a => a.teleport);
   info.isGiant = info.attrs.some(a => /^miniboss$/i.test(a)) || (info.scale != null && info.scale >= 1.6);
   info.isBoss = info.attrs.some(a => /^usebosshealthbar$/i.test(a));
   info.alwaysCrit = info.attrs.some(a => /^alwayscrit$/i.test(a));
@@ -104,6 +159,14 @@ function applyBotBlock(node, info, templates, stack) {
   for (const c of node.children) {
     if (c.type === 'block') {
       const bk = c.key.toLowerCase();
+      if (bk === 'interruptaction') {
+        info.interrupts.push(parseInterruptBlock(c));
+        continue;
+      }
+      if (ACTION_BLOCK_KEYS.has(bk)) {
+        info.actions.push(parseActionBlock(c));
+        continue;
+      }
       if (bk === 'characterattributes' || bk === 'itemattributes') {
         for (const a of c.children) {
           if (a.type !== 'kv') continue;

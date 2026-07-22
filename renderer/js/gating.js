@@ -7,6 +7,16 @@ const STOP_INPUTS = new Set(['$killwavespawn', '$finishwavespawn']);
 const WAVE_START_KEYS = ['initwaveoutput', 'startwaveoutput'];
 const WS_OUTPUT_KEYS = ['firstspawnoutput', 'lastspawnoutput', 'doneoutput', 'startwaveoutput'];
 const BOOT_KEYS = new Set(['onmapspawn', 'onspawnoutput', 'onspawn']);
+const EVENT_OUTPUT_KEYS = new Map([
+  ['onkilledoutput', 'a bot dying'],
+  ['onparentkilledoutput', 'its parent dying'],
+  ['onbombdroppedoutput', 'the bomb being dropped'],
+  ['missionunloadoutput', 'the mission unloading']
+]);
+
+export function eventOutputLabel(key) {
+  return EVENT_OUTPUT_KEYS.get(String(key).toLowerCase()) || null;
+}
 const FIRES_RE = /^(trigger|enable|start|fire|forcespawn|triggerforalltargets|open)$/i;
 const ENTFIRE_RE = /EntFire(?:ByHandle)?\s*\(\s*[`"']([^`"']+)[`"']\s*(?:,\s*[`"']([^`"']*)[`"'])?\s*(?:,\s*[`"']?([^`"',)]*)[`"']?)?\s*(?:,\s*([0-9.]+))?/gi;
 
@@ -80,6 +90,7 @@ function outputsOfPopBlock(block, on) {
 export function buildTriggerGraph(doc) {
   const graph = new Map();
   const boot = [];
+  const events = [];
   const add = (name, outs) => {
     const k = String(name).toLowerCase();
     if (!graph.has(k)) graph.set(k, []);
@@ -97,11 +108,15 @@ export function buildTriggerGraph(doc) {
         }
       }
       if (/^onspawnoutput$/i.test(c.key)) boot.push(...outputsOfPopBlock(c, 'onspawnoutput'));
+      const ck = c.key.toLowerCase();
+      if (EVENT_OUTPUT_KEYS.has(ck)) {
+        for (const o of outputsOfPopBlock(c, ck)) events.push({ ...o, event: ck });
+      }
       walk(c);
     }
   };
   walk(doc);
-  return { graph, boot };
+  return { graph, boot, events };
 }
 
 function resolve(seeds, graph, sink) {
@@ -118,7 +133,7 @@ function resolve(seeds, graph, sink) {
     if (!FIRES_RE.test(cur.input)) continue;
     const next = graph.get(String(cur.target).toLowerCase());
     if (!next) continue;
-    for (const o of next) queue.push({ ...o, delay: cur.delay + o.delay, depth: cur.depth + 1, via: cur.target });
+    for (const o of next) queue.push({ ...o, delay: cur.delay + o.delay, depth: cur.depth + 1, via: cur.target, event: cur.event });
   }
 }
 
@@ -136,15 +151,20 @@ export function analyzeWave(wave, tg) {
   const { graph, boot } = tg;
   const result = new Map();
   for (const ws of wave.wavespawns) {
-    result.set(ws, { paused: false, pausedBy: null, resumedBy: [], stoppedBy: null, whereDisabled: null, enabledBy: [] });
+    result.set(ws, {
+      paused: false, pausedBy: null, resumedBy: [], stoppedBy: null,
+      whereDisabled: null, enabledBy: [], eventEnabled: null, eventResumed: null
+    });
   }
 
   const atStart = [];
   resolve([...boot, ...seedsForWave(wave)], graph, e => atStart.push(e));
 
   const disabledPoints = new Set();
+  const enabledPoints = new Set();
   for (const e of atStart) {
     if (/^disable$/i.test(e.input) && e.target) disabledPoints.add(e.target);
+    if (/^enable$/i.test(e.input) && e.target) enabledPoints.add(e.target);
     if (!/^pop_interface$/i.test(e.target)) continue;
     const input = (e.input || '').toLowerCase();
     if (!PAUSE_INPUTS.has(input) || !e.param) continue;
@@ -179,16 +199,50 @@ export function analyzeWave(wave, tg) {
     }
   }
 
+  const atEvent = [];
+  resolve(tg.events || [], graph, e => atEvent.push(e));
+  for (const e of atEvent) {
+    const input = (e.input || '').toLowerCase();
+    const label = eventOutputLabel(e.event);
+    if (!label) continue;
+    if (/^enable$/i.test(input) && e.target) {
+      for (const ws of wave.wavespawns) {
+        const g = result.get(ws);
+        if (g.eventEnabled) continue;
+        for (const w of ws.where || []) {
+          if (wildcardMatch(e.target, w)) { g.eventEnabled = { why: label, by: e.via || e.target }; break; }
+        }
+      }
+    }
+    if (/^pop_interface$/i.test(e.target) && e.param && RESUME_INPUTS.has(input)) {
+      for (const ws of wave.wavespawns) {
+        if (!ws.name || !wildcardMatch(e.param, ws.name)) continue;
+        const g = result.get(ws);
+        if (!g.eventResumed) g.eventResumed = { why: label, by: e.via || e.target };
+      }
+    }
+  }
+
   for (const ws of wave.wavespawns) {
     const g = result.get(ws);
     for (const w of ws.where || []) {
       for (const pat of disabledPoints) {
         if (wildcardMatch(pat, w)) { g.whereDisabled = w; break; }
       }
+      for (const pat of enabledPoints) {
+        if (wildcardMatch(pat, w)) { g.enabledAtStart = true; break; }
+      }
       if (g.whereDisabled) break;
     }
   }
   return result;
+}
+
+export function eventGate(g) {
+  if (!g) return null;
+  if (g.paused && g.eventResumed && !g.resumedBy.length) return g.eventResumed;
+  if (g.whereDisabled && g.eventEnabled && !g.enabledAtStart) return g.eventEnabled;
+  return null;
 }
 
 const NAV_TOGGLE_MAX_DELAY = 1;

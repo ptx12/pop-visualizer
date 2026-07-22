@@ -25,7 +25,7 @@
   "type": "module",
   "scripts": {
     "start": "electron .",
-    "test": "node test/roundtrip.mjs && node test/model.mjs && node test/hardening.mjs && node test/navkernel.mjs && node test/vtfkernel.mjs && node test/mapentities.mjs",
+    "test": "node test/roundtrip.mjs && node test/model.mjs && node test/hardening.mjs && node test/navkernel.mjs && node test/vtfkernel.mjs && node test/mapentities.mjs && node test/interrupt.mjs",
     "dev": "node test/devserver.mjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",

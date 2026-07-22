@@ -813,6 +813,17 @@ body.tf-font .map-next { font-family: 'TF2Build', 'Segoe UI', system-ui, sans-se
 .badge.gated { color: var(--warn); border-color: var(--warn); cursor: pointer; letter-spacing: .04em; }
 .badge.gated:hover { background: rgba(207, 163, 90, .14); }
 .badge.gated.forced { color: var(--ok); border-color: var(--ok); }
+.sp-behaviour { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 4px 26px; }
+.sp-tag {
+  font: 400 var(--fs-micro)/1.5 var(--mono); padding: 1px 5px;
+  border: 1px solid var(--line2); border-radius: var(--r-sm);
+  color: var(--fg-faint); cursor: help;
+}
+.sp-tag.interrupt { color: var(--accent); border-color: var(--accent-dim); }
+.sp-tag.teleport { color: var(--warn); border-color: rgba(207, 163, 90, .45); }
+
+.badge.gated.event { color: var(--fg-faint); border-color: var(--line3); cursor: help; }
+.badge.gated.event:hover { background: none; }
 .badge.gated.forced:hover { background: rgba(116, 174, 132, .14); }
 
 .tl-row.gated-off .bar,

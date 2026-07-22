@@ -347,6 +347,38 @@ function spawnerTree(file, wsNode, spawner, sel) {
   return wrap;
 }
 
+function behaviourNotes(bot) {
+  const out = [];
+  const pt = p => p.map(n => Math.round(n)).join(' ');
+  for (const ia of bot.interrupts || []) {
+    const where = ia.point ? pt(ia.point) : (ia.target || 'nowhere');
+    const bits = [];
+    if (ia.duration) bits.push(`for ${ia.duration}s`);
+    if (ia.delay) bits.push(`after ${ia.delay}s`);
+    if (ia.repeats > 0) bits.push(`${ia.repeats}x`);
+    else bits.push('endlessly');
+    if (ia.cooldown) bits.push(`every ${ia.cooldown}s`);
+    const title = [
+      `Target: ${ia.target || '—'}${ia.point ? ' (coordinates)' : ' (entity)'}`,
+      ia.aimTarget ? `AimTarget: ${ia.aimTarget}${ia.killAimTarget ? ' (attacks it)' : ''}` : null,
+      ia.distance ? `Counts as arrived within ${ia.distance}` : null,
+      ia.waitUntilDone ? 'WaitUntilDone: the timer starts on arrival' : null,
+      !ia.point && ia.target ? 'Simulated only if the name matches a map entity' : null
+    ].filter(Boolean).join('\n');
+    out.push(el('span', { class: 'sp-tag interrupt', title, text: `interrupt → ${where} ${bits.join(', ')}` }));
+  }
+  for (const a of bot.teleports || []) {
+    const t = a.teleport;
+    const where = t.kind === 'point' ? (t.point ? pt(t.point) : t.raw) : t.entity;
+    out.push(el('span', {
+      class: 'sp-tag teleport',
+      title: `${a.kind} fires ${a.action} on "${a.target || '—'}"${a.delay ? ` after ${a.delay}s` : ''}`,
+      text: `teleport → ${where}`
+    }));
+  }
+  return out;
+}
+
 function spawnerNodeRow(file, parentNode, sp, sel, depth) {
   const row = el('div', { class: 'sp-node', style: `--depth:${depth}` });
   const headRow = el('div', { class: 'sp-head' + (sel && sel.subId === sp.node.id ? ' active' : '') });
@@ -367,6 +399,10 @@ function spawnerNodeRow(file, parentNode, sp, sel, depth) {
     if (f && f.selection) { f.selection.subId = f.selection.subId === sp.node.id ? null : sp.node.id; emit('selection'); }
   });
   row.append(headRow);
+  if (sp.kind === 'bot') {
+    const notes = behaviourNotes(sp.bot);
+    if (notes.length) row.append(el('div', { class: 'sp-behaviour' }, ...notes));
+  }
 
   if (sel && sel.subId === sp.node.id && sp.kind === 'bot') row.append(botEditor(file, sp.node));
   if (sel && sel.subId === sp.node.id && sp.kind === 'tank') row.append(tankEditor(file, sp.node));

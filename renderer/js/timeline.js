@@ -3,7 +3,7 @@ import { parse, setValue, getValue, findAll, cloneNode, removeNode, makeBlock, m
 import { state, activeFile, simFor, beginEdit, commitEdit, cancelEdit, emit, matchesSearch, gatingFor, wsTriggerTime, setWsTriggerTime } from './state.js';
 import { CLASS_INFO, botDisplayName } from './popmodel.js';
 import { native } from './native.js';
-import { isGated } from './gating.js';
+import { isGated, eventGate } from './gating.js';
 import { exportWavePng } from './exportpng.js';
 
 const zoomMap = new Map();
@@ -73,6 +73,15 @@ export function fitWave(file, waveIndex) {
 function gateBadge(file, wave, ws) {
   const g = gatingFor(file, wave).get(ws);
   if (!isGated(g)) return null;
+  const ev = eventGate(g);
+  if (ev) {
+    const what = g.paused ? `Paused at wave start by "${g.pausedBy}"` : `Spawn point "${g.whereDisabled}" is disabled at start`;
+    return el('span', {
+      class: 'badge gated event',
+      title: `${what}\nReleased by "${ev.by}" on ${ev.why}.\n\nThat is a runtime event, so the popfile cannot say when it happens. This wavespawn is left out of the timeline and the counts.`,
+      text: 'EVENT'
+    });
+  }
   const at = wsTriggerTime(file, wave, ws);
   const why = g.paused
     ? `Paused at wave start by "${g.pausedBy}" ($PauseWaveSpawn)`

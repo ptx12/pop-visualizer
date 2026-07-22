@@ -541,6 +541,66 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
   const squadLeaders = new Map();
 
+  const namedPoints = new Map();
+  for (const s of mapData.spawns || []) if (s.name) namedPoints.set(s.name.toLowerCase(), s.origin);
+  for (const tr of mapData.tracks || []) if (tr.name) namedPoints.set(tr.name.toLowerCase(), tr.origin);
+  for (const p of mapData.pathProps || []) if (p.name) namedPoints.set(p.name.toLowerCase(), p.origin);
+  for (const h of mapData.hints || []) if (h.hint) namedPoints.set(String(h.hint).toLowerCase(), h.origin);
+
+  function resolvePoint(spec) {
+    if (!spec) return null;
+    if (spec.point) return spec.point;
+    const name = (spec.entity || spec.target || '').toString().trim().toLowerCase();
+    if (!name) return null;
+    return namedPoints.get(name) || null;
+  }
+
+  function placeActor(a, p) {
+    a.pos = [p[0], p[1]];
+    if (p.length > 2) a.z = p[2];
+    if (hasNav) {
+      const area = navOf(a).nearestArea(p);
+      if (area) {
+        a.pos[0] = Math.min(Math.max(a.pos[0], area.nw[0]), area.se[0]);
+        a.pos[1] = Math.min(Math.max(a.pos[1], area.nw[1]), area.se[1]);
+        a.areaId = area.id;
+      }
+    }
+  }
+
+  function stepInterrupt(a, t, dt, speed) {
+    const s = a.ia;
+    if (!s) return false;
+    const spec = s.spec;
+    if (!s.active) {
+      if (t < s.next) return false;
+      if (spec.repeats > 0 && s.count >= spec.repeats) return false;
+      s.active = true;
+      s.arrived = false;
+      s.until = spec.waitUntilDone ? Infinity : t + Math.max(0, spec.duration);
+    }
+    if (s.dest) {
+      if (hasNav && s.field === undefined) {
+        const area = navOf(a).nearestArea(s.dest);
+        s.field = area ? navOf(a).flowField(area.id) : null;
+      }
+      const d = s.field ? moveField(a, s.field, s.dest, dt, speed) : moveAlong(a, s.dest, dt, speed);
+      if (!s.arrived && d <= Math.max(spec.distance || 0, 40)) {
+        s.arrived = true;
+        if (s.until === Infinity) s.until = t + Math.max(0, spec.duration);
+      }
+    } else if (s.until === Infinity) {
+      s.until = t + Math.max(0, spec.duration);
+    }
+    if (t >= s.until) {
+      s.active = false;
+      s.count++;
+      s.next = t + Math.max(0, spec.cooldown);
+      return false;
+    }
+    return true;
+  }
+
   function initActor(a, t) {
     a.alive = true;
     a.sampleStart = t;
@@ -560,6 +620,13 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     a.jx = (rng() * 2 - 1) * 26;
     a.jy = (rng() * 2 - 1) * 26;
     if (a.kind === 'tank') { a.state = 'tank'; return; }
+    const ia = (a.bot.interrupts || [])[0] || null;
+    if (ia) {
+      const dest = resolvePoint(ia.point ? { point: ia.point } : { target: ia.target });
+      a.ia = { spec: ia, dest, next: t + Math.max(0, ia.delay), count: 0, active: false, until: 0, arrived: false };
+    }
+    const tps = a.bot.teleports || [];
+    if (tps.length) a.tp = tps.map(x => ({ spec: x, at: t + Math.max(0, x.delay || 0), done: false }));
     const cls = clsOf(a);
     if (a.squadRole === 'member') a.state = 'escortSquadLeader';
     else if (cls === 'spy') { a.state = 'spyLeaveSpawn'; a.spyAt = t + 2 + rng(); a.spyAttempt = 0; }
@@ -767,6 +834,21 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       let speed = botMaxSpeed(a.bot, hasFlag);
       if (a.shield) speed = chargeStep(a, t, dt, speed);
       if (t < (a.tauntUntil || 0)) {
+        if (hasFlag) bomb.pos = a.pos.slice();
+        a.samples.push(a.pos[0], a.pos[1]);
+        continue;
+      }
+
+      if (a.tp) {
+        for (const j of a.tp) {
+          if (j.done || t < j.at) continue;
+          j.done = true;
+          const p = resolvePoint(j.spec.teleport);
+          if (p) placeActor(a, p);
+        }
+      }
+
+      if (a.ia && stepInterrupt(a, t, dt, speed)) {
         if (hasFlag) bomb.pos = a.pos.slice();
         a.samples.push(a.pos[0], a.pos[1]);
         continue;
