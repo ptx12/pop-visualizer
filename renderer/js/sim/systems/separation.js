@@ -23,7 +23,7 @@ export const separation = {
 function pass(ctx, dt, s) {
   let n = 0;
   for (const a of ctx.live) {
-    if (a.kind !== 'bot' || !a.pos) continue;
+    if (a.kind !== 'bot' || !a.pos || a.bot.noPushAway) continue;
     const scale = botScale(a.bot);
     s.act[n] = a;
     s.px[n] = a.pos[0];

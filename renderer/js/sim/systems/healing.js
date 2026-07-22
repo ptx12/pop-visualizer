@@ -43,8 +43,9 @@ export const healing = {
       const d = Math.hypot(p.pos[0] - a.pos[0], p.pos[1] - a.pos[1]);
       if (d > MAX_HEAL_RANGE) continue;
       const ramp = t - (p.lastHurtT ?? -Infinity) >= RAMP_DELAY ? HEAL_RAMP : 1;
-      p.hp = Math.min(max, p.hp + HEAL_RATE * ramp * dt);
-      a.healed += HEAL_RATE * ramp * dt;
+      const rate = HEAL_RATE * ramp * (p.bot.healRateMult ?? 1);
+      p.hp = Math.min(max, p.hp + rate * dt);
+      a.healed += rate * dt;
     }
   }
 };

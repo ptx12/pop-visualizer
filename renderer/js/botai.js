@@ -727,7 +727,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   }
 
   function upgradeOverTime(a, t) {
-    if (a.bot.isGiant || a.bombLevel >= 3) return;
+    if (a.bot.isGiant || a.bot.noBombUpgrades || a.bombLevel >= 3) return;
     if (a.bombUpgradeAt == null || inBlueSpawn(a)) {
       a.bombUpgradeAt = t + BOMB_UPGRADE_1;
       return;
