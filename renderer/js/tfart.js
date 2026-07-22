@@ -27,26 +27,30 @@ export function tfMark(size = 22, style = 'silver') {
   defs.append(grad);
   svg.append(defs);
 
-  const ring = document.createElementNS(NS, 'circle');
-  ring.setAttribute('cx', '50');
-  ring.setAttribute('cy', '50');
-  ring.setAttribute('r', '42');
-  ring.setAttribute('fill', 'none');
-  ring.setAttribute('stroke', `url(#${gid})`);
-  ring.setAttribute('stroke-width', '11');
-  svg.append(ring);
+  const R = 46;
+  const HOLE = 11.5;
+  const GAP = 4;
+  const outer = Math.sqrt(R * R - GAP * GAP);
+  const inner = Math.sqrt(HOLE * HOLE - GAP * GAP);
 
-  const quarter = (a0, a1) => {
-    const rad = d => (d - 90) * Math.PI / 180;
-    const r = 30;
-    const x0 = 50 + Math.cos(rad(a0)) * r, y0 = 50 + Math.sin(rad(a0)) * r;
-    const x1 = 50 + Math.cos(rad(a1)) * r, y1 = 50 + Math.sin(rad(a1)) * r;
-    const p = document.createElementNS(NS, 'path');
-    p.setAttribute('d', `M 50 50 L ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 0 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z`);
-    p.setAttribute('fill', `url(#${gid})`);
-    return p;
+  const pt = (x, y, angle) => {
+    const a = angle * Math.PI / 180;
+    const c = Math.cos(a), s = Math.sin(a);
+    return `${(50 + x * c - y * s).toFixed(2)} ${(50 + x * s + y * c).toFixed(2)}`;
   };
-  const gap = 7;
-  for (const start of [0, 90, 180, 270]) svg.append(quarter(start + gap, start + 90 - gap));
+
+  const quarter = angle => [
+    `M ${pt(GAP, -inner, angle)}`,
+    `L ${pt(GAP, -outer, angle)}`,
+    `A ${R} ${R} 0 0 1 ${pt(outer, -GAP, angle)}`,
+    `L ${pt(inner, -GAP, angle)}`,
+    `A ${HOLE} ${HOLE} 0 0 0 ${pt(GAP, -inner, angle)}`,
+    'Z'
+  ].join(' ');
+
+  const p = document.createElementNS(NS, 'path');
+  p.setAttribute('d', [0, 90, 180, 270].map(quarter).join(' '));
+  p.setAttribute('fill', `url(#${gid})`);
+  svg.append(p);
   return svg;
 }
