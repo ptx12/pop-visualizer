@@ -77,7 +77,7 @@ function outputsOfEntityBlock(block) {
   return out;
 }
 
-function outputsOfPopBlock(block, on) {
+export function outputsOfPopBlock(block, on) {
   return expand({
     target: (getValue(block, 'Target', '') || '').trim(),
     input: (getValue(block, 'Action', 'Trigger') || '').trim(),
@@ -236,6 +236,20 @@ export function analyzeWave(wave, tg) {
     }
   }
   return result;
+}
+
+export function waveStartOutputs(wave) {
+  const out = [];
+  for (const key of WAVE_START_KEYS) {
+    for (const b of findAll(wave.node, key)) if (b.type === 'block') out.push(...outputsOfPopBlock(b, key));
+  }
+  return out;
+}
+
+export function wavespawnOutputs(ws, key) {
+  const out = [];
+  for (const b of findAll(ws.node, key)) if (b.type === 'block') out.push(...outputsOfPopBlock(b, key));
+  return out;
 }
 
 export function eventGate(g) {

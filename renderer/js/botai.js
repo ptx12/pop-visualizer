@@ -2,6 +2,8 @@ import { buildNavGraphWasm, navWasmReady } from './navwasm.js';
 import { buildPipeline } from './sim/systems.js';
 import { behaviours, selectBehaviour } from './sim/behaviours.js';
 import { instantiateSpawner } from './sim/spawners.js';
+import { createEventBus, seedWaveEvents } from './sim/events.js';
+import { waveStartOutputs, wavespawnOutputs } from './gating.js';
 import { RANGES, healTarget } from './sim/systems/healing.js';
 import {
   CLASS_BASE_SPEED, TF_MAX_SPEED, STEP, CARRIER_PENALTY,
@@ -769,8 +771,13 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
   const maxT = damageOn ? sim.waveEnd + 600 : sim.waveEnd + 90;
 
+  const events = createEventBus();
+  try {
+    seedWaveEvents(events, wave, sim, { waveStartOutputs, wavespawnOutputs });
+  } catch {}
+
   const ctx = {
-    wave, sim, mapData, opts,
+    wave, sim, mapData, opts, events,
     rng, deathModel, teamDPS, robotLimit,
     actors, live, bomb, bombSamples, squadLeaders,
     nav, hasNav, navOf, graphFor, objective, objArea, chains,
