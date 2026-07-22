@@ -69,28 +69,62 @@ spawners.registerAll([
   {
     id: 'sentrygun',
     parse(node, api) {
-      return { kind: 'sentry', node, count: 1, level: api.getNumber(node, 'Level', 1) };
-    }
+      const level = api.getNumber(node, 'Level', 1);
+      return staticEntity(node, api, 'sentry', {
+        entityKind: 'sentry', label: 'Sentry Gun', level,
+        icon: 'sentry_' + level, defaultTeam: 2
+      });
+    },
+    instantiate: instantiateStatic
   },
   {
     id: 'botnpc',
     parse(node, api) {
-      return { kind: 'other', node, label: api.getValue(node, 'Name', 'BotNpc'), health: api.getNumber(node, 'Health', 0), count: 1 };
-    }
+      return staticEntity(node, api, 'other', { entityKind: 'botnpc', label: api.getValue(node, 'Name', 'BotNpc') });
+    },
+    instantiate: instantiateStatic
   },
   {
     id: 'halloweenboss',
     parse(node, api) {
-      return { kind: 'other', node, label: api.getValue(node, 'BossType', 'HalloweenBoss'), count: 1 };
-    }
+      return staticEntity(node, api, 'other', {
+        entityKind: 'boss', label: api.getValue(node, 'BossType', 'HalloweenBoss'),
+        icon: api.getValue(node, 'ClassIcon', null)
+      });
+    },
+    instantiate: instantiateStatic
   },
   {
     id: 'pointtemplate',
     parse(node, api) {
-      return { kind: 'other', node, label: api.getValue(node, 'Name', 'PointTemplate'), count: 1 };
-    }
+      return staticEntity(node, api, 'other', { entityKind: 'template', label: api.getValue(node, 'Name', 'PointTemplate') });
+    },
+    instantiate: instantiateStatic
   }
 ]);
+
+function parseOrigin(raw) {
+  if (typeof raw !== 'string') return null;
+  const p = raw.trim().split(/\s+/).map(Number);
+  return p.length >= 3 && p.every(Number.isFinite) ? p : null;
+}
+
+function staticEntity(node, api, kind, base) {
+  return {
+    kind, node, count: 1, static: true,
+    origin: parseOrigin(api.getValue(node, 'Origin', null)),
+    health: api.getNumber(node, 'Health', 0),
+    icon: base.icon ?? api.getValue(node, 'ClassIcon', null),
+    team: api.getNumber(node, 'TeamNum', base.defaultTeam ?? 3),
+    entityKind: base.entityKind,
+    label: base.label,
+    level: base.level
+  };
+}
+
+function instantiateStatic(sp) {
+  return { entries: [{ prop: sp }], squad: false };
+}
 
 export const SPAWNER_KEYS = new Set(spawners.ids());
 

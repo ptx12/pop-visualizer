@@ -463,6 +463,17 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
           pendingSpawn = null;
         }
         const entry = pending.shift();
+        if (entry.prop) {
+          const prop = entry.prop;
+          const at = prop.origin || (prop.where && prop.where.length ? null : null) || pickSpawn(ws.where).origin;
+          actors.push({
+            kind: 'prop', ws, prop, spawnT: ev.t, simDieT: ev.t + r.life,
+            spawnPos: (prop.origin || at).slice(0, 3)
+          });
+          pendingIdx++;
+          if (actors.length >= 2500) break;
+          continue;
+        }
         if (!pendingSpawn || !pendingSquadId) pendingSpawn = pickSpawn(ws.where);
         const spawn = pendingSpawn;
         actors.push({
@@ -567,10 +578,16 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     a.alive = true;
     a.sampleStart = t;
     a.spawnT = t;
-    a.hp = a.kind === 'tank' ? (a.tank.health || 20000) : (a.bot.health || 100);
+    a.hp = a.kind === 'tank' ? (a.tank.health || 20000) : a.kind === 'prop' ? (a.prop.health || 0) : (a.bot.health || 100);
     if (a.squadRole === 'leader' && a.squadId) squadLeaders.set(a.squadId, a);
     a.pos = a.spawnPos ? a.spawnPos.slice(0, 2) : [0, 0];
     a.z = a.spawnPos ? a.spawnPos[2] : 0;
+    if (a.kind === 'prop') {
+      a.zs = [];
+      if (hasNav) { const ar = navOf(a).nearestArea(a.spawnPos || objective); if (ar) { a.areaId = ar.id; } }
+      a.state = 'prop';
+      return;
+    }
     if (a.kind === 'bot' && hasNav) a.nav = graphFor(profileOf(a.bot, false));
     if (a.kind === 'bot') a.shield = hasDemoShield(a.bot);
     const home = hasNav ? navOf(a).nearestArea(a.spawnPos || objective) : null;
@@ -799,14 +816,14 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     while (cursor < sorted.length && sorted[cursor].spawnT <= t) waiting.push(sorted[cursor++]);
     if (waiting.length) {
       let bots = 0;
-      for (const a of live) if (a.kind !== 'tank') bots++;
+      for (const a of live) if (a.kind === 'bot') bots++;
       for (let i = 0; i < waiting.length;) {
         const a = waiting[i];
-        if (a.kind !== 'tank' && bots >= robotLimit) { i++; continue; }
+        if (a.kind === 'bot' && bots >= robotLimit) { i++; continue; }
         waiting.splice(i, 1);
         initActor(a, t);
         live.add(a);
-        if (a.kind !== 'tank') bots++;
+        if (a.kind === 'bot') bots++;
       }
     }
     for (const a of live) {
@@ -830,6 +847,14 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
         if (hasNav) {
           const na = nav.areaAt(a.pos, a.areaId);
           if (na) { a.areaId = na.id; a.z = (na.nw[2] + na.se[2]) / 2; }
+        }
+        continue;
+      }
+      if (a.kind === 'prop') {
+        for (const kp of killPoints) {
+          const dx = kp[0] - a.pos[0], dy = kp[1] - a.pos[1];
+          const rr = kp[2] || 200;
+          if (dx * dx + dy * dy < rr * rr) { killActor(a, t); break; }
         }
         continue;
       }

@@ -101,6 +101,33 @@ check('a RandomChoice inside a Squad yields one pick per squad',
   [...perSquad.values()].every(m => m.length === 2 && m.includes('medic')),
   [...perSquad.values()].map(m => m.join('+')).join(' '));
 
+const withProps = run(`\t\t\tTotalCount 1\n\t\t\tMaxActive 1\n\t\t\tSpawnCount 1\n\t\t\tWhere spawnbot
+			SentryGun { TeamNum 2 Level 3 }`);
+const sentry = withProps.actors.find(a => a.kind === 'prop');
+check('a SentryGun becomes a prop actor in the sim', !!sentry, 'kinds ' + withProps.actors.map(a => a.kind).join(','));
+check('the sentry carries its team and icon', sentry && sentry.prop.team === 2 && sentry.prop.icon === 'sentry_3',
+  sentry && JSON.stringify([sentry.prop.team, sentry.prop.icon]));
+check('the sentry holds position for its whole life', sentry &&
+  sentry.track.length >= 4 && sentry.track[0] === sentry.track[sentry.track.length - 2] &&
+  sentry.track[1] === sentry.track[sentry.track.length - 1]);
+check('a sentry is not a robot and never counts against the limit', (() => {
+  const many = run(`\t\t\tTotalCount 30\n\t\t\tMaxActive 30\n\t\t\tSpawnCount 1\n\t\t\tWhere spawnbot\n\t\t\tSentryGun { TeamNum 2 Level 1 }`);
+  return many.actors.filter(a => a.kind === 'prop').length === 30;
+})());
+
+const bossPop = `WaveSchedule { Wave { WaveSpawn { Name b TotalCount 1 MaxActive 1 SpawnCount 1 HalloweenBoss { BossType HHH ClassIcon horsemann_lite Health 25000 Origin "300 450 0" } } } }`;
+const bossModel = buildModel(parse(bossPop), []);
+const bossWave = bossModel.waves[0];
+const bossAi = simulateBotAI(bossWave, simulateWave(bossWave, { robotLimit: 22 }), mapData, { deathModel: 'hatch', robotLimit: 22 });
+const boss = bossAi.actors.find(a => a.kind === 'prop');
+check('a HalloweenBoss becomes a prop actor', !!boss);
+check('the boss spawns at its Origin, not a spawn point', boss &&
+  Math.abs(boss.track[0] - 300) < 1 && Math.abs(boss.track[1] - 450) < 1,
+  boss && [boss.track[0], boss.track[1]].join(','));
+check('the boss keeps its parsed health', boss && boss.prop.health === 25000, boss && String(boss.prop.health));
+check('the boss contributes its HP to the wavespawn total',
+  bossWave.wavespawns[0].bots[0].other.health === 25000);
+
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');
 if (fail) process.exit(1);

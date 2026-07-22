@@ -1316,7 +1316,7 @@ export function renderMapView(container, file, waveIndex) {
   }
 
   function plateSize(a) {
-    const base = a.kind === 'tank' ? 34 : a.bot.isBoss ? 34 : a.bot.isGiant ? 28 : 20;
+    const base = a.kind === 'tank' ? 34 : a.kind === 'prop' ? 24 : a.bot.isBoss ? 34 : a.bot.isGiant ? 28 : 20;
     const zoom = Math.min(PLATE_ZOOM_MAX, Math.max(PLATE_ZOOM_MIN, (vs ? vs.scale : PLATE_REF_SCALE) / PLATE_REF_SCALE));
     return base * zoom;
   }
@@ -1359,6 +1359,32 @@ export function renderMapView(container, file, waveIndex) {
 
   function drawActor(a, t, sx, sy, zf, n) {
     const lift = (1 + (zf || 0) * LIFT_SCALE) * stackScale(n);
+    if (a.kind === 'prop') {
+      const s = plateSize(a) * lift;
+      const red = a.prop.team === 2;
+      drawLift(sx, sy, s, zf || 0);
+      ctx.fillStyle = red ? '#7a3a34' : '#3a4a5a';
+      ctx.strokeStyle = 'rgba(0,0,0,.5)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(sx - s / 2, sy - s / 2, s, s, 3);
+      ctx.fill();
+      ctx.stroke();
+      const img = a.prop.icon ? iconImage(a.prop.icon, scheduleDraw) : null;
+      if (img && img.complete && img.naturalWidth) {
+        const is = s * 0.82;
+        ctx.drawImage(img, sx - is / 2, sy - is / 2, is, is);
+      } else {
+        ctx.fillStyle = '#d9dbde';
+        ctx.font = 'bold ' + (s * 0.5).toFixed(0) + 'px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText((a.prop.label || 'E')[0].toUpperCase(), sx, sy + 1);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+      }
+      return;
+    }
     if (a.kind === 'tank') {
       const img = iconImage(tankIconName(a.tank), scheduleDraw) || iconImage('leaderboard_class_tank', scheduleDraw);
       const s = plateSize(a) * lift;
@@ -1810,6 +1836,8 @@ export function renderMapView(container, file, waveIndex) {
       const stacked = hit.n > 1 ? `\nstacked with ${hit.n - 1} more here` : '';
       const label = best.kind === 'tank'
         ? `Tank — ${best.tank.health} HP · ${best.tank.speed} HU/s${died}\nfrom "${best.ws.name || 'unnamed'}"${stacked}`
+        : best.kind === 'prop'
+        ? `${best.prop.label}${best.prop.health ? ' — ' + best.prop.health + ' HP' : ''} · ${best.prop.team === 2 ? 'red, stationary' : 'placed entity'}\nfrom "${best.ws.name || 'unnamed'}" · spawned ${fmtTime(best.spawnT)}${died}\n(movement not simulated)`
         : `${botDisplayName(best.bot)} — ${best.bot.health} HP · ${Math.round(botMaxSpeed(best.bot, false))} HU/s\n${best.state}${best.squadId ? ' · squad ' + best.squadRole : ''}\nfrom "${best.ws.name || 'unnamed'}" · spawned ${fmtTime(best.spawnT)}${died}${stacked}`;
       showTip(label, e.clientX, e.clientY);
     } else hideTip();
