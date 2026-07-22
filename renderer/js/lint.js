@@ -1,16 +1,10 @@
 import { getNumber, getValue, findAll, findFirst } from './kv.js';
 import { SPAWNER_KEYS, isWaveScheduleRoot } from './popmodel.js';
+import { traitForFlag } from './sim/traits.js';
 
 const KNOWN_SKILLS = new Set(['easy', 'normal', 'hard', 'expert']);
 const KNOWN_OBJECTIVES = new Set(['destroysentries', 'sniper', 'spy', 'engineer', 'seekanddestroy']);
 const KNOWN_RESTRICTIONS = new Set(['meleeonly', 'primaryonly', 'secondaryonly']);
-const KNOWN_ATTRIBUTES = new Set([
-  'removeondeath', 'aggressive', 'suppressfire', 'disabledodge', 'becomespectatorondeath',
-  'retainbuildings', 'spawnwithfullcharge', 'alwayscrit', 'ignoreenemies', 'holdfireuntilfullreload',
-  'alwaysfireweapon', 'teleporttohint', 'miniboss', 'usebosshealthbar', 'ignoreflag', 'autojump',
-  'airchargeonly', 'vaccinatorbullets', 'vaccinatorblast', 'vaccinatorfire', 'bulletimmune',
-  'blastimmune', 'fireimmune', 'parachute', 'projectileshield'
-]);
 const WS_SINGLETON_KEYS = ['Name', 'TotalCount', 'MaxActive', 'SpawnCount', 'WaitBeforeStarting', 'WaitBetweenSpawns', 'WaitBetweenSpawnsAfterDeath', 'TotalCurrency', 'Support', 'WaitForAllSpawned', 'WaitForAllDead', 'Template', 'RandomSpawn'];
 const WS_NUMERIC_KEYS = ['TotalCount', 'MaxActive', 'SpawnCount', 'WaitBeforeStarting', 'WaitBetweenSpawns', 'WaitBetweenSpawnsAfterDeath', 'TotalCurrency'];
 const NUM_RE = /^[+-]?(\d+\.?\d*|\.\d+)$/;
@@ -106,7 +100,7 @@ export function lintModel(model, simFor) {
         if (b.bot && b.bot.restriction && !KNOWN_RESTRICTIONS.has(b.bot.restriction.toLowerCase().replace(/[^a-z]/g, ''))) add('info', `Wave ${wi + 1} "${label}": unknown WeaponRestrictions "${b.bot.restriction}"`, loc);
         if (b.bot) {
           for (const a of b.bot.attrs) {
-            if (!KNOWN_ATTRIBUTES.has(String(a).toLowerCase().replace(/[^a-z]/g, ''))) add('info', `Wave ${wi + 1} "${label}": attribute "${a}" is not a stock TF2 bot attribute`, loc);
+            if (!traitForFlag(a) && !traitForFlag(String(a).toLowerCase().replace(/[^a-z]/g, ''))) add('info', `Wave ${wi + 1} "${label}": attribute "${a}" is not a stock TF2 bot attribute`, loc);
           }
         }
       }

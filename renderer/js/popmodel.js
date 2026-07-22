@@ -129,6 +129,12 @@ function parseInterruptBlock(node) {
 export function resolveBot(node, templates, stack = []) {
   const info = {
     isGiant: false, isBoss: false, alwaysCrit: false, ignoreFlag: false,
+    aggressive: false, mobber: false, teleportToHint: false, ignoreEnemies: false,
+    autoJump: false, parachute: false, airChargeOnly: false, projectileShield: false,
+    noBombUpgrades: false, noPushAway: false, healRateMult: 1, healthRegen: 0,
+    immune: new Set(), knownFlags: new Set(), loadout: {}, combat: {},
+    behaviorModifiers: [], extAttrs: [], spawnTemplates: [], itemNames: [],
+    action: null, teleportWhere: null,
     cls: null, clsRaw: null, name: null, health: null, scale: null, skill: null,
     icon: null, attrs: [], items: [], tags: [], restriction: null, templateChain: [],
     missingTemplates: [], moveSpeedMult: 1, chargeTimeMult: 1, chargeRechargeMult: 1,
