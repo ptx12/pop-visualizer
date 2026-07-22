@@ -46,12 +46,38 @@ export async function readMaterialFile(rel, tfPath, pak) {
     const entry = pak.index.get(rel);
     if (entry) { try { return readPakEntry(pak.path, entry); } catch {} }
   }
-  for (const vpkName of ext === 'vtf' ? ['tf2_textures_dir.vpk', 'tf2_misc_dir.vpk'] : ['tf2_misc_dir.vpk']) {
-    const vpk = path.join(tfPath, vpkName);
+  for (const vpk of searchVPKs(tfPath, ext)) {
     const entry = matVpkIndex(vpk, ext).get(rel);
     if (entry) { try { return readVPKEntry(vpk, entry); } catch {} }
   }
   return null;
+}
+
+function searchVPKs(tfPath, ext) {
+  const hl2 = path.join(path.dirname(tfPath), 'hl2');
+  const tf = ext === 'vtf' ? ['tf2_textures_dir.vpk', 'tf2_misc_dir.vpk'] : ['tf2_misc_dir.vpk'];
+  const base = ext === 'vtf' ? ['hl2_textures_dir.vpk', 'hl2_misc_dir.vpk'] : ['hl2_misc_dir.vpk', 'hl2_textures_dir.vpk'];
+  return [...tf.map(n => path.join(tfPath, n)), ...base.map(n => path.join(hl2, n))];
+}
+
+const BASE_RE = /["']?\$basetexture["']?\s+["']?([^"'\r\n]+?)["']?\s*$/im;
+const BASE2_RE = /["']?\$basetexture2["']?\s+["']?([^"'\r\n]+?)["']?\s*$/im;
+const INCLUDE_RE = /include"?\s*"?([^"\r\n]+?)"?\s*$/im;
+
+async function baseTextureOf(name, tfPath, pak, seen, depth = 0) {
+  const buf = await readMaterialFile('materials/' + name + '.vmt', tfPath, pak);
+  if (!buf) return null;
+  const text = buf.toString('latin1');
+  const m = text.match(BASE_RE) || text.match(BASE2_RE);
+  if (m) return m[1].trim().replace(/\\/g, '/').toLowerCase();
+  if (depth >= 4) return null;
+  const inc = text.match(INCLUDE_RE);
+  if (!inc) return null;
+  const next = inc[1].trim().replace(/\\/g, '/').toLowerCase()
+    .replace(/^materials\//, '').replace(/\.vmt$/, '');
+  if (!next || seen.has(next)) return null;
+  seen.add(next);
+  return baseTextureOf(next, tfPath, pak, seen, depth + 1);
 }
 
 export function makeMaterialLoader(tfPath, bspPath) {
@@ -62,11 +88,7 @@ export function makeMaterialLoader(tfPath, bspPath) {
     if (decCache.has(name)) return decCache.get(name);
     let base = vmtCache.get(name);
     if (base === undefined) {
-      const vmtBuf = await readMaterialFile('materials/' + name + '.vmt', tfPath, pak);
-      const text = vmtBuf ? vmtBuf.toString('latin1') : '';
-      let m = text.match(/["']?\$basetexture["']?\s+["']?([^"'\r\n]+?)["']?\s*$/im);
-      if (!m) m = text.match(/["']?\$basetexture2["']?\s+["']?([^"'\r\n]+?)["']?\s*$/im);
-      base = m ? m[1].trim().replace(/\\/g, '/').toLowerCase() : null;
+      base = await baseTextureOf(name, tfPath, pak, new Set([name]));
       vmtCache.set(name, base);
     }
     let out = null;
