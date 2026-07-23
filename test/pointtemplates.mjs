@@ -81,6 +81,23 @@ check('nav volume bounds are converted to world space (origin + mins/maxs)',
 check('nav volume keeps its name and team so relays can toggle it',
   nav[0].name === 'blockmid' && nav[0].team === '3');
 
+// A start-disabled spawn that a WaveSpawn explicitly targets is still honoured
+// (RafMod relay pulse-enables it at spawn time, which the static sim can't fire).
+const DIS = `WaveSchedule
+{
+  PointTemplates { G { info_player_teamspawn { "targetname" "spawnbot_pulse" "startdisabled" "1" "origin" "1500 700 0" } } }
+  Wave { WaveSpawn { Name w TotalCount 3 MaxActive 3 SpawnCount 3 Where spawnbot_pulse TFBot { Class Heavyweapons } } }
+}`;
+const disModel = buildModel(parse(DIS), []);
+check('a start-disabled PointTemplate spawn is captured as disabled',
+  disModel.templateEntities.spawns[0].disabled === true);
+const disAi = simulateBotAI(disModel.waves[0], simulateWave(disModel.waves[0], { robotLimit: 22 }),
+  { ...emptyMap, spawns: [{ name: 'spawnbot', origin: [0, 0, 0] }] },
+  { deathModel: 'hatch', robotLimit: 22, templateEntities: disModel.templateEntities });
+check('an explicit Where honours a start-disabled spawn instead of falling back to (0,0)',
+  disAi.actors.every(a => Math.hypot(a.track[0] - 1500, a.track[1] - 700) < 200 && Math.hypot(a.track[0], a.track[1]) > 500),
+  disAi.actors.map(a => [a.track[0], a.track[1]].map(Math.round).join(',')).join(' '));
+
 check('no PointTemplates yields empty extraction',
   (() => { const t = extractTemplateEntities(parse('WaveSchedule { Wave { } }')); return !t.spawns.length && !t.capzones.length && !t.flags.length && !t.tracks.length && !t.navVolumes.length; })());
 

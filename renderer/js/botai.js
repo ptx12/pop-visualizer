@@ -430,10 +430,15 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   }
   const enabledOf = list => list.filter(s => !s.disabled);
   const pickSpawn = whereNames => {
-    const names = (whereNames && whereNames.length ? whereNames : ['spawnbot']).map(w => String(w).toLowerCase());
+    const explicit = !!(whereNames && whereNames.length);
+    const names = (explicit ? whereNames : ['spawnbot']).map(w => String(w).toLowerCase());
     let pool = [];
     for (const n of names) pool.push(...(spawnsByName.get(n) || []));
     let usable = enabledOf(pool);
+    // An explicitly-named Where honours its spawn even when start-disabled: the
+    // popfile directs bots there and a relay pulse-enables it at spawn time
+    // (common RafMod pattern), which the static sim doesn't fire.
+    if (!usable.length && explicit && pool.length) usable = pool;
     if (!usable.length) for (const [k, list] of spawnsByName) if (k.startsWith('spawnbot')) usable.push(...enabledOf(list));
     if (!usable.length) usable = pool;
     if (!usable.length) usable = enabledOf(allSpawns);
