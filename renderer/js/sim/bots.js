@@ -14,6 +14,25 @@ export function botScale(bot) {
   return bot.isGiant || bot.isBoss ? MINIBOSS_SCALE : 1;
 }
 
+// Vanilla items with a static move-speed attribute baked into their schema.
+// In TF2 the game applies these automatically when the item is equipped, and any
+// explicit CharacterAttributes "move speed" stacks on top — so we apply them
+// unconditionally, multiplicatively, matching the game. Values from the TF2 wiki.
+const ITEM_MOVE_SPEED = [
+  [/gloves of running urgently/i, 1.3],   // GRU: +30% (heavy 230 -> 299)
+  [/eviction notice/i, 1.15],             // +15%
+  [/scotsman'?s skullcutter/i, 0.85],     // -15% while active
+  [/\bpowerjack\b/i, 1.15]                // +15% while active
+];
+
+export function itemMoveSpeedMult(items) {
+  let mult = 1;
+  for (const item of items || []) {
+    for (const [re, v] of ITEM_MOVE_SPEED) if (re.test(item)) mult *= v;
+  }
+  return mult;
+}
+
 export function hasDemoShield(bot) {
   if (!bot || bot.cls !== 'demoman') return false;
   if (bot.chargeRechargeMult !== 1 || bot.chargeTimeMult !== 1) return true;

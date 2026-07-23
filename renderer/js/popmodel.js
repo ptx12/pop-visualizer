@@ -1,5 +1,6 @@
 import { SPAWNER_KEYS, parseSpawnerNode } from './sim/spawners.js';
 import { traitForKey, traitForBlock, traitForFlag, traitsForAttribute } from './sim/traits.js';
+import { itemMoveSpeedMult } from './sim/bots.js';
 
 const GIANT_SCALE = 1.6;
 const TRAIT_API = { normalizeClass, parseInterruptBlock, parseActionBlock, getValue };
@@ -150,6 +151,7 @@ export function resolveBot(node, templates, stack = []) {
     info.health = base;
     info.healthIsDefault = true;
   }
+  info.moveSpeedMult *= itemMoveSpeedMult(info.items);
   info.teleports = info.actions.filter(a => a.teleport);
   const fired = new Set();
   const FIRE_RE = /^on[a-z]*output$|^fireinput$/i;

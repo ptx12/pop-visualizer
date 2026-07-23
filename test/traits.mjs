@@ -128,6 +128,22 @@ const unrec = sigKeys.filter(k => { const lk = k.toLowerCase(); return !knownK.h
 check('every SigMod/RafMod top-level TFBot key is recognized (' + sigKeys.length + ' keys)',
   unrec.length === 0, 'unrecognized: ' + unrec.join(', '));
 
+// Items with a baked-in move-speed attribute apply automatically (as in-game),
+// stacking with explicit CharacterAttributes. Values from the TF2 wiki.
+check('GRU grants +30% move speed from the item alone',
+  Math.abs(botOf('Class Heavyweapons Item "Gloves of Running Urgently MvM"').moveSpeedMult - 1.3) < 1e-9,
+  String(botOf('Class Heavyweapons Item "Gloves of Running Urgently MvM"').moveSpeedMult));
+check('the Eviction Notice grants +15%',
+  Math.abs(botOf('Class Heavyweapons Item "The Eviction Notice"').moveSpeedMult - 1.15) < 1e-9);
+check("the Scotsman's Skullcutter applies -15%",
+  Math.abs(botOf(`Class Demoman Item "The Scotsman's Skullcutter"`).moveSpeedMult - 0.85) < 1e-9);
+check('the Powerjack grants +15%',
+  Math.abs(botOf('Class Pyro Item "The Powerjack"').moveSpeedMult - 1.15) < 1e-9);
+check('an item speed and an explicit move speed attribute stack (as in-game)',
+  Math.abs(botOf('Class Heavyweapons Item "Gloves of Running Urgently" CharacterAttributes { "move speed bonus" 1.5 }').moveSpeedMult - 1.95) < 1e-9,
+  String(botOf('Class Heavyweapons Item "Gloves of Running Urgently" CharacterAttributes { "move speed bonus" 1.5 }').moveSpeedMult));
+check('a bot with no speed item is unaffected', botOf('Class Heavyweapons Item "Fists of Steel"').moveSpeedMult === 1);
+
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');
 if (fail) process.exit(1);
