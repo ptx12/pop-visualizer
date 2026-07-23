@@ -112,6 +112,22 @@ check('VIP: the OnDoneChangeAttributes chain is captured', finalNode.onDoneChang
 check('VIP: the interrupt point is parsed', JSON.stringify(finalNode.interrupts[0].point) === '[2289,-2440,250]');
 check('VIP: every relay the bot fires is surfaced', vip.firedTargets.join() === 'engie_hint_node_final,node_final_reached,!activator', JSON.stringify(vip.firedTargets));
 
+// Regression guard: every top-level TFBot key the SigMod/RafMod source parses
+// (CTFBotSpawner::Parse in tfbot_extensions.cpp) must be recognized here, so we
+// stop discovering unhandled keys one bot at a time. Refresh the fixture from
+// the mod source if SigMod adds keys.
+import { readFileSync as rfs } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { traitForBlock } from '../renderer/js/sim/traits.js';
+import { ACTION_BLOCK_KEYS } from '../renderer/js/popmodel.js';
+const here = dirname(fileURLToPath(import.meta.url));
+const sigKeys = rfs(join(here, 'fixtures_sigmod_tfbot_keys.txt'), 'utf8').trim().split(/\r?\n/).filter(Boolean);
+const knownK = new Set(knownBotKeys());
+const unrec = sigKeys.filter(k => { const lk = k.toLowerCase(); return !knownK.has(lk) && !traitForBlock(lk) && !ACTION_BLOCK_KEYS.has(lk); });
+check('every SigMod/RafMod top-level TFBot key is recognized (' + sigKeys.length + ' keys)',
+  unrec.length === 0, 'unrecognized: ' + unrec.join(', '));
+
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');
 if (fail) process.exit(1);

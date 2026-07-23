@@ -18,7 +18,7 @@ export const fetchFlag = {
   selects() { return true; },
   enter(a, ctx, t) {
     const bomb = ctx.bomb;
-    if (!bomb.carrier && bomb.deliveredAt == null && ctx.eligible(a) && bomb.home &&
+    if (!bomb.carrier && bomb.deliveredAt == null && ctx.eligible(a) && !a.bot.suppressFetch && bomb.home &&
         Math.abs(bomb.pos[0] - bomb.home[0]) + Math.abs(bomb.pos[1] - bomb.home[1]) < 1 &&
         t - a.spawnT <= AUTO_FLAG_AGE) {
       ctx.takeBomb(a);

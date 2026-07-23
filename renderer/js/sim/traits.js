@@ -154,16 +154,27 @@ registerTraits(KNOWN_FLAGS.map(f => ({ id: 'flag-' + f, flag: f, apply(info) { i
 const LOADOUT_KEYS = [
   'stripitemslot', 'dropweapon', 'usecustommodel', 'usehumanmodel', 'usehumananimations',
   'usebustermodel', 'deathsound', 'additionalstepsound', 'customeyeglowcolor', 'alwaysglow',
-  'noglow', 'rocketcustomparticle', 'forceromevision', 'voicepitchscale'
+  'noglow', 'rocketcustomparticle', 'forceromevision', 'voicepitchscale',
+  'skin', 'bodypartscalespeed', 'rocketcustommodel', 'painsound', 'firesound'
 ];
 const COMBAT_KEYS = [
   'maxvisionrange', 'usemeleethreatprioritization', 'aimtrackinginterval', 'aimleadprojectilespeed',
   'aimat', 'aimoffset', 'usebestweapon', 'fastupdate', 'ringoffire', 'rocketjump',
-  'autojumpmin', 'autojumpmax', 'nocrouchbuttonrelease', 'scale'
+  'autojumpmin', 'autojumpmax', 'nocrouchbuttonrelease', 'scale',
+  'desiredattackrange', 'movebehindenemy', 'followcrosshair', 'aimtime', 'mindotproduct'
+];
+
+// Recognized SigMod/RafMod sub-blocks — captured verbatim into info.blocks[key]
+// so they are never "unknown", visible in the model, but not simulated (combat/cosmetic).
+const RECOGNIZED_BLOCKS = [
+  'damageappliescond', 'fireweapon', 'homingrockets', 'itemcolor', 'itemmodel', 'message',
+  'customweaponmodel', 'shoottemplate', 'spell', 'taunt', 'voicecommand', 'weaponresist',
+  'weaponswitch', 'sequence', 'clientcommand', 'add-', 'removeattribute', 'addattribute'
 ];
 registerTraits([
   ...LOADOUT_KEYS.map(k => ({ id: 'loadout-' + k, key: k, apply(info, value) { info.loadout[k] = value; } })),
   ...COMBAT_KEYS.filter(k => k !== 'scale').map(k => ({ id: 'combat-' + k, key: k, apply(info, value) { info.combat[k] = value; } })),
+  ...RECOGNIZED_BLOCKS.map(k => ({ id: 'block-' + k, block: k, apply(info, node) { (info.blocks[k] || (info.blocks[k] = [])).push(node); } })),
   { id: 'behaviormodifiers', key: 'behaviormodifiers', apply(info, value) {
     const v = String(value || '').trim().toLowerCase();
     info.behaviorModifiers.push(v);
@@ -177,6 +188,17 @@ registerTraits([
   { id: 'extattr', key: 'extattr', apply(info, value) { info.extAttrs.push(String(value).trim()); } },
   { id: 'spawntemplate', key: 'spawntemplate', apply(info, value) { info.spawnTemplates.push(value); } },
   { id: 'stripitem', key: 'stripitem', apply(info, value) { info.stripItems.push(value); } },
+  { id: 'suppresstimedfetchflag', key: 'suppresstimedfetchflag', apply(info, value) { info.suppressFetch = String(value) !== '0'; } },
+  { id: 'neutral', key: 'neutral', apply(info, value) { info.neutral = String(value) !== '0'; } },
+  { id: 'addcond', block: 'addcond', apply(info, node, api) {
+    info.addConds.push({
+      index: api.getValue(node, 'Index', null),
+      name: api.getValue(node, 'Name', null),
+      duration: parseFloat(api.getValue(node, 'Duration', '-1')),
+      delay: parseFloat(api.getValue(node, 'Delay', '0')) || 0
+    });
+  } },
+  { id: 'changeattributes', block: 'changeattributes', apply(info, node) { info.changeAttributes.push({ name: node.key, node }); } },
   { id: 'itemname-attr', attribute: /^itemname$/i, apply(info, value) { info.itemNames.push(value); } },
   { id: 'cannot-pick-up-intel', attribute: /^cannot pick up intelligence$/i, apply(info) { info.ignoreFlag = true; } },
   { id: 'health-from-healers', attribute: /^health from healers (reduced|increased)$/i, apply(info, value) {

@@ -135,6 +135,8 @@ export function resolveBot(node, templates, stack = []) {
     immune: new Set(), knownFlags: new Set(), loadout: {}, combat: {},
     behaviorModifiers: [], extAttrs: [], spawnTemplates: [], itemNames: [],
     stripItems: [], teleportWhere: [], eventAttributes: [], firedTargets: [],
+    addConds: [], changeAttributes: [], blocks: {},
+    suppressFetch: false, neutral: false,
     action: null,
     cls: null, clsRaw: null, name: null, health: null, scale: null, skill: null,
     icon: null, attrs: [], items: [], tags: [], restriction: null, templateChain: [],
