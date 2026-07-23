@@ -11,7 +11,7 @@ const SPAWN_CLS = /^info_player_teamspawn$/i;
 const CAPZONE_CLS = /^func_capturezone$/i;
 const FLAG_CLS = /^item_teamflag$/i;
 const TRACK_CLS = /^path_track$/i;
-const TANK_CLS = /^(tank_boss|func_tank(train)?|prop_dynamic_build|base_boss)$/i;
+const NAV_CLS = /^func_nav_(avoid|prefer)$/i;
 
 function parseVec(s) {
   if (typeof s !== 'string') return null;
@@ -20,7 +20,7 @@ function parseVec(s) {
 }
 
 export function extractTemplateEntities(doc) {
-  const spawns = [], capzones = [], flags = [], tracks = [];
+  const spawns = [], capzones = [], flags = [], tracks = [], navVolumes = [];
   const roots = [];
   const findRoots = node => {
     for (const c of node.children || []) {
@@ -47,14 +47,27 @@ export function extractTemplateEntities(doc) {
       } else if (TRACK_CLS.test(cls) && origin && name && !seenTrack.has(name.toLowerCase())) {
         seenTrack.add(name.toLowerCase());
         tracks.push({ name, origin, target: getValue(c, 'target', null) });
+      } else if (NAV_CLS.test(cls) && origin) {
+        const lo = parseVec(getValue(c, 'mins', null)), hi = parseVec(getValue(c, 'maxs', null));
+        if (lo && hi) {
+          navVolumes.push({
+            kind: /prefer/i.test(cls) ? 'prefer' : 'avoid',
+            name: name ? name.toLowerCase() : null,
+            mins: [origin[0] + lo[0], origin[1] + lo[1], origin[2] + lo[2]],
+            maxs: [origin[0] + hi[0], origin[1] + hi[1], origin[2] + hi[2]],
+            startDisabled: String(getValue(c, 'StartDisabled', '0')) !== '0',
+            team: getValue(c, 'team', null),
+            tags: String(getValue(c, 'tags', '') || '').toLowerCase().split(/\s+/).filter(Boolean)
+          });
+        }
       }
       collect(c);
     }
   };
   for (const r of roots) collect(r);
-  return { spawns, capzones, flags, tracks };
+  return { spawns, capzones, flags, tracks, navVolumes };
 }
 
 export function hasTemplateEntities(te) {
-  return !!(te && (te.spawns.length || te.capzones.length || te.flags.length || te.tracks.length));
+  return !!(te && (te.spawns.length || te.capzones.length || te.flags.length || te.tracks.length || te.navVolumes.length));
 }

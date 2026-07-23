@@ -68,8 +68,21 @@ check('a BSP spawn of the same name still works (both are candidates)',
 check('a BSP capturezone takes priority over a popfile one',
   Math.abs(ai2.objective[0] - 100) < 1, ai2.objective.slice(0, 2).map(Math.round).join(','));
 
+// func_nav_avoid / func_nav_prefer with origin-relative bounds.
+const NAV = `WaveSchedule { PointTemplates { G {
+  func_nav_avoid { "targetname" "blockmid" "origin" "1050 450 0" "mins" "-300 -150 -100" "maxs" "300 150 100" "team" "3" }
+  func_nav_prefer { "targetname" "flank" "origin" "500 500 0" "mins" "-100 -100 -50" "maxs" "100 100 50" }
+} } Wave { } }`;
+const nav = buildModel(parse(NAV), []).templateEntities.navVolumes;
+check('extracts func_nav_avoid and func_nav_prefer', nav.length === 2 && nav[0].kind === 'avoid' && nav[1].kind === 'prefer');
+check('nav volume bounds are converted to world space (origin + mins/maxs)',
+  nav[0].mins[0] === 750 && nav[0].maxs[0] === 1350 && nav[0].mins[1] === 300 && nav[0].maxs[1] === 600,
+  JSON.stringify([nav[0].mins, nav[0].maxs]));
+check('nav volume keeps its name and team so relays can toggle it',
+  nav[0].name === 'blockmid' && nav[0].team === '3');
+
 check('no PointTemplates yields empty extraction',
-  (() => { const t = extractTemplateEntities(parse('WaveSchedule { Wave { } }')); return !t.spawns.length && !t.capzones.length && !t.flags.length && !t.tracks.length; })());
+  (() => { const t = extractTemplateEntities(parse('WaveSchedule { Wave { } }')); return !t.spawns.length && !t.capzones.length && !t.flags.length && !t.tracks.length && !t.navVolumes.length; })());
 
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');

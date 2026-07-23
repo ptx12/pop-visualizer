@@ -366,13 +366,14 @@ function findObjective(mapData, chains, idx) {
 
 export function createBotSim(wave, sim, mapData, opts = {}) {
   const te = opts.templateEntities;
-  if (te && (te.spawns.length || te.capzones.length || te.flags.length || te.tracks.length)) {
+  if (te && (te.spawns.length || te.capzones.length || te.flags.length || te.tracks.length || (te.navVolumes && te.navVolumes.length))) {
     mapData = {
       ...mapData,
       spawns: [...(mapData.spawns || []), ...te.spawns.map(s => ({ name: s.name, origin: s.origin, disabled: s.disabled }))],
       capzones: [...(mapData.capzones || []), ...te.capzones],
       flags: [...(mapData.flags || []), ...te.flags],
-      tracks: [...(mapData.tracks || []), ...te.tracks]
+      tracks: [...(mapData.tracks || []), ...te.tracks],
+      navVolumes: [...(mapData.navVolumes || []), ...(te.navVolumes || [])]
     };
   }
   const teamDPS = Number.isFinite(opts.teamDPS) ? opts.teamDPS : 1000;
