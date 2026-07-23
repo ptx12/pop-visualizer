@@ -143,6 +143,12 @@ check('an item speed and an explicit move speed attribute stack (as in-game)',
   Math.abs(botOf('Class Heavyweapons Item "Gloves of Running Urgently" CharacterAttributes { "move speed bonus" 1.5 }').moveSpeedMult - 1.95) < 1e-9,
   String(botOf('Class Heavyweapons Item "Gloves of Running Urgently" CharacterAttributes { "move speed bonus" 1.5 }').moveSpeedMult));
 check('a bot with no speed item is unaffected', botOf('Class Heavyweapons Item "Fists of Steel"').moveSpeedMult === 1);
+check('"major move speed bonus" is a move-speed multiplier',
+  botOf('Class Scout CharacterAttributes { "major move speed bonus" 1.5 }').moveSpeedMult === 1.5);
+check('the raw mult_player_movespeed_active attribute is a move-speed multiplier',
+  botOf('Class Scout CharacterAttributes { "mult_player_movespeed_active" 0.5 }').moveSpeedMult === 0.5);
+check('CharacterAttributes move speed still multiplies (regression)',
+  botOf('Class Pyro CharacterAttributes { "move speed bonus" 0.5 }').moveSpeedMult === 0.5);
 
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');

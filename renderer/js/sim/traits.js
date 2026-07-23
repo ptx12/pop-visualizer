@@ -112,7 +112,7 @@ registerTraits([
 
   {
     id: 'move-speed',
-    attribute: /^(move speed bonus|move speed penalty|card: move speed bonus)$/i,
+    attribute: /^(major move speed bonus|card: move speed bonus|move speed bonus|move speed penalty|mult_player_movespeed(_active)?)$/i,
     apply(info, value) { const v = positive(value); if (v) info.moveSpeedMult *= v; }
   },
   {
