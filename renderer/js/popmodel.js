@@ -414,6 +414,9 @@ export function buildModel(doc, baseDocs) {
   }
   model.startingCurrency = root ? getNumber(root, 'StartingCurrency', 0) : 0;
   model.robotLimit = root ? getNumber(root, 'RobotLimit', 22) : 22;
+  model.botPushaway = root ? String(getValue(root, 'BotPushaway', '1')) !== '0' : true;
+  model.flagCarrierPenalty = root && findFirst(root, 'FlagCarrierMovementPenalty') ? getNumber(root, 'FlagCarrierMovementPenalty', 0.5) : 0.5;
+  model.maxSpeedLimit = root && findFirst(root, 'MaxSpeedLimit') ? getNumber(root, 'MaxSpeedLimit', 520) : 520;
   model.totalDropped = model.waves.reduce((s, w) => s + w.totalCurrency, 0);
   model.totalWithBonus = model.totalDropped + Math.max(0, model.waves.length - 1) * 100;
   return model;

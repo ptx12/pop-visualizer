@@ -1,7 +1,7 @@
 import { parse } from '../renderer/js/kv.js';
 import { buildModel, SPAWNER_KEYS, parseSpawner } from '../renderer/js/popmodel.js';
 import { spawners } from '../renderer/js/sim/spawners.js';
-import { simulateBotAI } from '../renderer/js/botai.js';
+import { simulateBotAI, actorPosAt } from '../renderer/js/botai.js';
 import { simulateWave } from '../renderer/js/sim.js';
 
 let pass = 0, fail = 0;
@@ -160,6 +160,27 @@ const etpTank = etp.ai.actors[0];
 check('a tank on an ExtraTankPath follows the popfile route',
   etpTank && etpTank.track[etpTank.track.length - 2] > etpTank.track[0] + 500,
   etpTank && [etpTank.track[0], etpTank.track[etpTank.track.length - 2]].map(Math.round).join('->'));
+
+// Root-level movement settings.
+const wide = { ...mapData, spawns: [{ name: 'spawnbot', origin: [200, 450, 0] }] };
+const runRoot = root => {
+  const model = buildModel(parse(`WaveSchedule { ${root} Wave { WaveSpawn { Name w TotalCount 10 MaxActive 10 SpawnCount 10 Where spawnbot TFBot { Class Heavyweapons Attributes IgnoreFlag } } } }`), []);
+  const w = model.waves[0];
+  return { model, ai: simulateBotAI(w, simulateWave(w, { robotLimit: 99 }), wide, { deathModel: 'hatch', robotLimit: 99, botPushaway: model.botPushaway, flagCarrierPenalty: model.flagCarrierPenalty, maxSpeedLimit: model.maxSpeedLimit }) };
+};
+const meanNN = ai => {
+  const p = ai.actors.map(a => actorPosAt(a, 4)).filter(Boolean);
+  let s = 0, n = 0;
+  for (let i = 0; i < p.length; i++) { let nn = Infinity; for (let j = 0; j < p.length; j++) if (i !== j) nn = Math.min(nn, Math.hypot(p[i][0] - p[j][0], p[i][1] - p[j][1])); if (nn < Infinity) { s += nn; n++; } }
+  return n ? s / n : 0;
+};
+check('BotPushaway defaults to on', runRoot('').model.botPushaway === true);
+check('BotPushaway 0 is parsed off', runRoot('BotPushaway 0').model.botPushaway === false);
+check('BotPushaway 0 disables separation (bots stack)', meanNN(runRoot('BotPushaway 0').ai) < meanNN(runRoot('').ai) / 2);
+check('FlagCarrierMovementPenalty overrides the carrier penalty', runRoot('FlagCarrierMovementPenalty 0.9').model.flagCarrierPenalty === 0.9);
+check('FlagCarrierMovementPenalty defaults to 0.5', runRoot('').model.flagCarrierPenalty === 0.5);
+check('MaxSpeedLimit overrides the speed cap', runRoot('MaxSpeedLimit 800').model.maxSpeedLimit === 800);
+check('MaxSpeedLimit defaults to 520', runRoot('').model.maxSpeedLimit === 520);
 
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');

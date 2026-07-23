@@ -897,7 +897,10 @@ export function renderMapView(container, file, waveIndex) {
     teamDPS: dps, deathModel: model, zonesMode: zMode, killPoints: killPts, objectiveIdx: objIdx, bombPath,
     enabledNames: toggles.enabled, disabledNames: toggles.disabled,
     extraSpawnPoints: file.model.extraSpawnPoints || [],
-    extraTankPaths: file.model.extraTankPaths || []
+    extraTankPaths: file.model.extraTankPaths || [],
+    botPushaway: file.model.botPushaway,
+    flagCarrierPenalty: file.model.flagCarrierPenalty,
+    maxSpeedLimit: file.model.maxSpeedLimit
   };
   if (zMode === 'custom') aiOpts.zoneWeights = paint;
   const run = aiRunFor(file, wave, sim, mapData, aiKey, aiOpts);

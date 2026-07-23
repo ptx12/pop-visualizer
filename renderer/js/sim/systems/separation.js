@@ -16,6 +16,7 @@ export const separation = {
     };
   },
   step(ctx, t, dt, s) {
+    if (ctx.botPushaway === false) return;
     for (let k = 0; k < SUBSTEPS; k++) pass(ctx, dt / SUBSTEPS, s);
   }
 };
@@ -66,7 +67,7 @@ function pass(ctx, dt, s) {
     const len = Math.hypot(nx, ny) || 1;
     nx /= len; ny /= len;
     if (ddx * nx + ddy * ny >= 0) { nx = -nx; ny = -ny; }
-    const slide = Math.min(push, botMaxSpeed(a.bot, ctx.bomb.carrier === a)) * dt;
+    const slide = Math.min(push, botMaxSpeed(a.bot, ctx.bomb.carrier === a, ctx.carrierPenalty, ctx.maxSpeed)) * dt;
     s.hit[moves] = i;
     s.dx[moves] = nx * slide;
     s.dy[moves] = ny * slide;

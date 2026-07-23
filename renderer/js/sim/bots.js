@@ -21,11 +21,11 @@ export function hasDemoShield(bot) {
   return /demoknight|samurai/i.test(bot.icon || '');
 }
 
-export function botMaxSpeed(bot, hasFlag) {
+export function botMaxSpeed(bot, hasFlag, penalty = CARRIER_PENALTY, cap = TF_MAX_SPEED) {
   let s = CLASS_BASE_SPEED[bot.cls] ?? 300;
   s *= bot.moveSpeedMult || 1;
-  if (hasFlag && !bot.isGiant) s *= CARRIER_PENALTY;
-  return Math.min(s, TF_MAX_SPEED);
+  if (hasFlag && !bot.isGiant) s *= penalty;
+  return Math.min(s, cap);
 }
 
 export function mulberry32(seed) {

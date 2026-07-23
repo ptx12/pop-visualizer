@@ -811,6 +811,9 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   const ctx = {
     wave, sim, mapData, opts, events,
     rng, deathModel, teamDPS, robotLimit,
+    botPushaway: opts.botPushaway !== false,
+    carrierPenalty: Number.isFinite(opts.flagCarrierPenalty) ? opts.flagCarrierPenalty : CARRIER_PENALTY,
+    maxSpeed: Number.isFinite(opts.maxSpeedLimit) ? opts.maxSpeedLimit : TF_MAX_SPEED,
     actors, live, bomb, bombSamples, squadLeaders,
     nav, hasNav, navOf, graphFor, objective, objArea, chains,
     nests, redSpawns, spawnsByName, namedPoints,
@@ -878,7 +881,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       }
       const cls = clsOf(a);
       const hasFlag = bomb.carrier === a;
-      let speed = botMaxSpeed(a.bot, hasFlag);
+      let speed = botMaxSpeed(a.bot, hasFlag, ctx.carrierPenalty, ctx.maxSpeed);
       if (a.shield) speed = chargeStep(a, t, dt, speed);
       if (t < (a.tauntUntil || 0)) {
         if (hasFlag) bomb.pos = a.pos.slice();
