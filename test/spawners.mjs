@@ -128,6 +128,39 @@ check('the boss keeps its parsed health', boss && boss.prop.health === 25000, bo
 check('the boss contributes its HP to the wavespawn total',
   bossWave.wavespawns[0].bots[0].other.health === 25000);
 
+// Popfile-defined movement geometry (SigMod/RafMod root keys).
+const runPop = (pop, opts = {}) => {
+  const model = buildModel(parse(pop), []);
+  const wave = model.waves[0];
+  return { model, ai: simulateBotAI(wave, simulateWave(wave, { robotLimit: 22 }), mapData, {
+    deathModel: 'hatch', robotLimit: 22,
+    extraSpawnPoints: model.extraSpawnPoints, extraTankPaths: model.extraTankPaths, ...opts
+  }) };
+};
+
+const esp = runPop(`WaveSchedule { ExtraSpawnPoint { Name custom_pt TeamNum 3 X 1600 Y 700 Z 0 }
+  Wave { WaveSpawn { Name w TotalCount 1 MaxActive 1 SpawnCount 1 Where custom_pt TFBot { Class Heavyweapons Attributes IgnoreFlag } } } }`);
+check('ExtraSpawnPoint parses its origin', esp.model.extraSpawnPoints.length === 1 && esp.model.extraSpawnPoints[0].origin[0] === 1600);
+const espBot = esp.ai.actors[0];
+check('a bot with Where <ExtraSpawnPoint> spawns at that popfile point',
+  espBot && Math.abs(espBot.track[0] - 1600) < 80 && Math.abs(espBot.track[1] - 700) < 80,
+  espBot && [espBot.track[0], espBot.track[1]].map(Math.round).join(','));
+
+const imm = runPop(`WaveSchedule { Wave { WaveSpawn { Name t TotalCount 1 MaxActive 1 SpawnCount 1
+  Tank { Health 40000 Speed 90 StartingPathTrackNode nonexistent Immobile 1 } } } }`, { deathModel: 'lifetime' });
+const immTank = imm.ai.actors[0];
+check('an Immobile tank is parsed', imm.model.waves[0].wavespawns[0].bots[0].tank.immobile === true);
+check('an Immobile tank does not move', immTank &&
+  Math.hypot(immTank.track[immTank.track.length - 2] - immTank.track[0], immTank.track[immTank.track.length - 1] - immTank.track[1]) < 5);
+
+const etp = runPop(`WaveSchedule { ExtraTankPath { Name route Node "200 450 0" Node "1000 450 0" Node "1800 450 0" }
+  Wave { WaveSpawn { Name t TotalCount 1 MaxActive 1 SpawnCount 1 Tank { Health 40000 Speed 120 StartingPathTrackNode route } } } }`);
+check('ExtraTankPath parses its nodes', etp.model.extraTankPaths.length === 1 && etp.model.extraTankPaths[0].nodes.length === 3);
+const etpTank = etp.ai.actors[0];
+check('a tank on an ExtraTankPath follows the popfile route',
+  etpTank && etpTank.track[etpTank.track.length - 2] > etpTank.track[0] + 500,
+  etpTank && [etpTank.track[0], etpTank.track[etpTank.track.length - 2]].map(Math.round).join('->'));
+
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');
 if (fail) process.exit(1);

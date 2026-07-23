@@ -895,7 +895,9 @@ export function renderMapView(container, file, waveIndex) {
     toggles.enabled.join(','), toggles.disabled.join(',')].join('|');
   const aiOpts = {
     teamDPS: dps, deathModel: model, zonesMode: zMode, killPoints: killPts, objectiveIdx: objIdx, bombPath,
-    enabledNames: toggles.enabled, disabledNames: toggles.disabled
+    enabledNames: toggles.enabled, disabledNames: toggles.disabled,
+    extraSpawnPoints: file.model.extraSpawnPoints || [],
+    extraTankPaths: file.model.extraTankPaths || []
   };
   if (zMode === 'custom') aiOpts.zoneWeights = paint;
   const run = aiRunFor(file, wave, sim, mapData, aiKey, aiOpts);
@@ -921,7 +923,7 @@ export function renderMapView(container, file, waveIndex) {
   const waveEnd = ai.end;
   ps.t = Math.min(ps.t, waveEnd);
   ps.waveEnd = waveEnd;
-  const chains = buildTrackChains(mapData);
+  const chains = buildTrackChains(mapData, file.model.extraTankPaths);
   const areasById = new Map();
   if (mapData.nav) for (const a of mapData.nav.areas) areasById.set(a.id, a);
   let zLow = Infinity, zHigh = -Infinity;
@@ -969,7 +971,7 @@ export function renderMapView(container, file, waveIndex) {
       }
     })));
 
-  const objCands = objectiveCandidates(mapData, buildTrackChains(mapData));
+  const objCands = objectiveCandidates(mapData, buildTrackChains(mapData, file.model.extraTankPaths));
 
   const displayBtn = el('button', {
     class: 'btn sm' + (ps.optionsOpen ? ' on' : ''),

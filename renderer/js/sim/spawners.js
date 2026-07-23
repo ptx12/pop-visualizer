@@ -24,7 +24,9 @@ spawners.registerAll([
         speed: api.getNumber(node, 'Speed', 75),
         name: api.getValue(node, 'Name', 'tankboss'),
         icon: api.getValue(node, 'ClassIcon', null),
-        startNode: api.getValue(node, 'StartingPathTrackNode', null)
+        startNode: api.getValue(node, 'StartingPathTrackNode', null),
+        immobile: String(api.getValue(node, 'Immobile', '0')) !== '0',
+        scale: api.getNumber(node, 'Scale', 1)
       };
     }
   },

@@ -284,12 +284,23 @@ export function buildNavGraph(mapData, volumes, allowWasm = true) {
   return { byId, centers, nearestArea, areaAt, flowField, nextToward, portal, center, settle };
 }
 
-export function buildTrackChains(mapData) {
+export function buildTrackChains(mapData, extraTankPaths = []) {
   const trackMap = new Map();
   for (const t of mapData.tracks) if (!trackMap.has(t.name)) trackMap.set(t.name, t);
+  const extraByName = new Map();
+  for (const p of extraTankPaths || []) if (p && p.name && p.nodes && p.nodes.length > 1) extraByName.set(String(p.name).toLowerCase(), p.nodes);
   const chains = new Map();
   const chainFor = start => {
     let key = String(start || '').toLowerCase();
+    if (extraByName.has(key)) {
+      if (chains.has(key)) return chains.get(key);
+      const pts = extraByName.get(key);
+      const cum = [0];
+      for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1], pts[i][2] - pts[i - 1][2]));
+      const chain = { poly: pts, cum };
+      chains.set(key, chain);
+      return chain;
+    }
     if (!trackMap.has(key)) {
       const alt = key.replace(/_([a-z])(\d+)$/, '_$2');
       if (trackMap.has(alt)) key = alt;
@@ -373,7 +384,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   };
   const profileOf = (bot, carrying) => carrying && !bot ? carrierProfile : costProfile(navVolumes, bot, carrying);
   const navOf = a => a.nav || nav;
-  const chains = buildTrackChains(mapData);
+  const chains = buildTrackChains(mapData, opts.extraTankPaths);
   const hasNav = nav.byId.size > 0;
   const objective = findObjective(mapData, chains, opts.objectiveIdx || 0);
   const flagHome = mapData.flags[0] || null;
@@ -397,7 +408,11 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   const zoneW = a => zoneWeights ? (zoneWeights.get(a.areaId) || 0) : dpsProfile(zoneU(a));
 
   const spawnsByName = new Map();
-  for (const s of mapData.spawns) {
+  const allSpawns = [...mapData.spawns];
+  for (const e of (opts.extraSpawnPoints || [])) {
+    if (e && e.origin && e.name) allSpawns.push({ name: e.name, origin: e.origin, disabled: !!e.disabled, extra: true });
+  }
+  for (const s of allSpawns) {
     const k = s.name.toLowerCase();
     if (!spawnsByName.has(k)) spawnsByName.set(k, []);
     spawnsByName.get(k).push(s);
@@ -410,8 +425,8 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     let usable = enabledOf(pool);
     if (!usable.length) for (const [k, list] of spawnsByName) if (k.startsWith('spawnbot')) usable.push(...enabledOf(list));
     if (!usable.length) usable = pool;
-    if (!usable.length) usable = enabledOf(mapData.spawns);
-    if (!usable.length) usable = mapData.spawns;
+    if (!usable.length) usable = enabledOf(allSpawns);
+    if (!usable.length) usable = allSpawns;
     if (!usable.length) return { origin: objective, name: '?' };
     return usable[Math.floor(rng() * usable.length)];
   };
@@ -503,7 +518,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     a.done = false;
     a.dieT = deathModel === 'lifetime' ? a.simDieT : Infinity;
     if (a.kind === 'tank' && deathModel === 'hatch') {
-      a.dieT = a.chain && a.chain.cum.length ? a.spawnT + a.chain.cum[a.chain.cum.length - 1] / (a.speed || 75) : a.simDieT;
+      a.dieT = a.chain && a.chain.cum.length && !a.tank.immobile ? a.spawnT + a.chain.cum[a.chain.cum.length - 1] / (a.speed || 75) : a.simDieT;
     }
   }
   const bombSamples = [];
@@ -515,7 +530,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   const squadLeaders = new Map();
 
   const namedPoints = new Map();
-  for (const s of mapData.spawns || []) if (s.name) namedPoints.set(s.name.toLowerCase(), s.origin);
+  for (const s of allSpawns) if (s.name) namedPoints.set(s.name.toLowerCase(), s.origin);
   for (const tr of mapData.tracks || []) if (tr.name) namedPoints.set(tr.name.toLowerCase(), tr.origin);
   for (const p of mapData.pathProps || []) if (p.name) namedPoints.set(p.name.toLowerCase(), p.origin);
   for (const h of mapData.hints || []) if (h.hint) namedPoints.set(String(h.hint).toLowerCase(), h.origin);
@@ -833,8 +848,11 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       }
       const dt = STEP;
       if (a.kind === 'tank') {
-        if (a.chain) {
+        if (a.chain && !a.tank.immobile) {
           const p = chainPointAt(a.chain, a.speed * (t - a.spawnT));
+          a.pos = [p[0], p[1]];
+        } else if (a.chain && a.tank.immobile) {
+          const p = chainPointAt(a.chain, 0);
           a.pos = [p[0], p[1]];
         } else a.pos = a.pos || (a.spawnPos ? a.spawnPos.slice(0, 2) : objective.slice(0, 2));
         let tculled = false;

@@ -383,10 +383,33 @@ export function buildModel(doc, baseDocs) {
     }
   }
   for (const m of model.missions) if (m.where) model.spawnPoints.add(m.where);
+  model.extraSpawnPoints = [];
+  model.extraTankPaths = [];
   for (const b of model.otherBlocks) {
-    if (b.key.toLowerCase() === 'extraspawnpoint') {
+    const bk = b.key.toLowerCase();
+    if (bk === 'extraspawnpoint') {
       const n = getValue(b, 'Name', null);
-      if (n) model.spawnPoints.add(n);
+      const x = parseFloat(getValue(b, 'X', 'x')), y = parseFloat(getValue(b, 'Y', 'x')), z = parseFloat(getValue(b, 'Z', '0'));
+      if (n) {
+        model.spawnPoints.add(n);
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+          model.extraSpawnPoints.push({
+            name: n, origin: [x, y, Number.isFinite(z) ? z : 0],
+            team: parseInt(getValue(b, 'TeamNum', '0'), 10) || 0,
+            disabled: String(getValue(b, 'StartDisabled', '0')) !== '0'
+          });
+        }
+      }
+    } else if (bk === 'extratankpath') {
+      const n = getValue(b, 'Name', null);
+      const nodes = [];
+      for (const c of b.children) {
+        if (c.type === 'kv' && /^node$/i.test(c.key)) {
+          const p = String(c.value).trim().split(/\s+/).map(Number);
+          if (p.length >= 3 && p.every(Number.isFinite)) nodes.push(p.slice(0, 3));
+        }
+      }
+      if (n && nodes.length) model.extraTankPaths.push({ name: n, nodes });
     }
   }
   model.startingCurrency = root ? getNumber(root, 'StartingCurrency', 0) : 0;
