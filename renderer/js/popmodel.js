@@ -1,6 +1,7 @@
 import { SPAWNER_KEYS, parseSpawnerNode } from './sim/spawners.js';
 import { traitForKey, traitForBlock, traitForFlag, traitsForAttribute } from './sim/traits.js';
 import { itemMoveSpeedMult } from './sim/bots.js';
+import { extractTemplateEntities } from './sim/pointtemplates.js';
 
 const GIANT_SCALE = 1.6;
 const TRAIT_API = { normalizeClass, parseInterruptBlock, parseActionBlock, getValue };
@@ -414,6 +415,8 @@ export function buildModel(doc, baseDocs) {
       if (n && nodes.length) model.extraTankPaths.push({ name: n, nodes });
     }
   }
+  model.templateEntities = extractTemplateEntities(doc);
+  for (const e of model.templateEntities.spawns) if (e.name) model.spawnPoints.add(e.name);
   model.startingCurrency = root ? getNumber(root, 'StartingCurrency', 0) : 0;
   model.robotLimit = root ? getNumber(root, 'RobotLimit', 22) : 22;
   model.botPushaway = root ? String(getValue(root, 'BotPushaway', '1')) !== '0' : true;

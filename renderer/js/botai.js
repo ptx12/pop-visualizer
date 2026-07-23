@@ -365,6 +365,16 @@ function findObjective(mapData, chains, idx) {
 }
 
 export function createBotSim(wave, sim, mapData, opts = {}) {
+  const te = opts.templateEntities;
+  if (te && (te.spawns.length || te.capzones.length || te.flags.length || te.tracks.length)) {
+    mapData = {
+      ...mapData,
+      spawns: [...(mapData.spawns || []), ...te.spawns.map(s => ({ name: s.name, origin: s.origin, disabled: s.disabled }))],
+      capzones: [...(mapData.capzones || []), ...te.capzones],
+      flags: [...(mapData.flags || []), ...te.flags],
+      tracks: [...(mapData.tracks || []), ...te.tracks]
+    };
+  }
   const teamDPS = Number.isFinite(opts.teamDPS) ? opts.teamDPS : 1000;
   const deathModel = opts.deathModel === 'lifetime' || opts.deathModel === 'damage' ? opts.deathModel : 'hatch';
   const zoneWeights = opts.zoneWeights || null;

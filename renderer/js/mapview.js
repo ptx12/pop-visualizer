@@ -900,7 +900,8 @@ export function renderMapView(container, file, waveIndex) {
     extraTankPaths: file.model.extraTankPaths || [],
     botPushaway: file.model.botPushaway,
     flagCarrierPenalty: file.model.flagCarrierPenalty,
-    maxSpeedLimit: file.model.maxSpeedLimit
+    maxSpeedLimit: file.model.maxSpeedLimit,
+    templateEntities: file.model.templateEntities
   };
   if (zMode === 'custom') aiOpts.zoneWeights = paint;
   const run = aiRunFor(file, wave, sim, mapData, aiKey, aiOpts);
