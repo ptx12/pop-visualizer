@@ -101,6 +101,28 @@ check('an explicit Where honours a start-disabled spawn instead of falling back 
 check('no PointTemplates yields empty extraction',
   (() => { const t = extractTemplateEntities(parse('WaveSchedule { Wave { } }')); return !t.spawns.length && !t.capzones.length && !t.flags.length && !t.tracks.length && !t.navVolumes.length; })());
 
+// Adversarial input must never throw — popfiles are untrusted-ish and messy.
+const ADVERSARIAL = [
+  'WaveSchedule { PointTemplates { T { info_player_teamspawn { "targetname" "s" } } } }',      // no origin
+  'WaveSchedule { PointTemplates { T { func_capturezone { "origin" "foo bar baz" } } } }',     // non-numeric
+  'WaveSchedule { PointTemplates { T { item_teamflag { "origin" "1, 2, 3" } } } }',            // comma origin
+  'WaveSchedule { PointTemplates { T { func_nav_avoid { "origin" "1 2 3" } } } }',             // no bounds
+  'WaveSchedule { PointTemplates { A { B { C { info_player_teamspawn { "targetname" "d" "origin" "1 2 3" } } } } } }', // nested
+  'WaveSchedule { PointTemplates { } }',                                                       // empty
+  'WaveSchedule { PointTemplates { T { func_capturezone { "origin" "5" } } } }',               // short origin
+  'WaveSchedule { PointTemplates { T { info_player_teamspawn { } } } }'                         // no keys
+];
+let robust = true;
+for (const pop of ADVERSARIAL) { try { extractTemplateEntities(parse(pop)); } catch { robust = false; } }
+check('malformed PointTemplate entities never throw', robust);
+check('comma-separated origins parse', extractTemplateEntities(parse('WaveSchedule { PointTemplates { T { item_teamflag { "origin" "1, 2, 3" } } } }')).flags.length === 1);
+check('non-numeric / missing origins are skipped, not zero-filled',
+  extractTemplateEntities(parse('WaveSchedule { PointTemplates { T { func_capturezone { "origin" "foo bar baz" } } } }')).capzones.length === 0);
+check('duplicate track names are de-duplicated',
+  extractTemplateEntities(parse('WaveSchedule { PointTemplates { T { path_track { "targetname" "p" "origin" "1 2 3" } path_track { "targetname" "p" "origin" "4 5 6" } } } }')).tracks.length === 1);
+check('nested templates are walked to any depth',
+  extractTemplateEntities(parse('WaveSchedule { PointTemplates { A { B { C { info_player_teamspawn { "targetname" "d" "origin" "1 2 3" } } } } } }')).spawns.length === 1);
+
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');
 if (fail) process.exit(1);
