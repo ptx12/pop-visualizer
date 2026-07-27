@@ -35,32 +35,11 @@ export function renderOverview(container, file) {
   ));
 
   if (m.waves.length) {
-    wrap.append(el('div', { class: 'panel-title', text: 'Currency per wave' }));
-    wrap.append(currencyChart(m));
     wrap.append(el('div', { class: 'panel-title', text: 'Waves' }));
     wrap.append(waveTable(file));
   }
 
   container.append(wrap);
-}
-
-function currencyChart(m) {
-  const wrap = el('div', { class: 'cchart' });
-  const max = Math.max(...m.waves.map(w => w.totalCurrency), 1);
-  let cum = m.startingCurrency;
-  for (const w of m.waves) {
-    cum += w.totalCurrency;
-    const h = Math.max(3, (w.totalCurrency / max) * 120);
-    wrap.append(el('div', {
-      class: 'cbar-holder',
-      title: `Wave ${w.index + 1}: $${w.totalCurrency}\nCumulative (no bonus): $${cum}`,
-      onclick: () => { state.view = { mode: 'wave', wave: w.index }; emit(); }
-    },
-      el('div', { class: 'cbar-val', text: '$' + w.totalCurrency }),
-      el('div', { class: 'cbar', style: `height:${h}px` }),
-      el('div', { class: 'cbar-label', text: 'W' + (w.index + 1) })));
-  }
-  return wrap;
 }
 
 function waveTable(file) {

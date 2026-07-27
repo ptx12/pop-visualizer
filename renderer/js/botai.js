@@ -13,6 +13,10 @@ import {
 export { CLASS_BASE_SPEED, TF_MAX_SPEED, STEP, botScale, hasDemoShield, botMaxSpeed, mulberry32, dpsProfile };
 
 const MAX_STEPS = 6000;
+// PathFollower::m_goalTolerance default (NextBotPathFollow.cpp)
+const GOAL_TOLERANCE = 25;
+export const ACTOR_CAP = 2500;
+export const RNG_SEED_BASE = 0x7f4a7c15;
 const BOMB_UPGRADE_1 = 5;
 const BOMB_UPGRADE_2 = 15;
 const BOMB_UPGRADE_3 = 15;
@@ -201,11 +205,39 @@ export function buildNavGraph(mapData, volumes, allowWasm = true) {
   function flowField(targetId) {
     if (fields.has(targetId)) return fields.get(targetId);
     const dist = new Map([[targetId, 0]]);
-    const heap = [[0, targetId]];
+    const heap = [[0, 0, targetId]];
+    let seq = 1;
+    const less = (a, b) => a[0] < b[0] || (a[0] === b[0] && a[1] < b[1]);
+    const push = it => {
+      heap.push(it);
+      let i = heap.length - 1;
+      while (i > 0) {
+        const p = (i - 1) >> 1;
+        if (!less(heap[i], heap[p])) break;
+        const t = heap[i]; heap[i] = heap[p]; heap[p] = t;
+        i = p;
+      }
+    };
+    const pop = () => {
+      const top = heap[0];
+      const last = heap.pop();
+      if (heap.length) {
+        heap[0] = last;
+        let i = 0;
+        for (;;) {
+          const l = i * 2 + 1, r = l + 1;
+          let m = i;
+          if (l < heap.length && less(heap[l], heap[m])) m = l;
+          if (r < heap.length && less(heap[r], heap[m])) m = r;
+          if (m === i) break;
+          const t = heap[i]; heap[i] = heap[m]; heap[m] = t;
+          i = m;
+        }
+      }
+      return top;
+    };
     while (heap.length) {
-      let bi = 0;
-      for (let i = 1; i < heap.length; i++) if (heap[i][0] < heap[bi][0]) bi = i;
-      const [d, cur] = heap.splice(bi, 1)[0];
+      const [d, , cur] = pop();
       if (d > (dist.get(cur) ?? Infinity)) continue;
       const cc = center(cur);
       for (const p of rev.get(cur) || []) {
@@ -214,7 +246,7 @@ export function buildNavGraph(mapData, volumes, allowWasm = true) {
         const nd = d + step * (weights.get(p) || 1);
         if (nd < (dist.get(p) ?? Infinity)) {
           dist.set(p, nd);
-          heap.push([nd, p]);
+          push([nd, seq++, p]);
         }
       }
     }
@@ -342,8 +374,6 @@ export function objectiveCandidates(mapData, chains) {
   const placed = p => p && (Math.abs(p[0]) > 1 || Math.abs(p[1]) > 1);
   const caps = mapData.capzones.filter(placed);
   caps.forEach((c, i) => out.push({ label: caps.length > 1 ? 'hatch ' + (i + 1) : 'hatch', pos: c }));
-  const flags = mapData.flags.filter(placed);
-  flags.forEach((f, i) => out.push({ label: flags.length > 1 ? 'bomb ' + (i + 1) : 'bomb', pos: f }));
   if (!out.length) {
     const ends = [];
     for (const t of mapData.tracks) {
@@ -354,6 +384,10 @@ export function objectiveCandidates(mapData, chains) {
     }
     ends.sort((a, b) => b.len - a.len);
     for (const e of ends) out.push({ label: e.label, pos: e.pos });
+  }
+  if (!out.length) {
+    const flags = mapData.flags.filter(placed);
+    flags.forEach((f, i) => out.push({ label: flags.length > 1 ? 'bomb ' + (i + 1) : 'bomb', pos: f }));
   }
   if (!out.length) out.push({ label: 'map origin', pos: [0, 0, 0] });
   return out;
@@ -382,7 +416,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   const damageOn = deathModel === 'damage' && opts.zonesMode !== 'off' && teamDPS > 0;
   const HATCH_DESPAWN = 180;
   const killPoints = Array.isArray(opts.killPoints) ? opts.killPoints : [];
-  const rng = mulberry32(0x7f4a7c15 ^ wave.index);
+  const rng = mulberry32(RNG_SEED_BASE ^ wave.index);
   const navVolumes = activeNavVolumes(mapData, opts);
   const commonProfile = costProfile(navVolumes, null, false);
   const carrierProfile = costProfile(navVolumes, null, true);
@@ -453,10 +487,13 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   const actors = [];
   let squadSeq = 0;
   let jitterSeq = 0;
+  let capHit = false;
+  let intendedActors = 0;
   for (const ws of wave.wavespawns) {
     if (ws.isLogic) continue;
     const r = sim.results.get(ws);
     if (!r || !r.events.length) continue;
+    for (const ev of r.events) intendedActors += ev.count;
     if (ws.isTank) {
       const tankEntry = ws.bots.find(b => b.tank);
       const chain = chains.chainFor(tankEntry.tank.startNode);
@@ -502,7 +539,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
             spawnPos: (prop.origin || at).slice(0, 3)
           });
           pendingIdx++;
-          if (actors.length >= 2500) break;
+          if (actors.length >= ACTOR_CAP) { capHit = true; break; }
           continue;
         }
         if (!pendingSpawn || !pendingSquadId) pendingSpawn = pickSpawn(ws.where);
@@ -514,9 +551,9 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
           memberIdx: pendingIdx
         });
         pendingIdx++;
-        if (actors.length >= 2500) break;
+        if (actors.length >= ACTOR_CAP) { capHit = true; break; }
       }
-      if (actors.length >= 2500) break;
+      if (actors.length >= ACTOR_CAP) break;
     }
   }
 
@@ -536,12 +573,20 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     if (a.kind === 'tank' && deathModel === 'hatch') {
       a.dieT = a.chain && a.chain.cum.length && !a.tank.immobile ? a.spawnT + a.chain.cum[a.chain.cum.length - 1] / (a.speed || 75) : a.simDieT;
     }
+    if (a.kind === 'bot' && deathModel === 'hatch' && (a.bot.cls === 'spy' || a.bot.cls === 'engineer')) {
+      a.dieT = a.simDieT;
+    }
   }
   const bombSamples = [];
 
   const clsOf = a => a.bot ? a.bot.cls : null;
+  const interruptControls = a => {
+    const s = a.ia;
+    if (!s) return false;
+    return s.active || !(s.spec.repeats > 0 && s.count >= s.spec.repeats);
+  };
   const eligible = a => a.kind === 'bot' && !a.bot.ignoreFlag && a.squadRole !== 'member' &&
-    clsOf(a) !== 'spy' && clsOf(a) !== 'medic' && clsOf(a) !== 'engineer';
+    clsOf(a) !== 'spy' && clsOf(a) !== 'medic' && clsOf(a) !== 'engineer' && !interruptControls(a);
 
   const squadLeaders = new Map();
 
@@ -607,6 +652,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
   function initActor(a, t) {
     a.alive = true;
+    a.spawned = true;
     a.sampleStart = t;
     a.spawnT = t;
     a.hp = a.kind === 'tank' ? (a.tank.health || 20000) : a.kind === 'prop' ? (a.prop.health || 0) : (a.bot.health || 100);
@@ -703,12 +749,23 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     const next = g.nextToward(field, a.areaId);
     if (next == null) return moveAlong(a, targetPt, dt, speed);
     const p = g.portal(a.areaId, next) || g.center(next);
+    // Waypoint advance follows PathFollower::IsAtGoal (NextBotPathFollow.cpp): the goal is
+    // reached either within m_goalTolerance (25) OR once the bot crosses the dividing plane
+    // perpendicular to the path — DotProduct2D(toGoal, dividingPlane) < 0.0001f — and the bot
+    // then steers at the FOLLOWING goal. Driving all the way into each portal and only then
+    // turning toward the next area's centre is what made the movement read blocky; crossing
+    // the plane early is what lets a corner get cut. (TF2's Path::Optimize() string-pulling is
+    // disabled in shipped code — `void Path::Optimize(){ return; }` — so this is the real
+    // source of smoothing, not path simplification.)
+    const next2 = g.nextToward(field, next);
+    const p2 = next2 != null ? (g.portal(next, next2) || g.center(next2)) : (g.center(next) || targetPt);
     let dx = p[0] - a.pos[0], dy = p[1] - a.pos[1];
     let d = Math.hypot(dx, dy);
-    if (d < 24) {
+    const planeX = p2[0] - p[0], planeY = p2[1] - p[1];
+    const crossed = (dx * planeX + dy * planeY) < 0.0001;
+    if (d < GOAL_TOLERANCE || crossed) {
       a.areaId = next;
-      const c = g.center(next);
-      dx = c[0] - a.pos[0]; dy = c[1] - a.pos[1];
+      dx = p2[0] - a.pos[0]; dy = p2[1] - a.pos[1];
       d = Math.hypot(dx, dy) || 1;
     }
     const stepLen = speed * dt;
@@ -732,9 +789,10 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   function nudge(a, dx, dy) {
     const nx = a.pos[0] + dx, ny = a.pos[1] + dy;
     if (!hasNav || a.areaId == null) { a.pos[0] = nx; a.pos[1] = ny; return; }
+    const g = navOf(a);
     const cur = areaOf(a);
     if (holds(cur, nx, ny)) { a.pos[0] = nx; a.pos[1] = ny; return; }
-    const near = navOf(a).areaAt([nx, ny, a.z], a.areaId);
+    const near = g.areaAt([nx, ny, a.z], a.areaId);
     if (holds(near, nx, ny)) {
       a.pos[0] = nx; a.pos[1] = ny;
       a.areaId = near.id;
@@ -742,6 +800,20 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       return;
     }
     if (!cur) return;
+    if (cur.connect) {
+      for (const nId of cur.connect) {
+        const c = g.byId.get(nId);
+        if (!c) continue;
+        const overlaps = Math.max(cur.nw[0], c.nw[0]) <= Math.min(cur.se[0], c.se[0]) &&
+          Math.max(cur.nw[1], c.nw[1]) <= Math.min(cur.se[1], c.se[1]);
+        if (overlaps) continue;
+        if (nx >= Math.min(cur.nw[0], c.nw[0]) && nx <= Math.max(cur.se[0], c.se[0]) &&
+            ny >= Math.min(cur.nw[1], c.nw[1]) && ny <= Math.max(cur.se[1], c.se[1])) {
+          a.pos[0] = nx; a.pos[1] = ny;
+          return;
+        }
+      }
+    }
     a.pos[0] = Math.min(Math.max(nx, cur.nw[0]), cur.se[0]);
     a.pos[1] = Math.min(Math.max(ny, cur.nw[1]), cur.se[1]);
   }
@@ -810,11 +882,19 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
   const live = new Set();
   const waiting = [];
+  const isEndless = a => a.ws && a.ws.support === 'unlimited';
+  const finitePending = () => {
+    for (let i = cursor; i < sorted.length; i++) if (!isEndless(sorted[i])) return true;
+    for (const a of waiting) if (!isEndless(a)) return true;
+    for (const a of live) if (!isEndless(a)) return true;
+    return false;
+  };
   const robotLimit = Math.max(1, Math.round(opts.robotLimit || sim.robotLimit || 22));
   let cursor = 0;
   let si = 0;
   let endT = 0;
   let finished = false;
+  let endedEarly = null;
   const sorted = [...actors].sort((x, y) => x.spawnT - y.spawnT);
 
   const maxT = damageOn ? sim.waveEnd + 600 : sim.waveEnd + 90;
@@ -845,19 +925,43 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
   function step() {
     const t = si * STEP;
-    if (si >= MAX_STEPS || t > maxT || (cursor >= sorted.length && !waiting.length && live.size === 0 && t > sim.waveEnd)) return false;
+    if (si >= MAX_STEPS) {
+      if (cursor < sorted.length || waiting.length || live.size > 0) endedEarly = 'step-limit';
+      return false;
+    }
+    if (t > maxT && !finitePending()) return false;
+    if (cursor >= sorted.length && !waiting.length && live.size === 0 && t > sim.waveEnd) return false;
     endT = t;
     while (cursor < sorted.length && sorted[cursor].spawnT <= t) waiting.push(sorted[cursor++]);
     if (waiting.length) {
       let bots = 0;
       for (const a of live) if (a.kind === 'bot') bots++;
-      for (let i = 0; i < waiting.length;) {
+      let waitingBots = 0;
+      for (const a of waiting) if (a.kind === 'bot') waitingBots++;
+      const contested = waitingBots > robotLimit - bots;
+      const admit = i => {
         const a = waiting[i];
-        if (a.kind === 'bot' && bots >= robotLimit) { i++; continue; }
         waiting.splice(i, 1);
         initActor(a, t);
         live.add(a);
         if (a.kind === 'bot') bots++;
+      };
+      if (!contested) {
+        for (let i = 0; i < waiting.length;) {
+          if (waiting[i].kind === 'bot' && bots >= robotLimit) { i++; continue; }
+          admit(i);
+        }
+      } else {
+        for (let i = 0; i < waiting.length;) {
+          const a = waiting[i];
+          if (a.kind === 'bot' && (bots >= robotLimit || isEndless(a))) { i++; continue; }
+          admit(i);
+        }
+        for (let i = 0; i < waiting.length;) {
+          const a = waiting[i];
+          if (a.kind === 'bot' && bots < robotLimit && isEndless(a)) { admit(i); continue; }
+          i++;
+        }
       }
     }
     for (const a of live) {
@@ -966,7 +1070,14 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       actors, objective, chains, nav, end: Math.max(endT, 10), teamDPS, deathModel,
       bomb: { samples: bombSamples, deliveredAt: bomb.deliveredAt, home: bomb.home },
       hatchDist: hatchField ? hatchField.dist : null, hatchMaxDist,
-      navVolumes, route: buildBombRoute()
+      navVolumes, route: buildBombRoute(),
+      truncation: capHit || endedEarly ? {
+        capHit, cap: ACTOR_CAP,
+        skipped: capHit ? Math.max(0, intendedActors - actors.length) : 0,
+        endedEarly, endT,
+        unspawned: endedEarly ? actors.filter(a => !a.spawned && !(a.ws && a.ws.support === 'unlimited')).length : 0,
+        unfinished: endedEarly ? actors.filter(a => a.alive).length : 0
+      } : null
     };
     return finalized;
   }

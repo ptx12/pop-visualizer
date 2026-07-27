@@ -1,15 +1,24 @@
-import { el, clear, showTip, hideTip, fmtTime, loader } from './ui.js';
-import { simFor, emit, onChange, deathModel, navTogglesFor, bombPathRerollsFor } from './state.js';
+import { el, clear, showTip, hideTip, fmtTime, loader, botVisual, tankVisual } from './ui.js';
+import { simFor, emit, onChange, deathModel, navTogglesFor, bombPathRerollsFor, mapQueryName } from './state.js';
 import { CLASS_INFO, botDisplayName } from './popmodel.js';
 import { getTFPath, iconURL, iconNameFor, classIconName, tankIconName } from './icons.js';
 import { native } from './native.js';
-import { createBotSim, actorPosAt, actorZAt, botMaxSpeed, buildTrackChains, dpsProfile, objectiveCandidates, bombPathGroups, STEP } from './botai.js';
+import { createBotSim, actorPosAt, actorZAt, botMaxSpeed, buildTrackChains, dpsProfile, objectiveCandidates, bombPathGroups, STEP, RNG_SEED_BASE } from './botai.js';
+import { setStatus, clearStatus, clearStatusPrefix } from './statusbar.js';
+import { startTask } from './tasks.js';
+import { createMap3D } from './map3d.js';
+import { botModelBase, botWeaponModels, botCosmeticModels, resolveBotItems } from './botmodels.js';
+import { initNavWasm } from './navwasm.js';
 import { primaryColor } from './timeline.js';
 import { simOptsPanel } from './inspector.js';
 import { icon } from './svgicon.js';
 
 const playStates = new Map();
 const viewStates = new Map();
+let active3D = null;
+const cam3dCache = new Map();
+const itemsRequested = new Set();
+let itemsPending = false;
 const aiRuns = new WeakMap();
 const lastAi = new Map();
 const worldCache = new Map();
@@ -274,7 +283,7 @@ function drawFlippedTimeline(canvas, view, sim) {
     }
 
     const y1 = yOf(Math.min(...rs.map(v => v.firstSpawn)));
-    const y2 = yOf(Math.max(...rs.map(v => v.lastSpawn)));
+    const y2 = yOf(Math.max(...rs.map(v => (v.barEnd != null ? v.barEnd : v.lastSpawn))));
     const y3 = yOf(Math.max(...rs.map(v => Math.max(v.deathEnd, v.supportUntil || 0))));
 
     if (y3 > y2 + 1) {
@@ -294,11 +303,11 @@ function drawFlippedTimeline(canvas, view, sim) {
 
     if (L.barW >= 5) {
       c.fillStyle = 'rgba(0,0,0,.45)';
-      const evs = rs.flatMap(v => v.events);
-      const nth = Math.ceil(evs.length / 120);
-      evs.forEach((ev, k) => {
+      const ts = rs.flatMap(v => (v.tickTimes && v.tickTimes.length ? v.tickTimes : v.events.map(e => e.t)));
+      const nth = Math.ceil(ts.length / 120);
+      ts.forEach((tt, k) => {
         if (k % nth) return;
-        c.fillRect(x + 1, Math.round(yOf(ev.t)), L.barW - 2, 1);
+        c.fillRect(x + 1, Math.round(yOf(tt)), L.barW - 2, 1);
       });
     }
   });
@@ -470,6 +479,46 @@ function objectiveIdxFor(mapName) {
   return parseInt(localStorage.getItem('popvis.objidx.' + mapName) || '0', 10) || 0;
 }
 
+export function presetMapLog(file, waveIndex) {
+  playStateFor(file, waveIndex).logOpen = true;
+}
+
+export function presetMapSelect(file, waveIndex) {
+  playStateFor(file, waveIndex).selectFirst = true;
+}
+
+export function presetMapMode(file, waveIndex, mode) {
+  playStateFor(file, waveIndex).mode = mode;
+}
+
+export function mapTransport(file, waveIndex, action) {
+  const ps = playStateFor(file, waveIndex);
+  const end = ps.waveEnd || Infinity;
+  if (action === 'toggle') { ps.playing = !ps.playing; emit('map'); return; }
+  if (action === 'restart') { ps.t = 0; ps.playing = false; emit('map'); return; }
+  if (action === 'follow') { if (ps.selKey) { ps.follow = !ps.follow; emit('map'); } return; }
+  if (action === 'deselect') {
+    if (ps.selKey || ps.follow) { ps.selKey = null; ps.follow = false; emit('map'); return true; }
+    return false;
+  }
+  if (action === 'step-back' || action === 'step-fwd') {
+    ps.t = Math.max(0, Math.min(end, ps.t + (action === 'step-fwd' ? STEP : -STEP)));
+    ps.playing = false;
+    emit('map');
+    return;
+  }
+  const ai = lastAi.get(file.id + ':' + waveIndex);
+  if (!ai) return;
+  const log = eventLogFor(ai);
+  if (action === 'prev-event') {
+    for (let i = log.length - 1; i >= 0; i--) if (log[i].t < ps.t - 0.001) { ps.t = Math.min(end, log[i].t); break; }
+  } else if (action === 'next-event') {
+    for (const ev of log) if (ev.t > ps.t + 0.001) { ps.t = Math.min(end, ev.t); break; }
+  }
+  ps.playing = false;
+  emit('map');
+}
+
 export function presetMapTime(file, waveIndex, t) {
   playStateFor(file, waveIndex).t = Math.max(0, t);
 }
@@ -482,6 +531,13 @@ function reloadMapData(file) {
   file.mapData = undefined;
   file.mapGeo = undefined;
   file.mapTexture = undefined;
+  file.mapFaces3d = undefined;
+  file.mapFaces3dReq = null;
+  file.mapProps = undefined;
+  file.mapPropsReq = null;
+  file.mapBspPath = undefined;
+  file.mapLighting = undefined;
+  file.mapLightingReq = null;
   file.mapDataReq = null;
   file.tankPathsKey = null;
   emit('map');
@@ -490,6 +546,7 @@ function reloadMapData(file) {
 function navReasonText(reason) {
   if (!reason || reason === 'missing') return null;
   if (reason === 'unreadable') return 'A matching nav file was found but could not be read.';
+  if (reason.startsWith('empty:')) return reason.slice(6) + '.nav contains no areas (empty or truncated file) — pick another source below.';
   return 'A matching nav file was found but could not be parsed — ' + String(reason).replace(/^error: /, '') + '.';
 }
 
@@ -532,11 +589,6 @@ function navFinder(file, mapName, status, list, btn) {
 
 function navSearchNote(search) {
   const out = [];
-  if (search.near && search.near.length) {
-    out.push(el('div', { class: 'nav-gate-sub' },
-      el('span', { text: 'Nearby nav files found: ' }),
-      el('span', { class: 'nav-gate-mono', text: search.near.join(', ') })));
-  }
   if (search.searched && search.searched.length) {
     out.push(el('div', { class: 'nav-gate-sub' },
       el('span', { text: 'Searched: ' }),
@@ -544,6 +596,28 @@ function navSearchNote(search) {
       el('span', { text: '  plus tf2_misc_dir.vpk and the map pakfile.' })));
   }
   return out;
+}
+
+function nearNavButtons(file, mapData, status) {
+  const search = mapData.navSearch || {};
+  const bad = search.reason && search.reason.startsWith('empty:') ? search.reason.slice(6) : null;
+  const names = (search.near || []).filter(n => n !== bad);
+  if (!names.length) return null;
+  const row = el('div', { class: 'nav-gate-list' });
+  for (const n of names) {
+    row.append(el('button', {
+      class: 'btn nav-cand', text: n + '.nav  (local)',
+      onclick: async () => {
+        status.textContent = 'Using ' + n + '.nav…';
+        const dl = await window.popnative.navUse(mapQueryName(file), n, await getTFPath(), popDirOf(file));
+        if (!dl || dl.error) { status.textContent = dl && dl.error ? dl.error : 'Failed.'; return; }
+        status.textContent = 'Saved as ' + mapData.map + '.nav' + (dl.renamed ? ' (from ' + dl.source + ')' : '');
+        await window.popnative.mapFlush();
+        reloadMapData(file);
+      }
+    }));
+  }
+  return row;
 }
 
 function renderNavGate(container, file, mapData) {
@@ -558,6 +632,10 @@ function renderNavGate(container, file, mapData) {
 
   const status = el('div', { class: 'nav-gate-status' });
   const list = el('div', { class: 'nav-gate-list' });
+  const nearRow = nearNavButtons(file, mapData, status);
+  if (nearRow) {
+    panel.append(el('div', { class: 'nav-gate-sub', text: 'Nearby nav files — pick one to use for this map:' }), nearRow);
+  }
 
   const refreshBtn = el('button', {
     class: 'btn', text: 'Check again',
@@ -574,6 +652,94 @@ function renderNavGate(container, file, mapData) {
 
   panel.append(el('div', { class: 'btn-row' }, refreshBtn, findBtn), status, list);
   container.append(panel);
+}
+
+const mapIndexCache = { names: null };
+const mapPickFilter = new Map();
+
+function missionStem(name) {
+  const tokens = String(name).toLowerCase().replace(/\.pop$/, '').split(/[_\s]+/).filter(Boolean);
+  return (tokens[0] === 'mvm' && tokens[1] ? tokens[1] : tokens[0]) || '';
+}
+
+async function potatoMapIndex() {
+  if (mapIndexCache.names) return mapIndexCache.names;
+  const res = await window.popnative.potatoList('maps');
+  if (!res || !res.files) return null;
+  mapIndexCache.names = [...new Set(res.files
+    .map(f => String(f.name).toLowerCase())
+    .filter(n => n.endsWith('.bsp'))
+    .map(n => n.replace(/\.bsp$/, '')))].sort();
+  return mapIndexCache.names;
+}
+
+function renderMapPicker(container, file) {
+  const mission = file.name.toLowerCase().replace(/\.pop$/, '');
+  const isPfx = n => mission === n || mission.startsWith(n + '_');
+  const panel = el('div', { class: 'nav-gate' });
+  panel.append(el('div', { class: 'panel-title', text: 'NO MATCHING MAP' }));
+  panel.append(el('div', { class: 'nav-gate-msg', text: 'No local BSP matches "' + file.name + '". Pick its map from the potato.tf index — it downloads to tf/download/maps.' }));
+
+  const filter = el('input', { class: 'inp', value: mapPickFilter.get(file.id) ?? missionStem(file.name), placeholder: 'Filter the map index' });
+  const status = el('div', { class: 'nav-gate-status' });
+  const list = el('div', { class: 'nav-gate-list' });
+
+  const download = async name => {
+    if (mapDlActive.has(file.id)) return;
+    mapDlActive.add(file.id);
+    status.textContent = 'Downloading ' + name + '.bsp…';
+    try {
+      const tfPath = await getTFPath();
+      const res = await window.popnative.potatoMap(name, tfPath);
+      if (!res || res.error) { status.textContent = res && res.error ? res.error : 'Download failed.'; return; }
+      if (!isPfx(name)) localStorage.setItem('popvis.mapfor.' + file.name.toLowerCase(), name);
+      status.textContent = 'Downloaded ' + name + '.bsp';
+      await window.popnative.mapFlush();
+      mapDlActive.delete(file.id);
+      reloadMapData(file);
+    } catch (err) {
+      status.textContent = 'Download failed: ' + err.message;
+    } finally {
+      mapDlActive.delete(file.id);
+    }
+  };
+
+  const refresh = names => {
+    clear(list);
+    const q = filter.value.trim().toLowerCase();
+    const hits = names.filter(n => !q || n.includes(q));
+    hits.sort((a, b) => (isPfx(b) - isPfx(a)) || (isPfx(a) && isPfx(b) ? b.length - a.length : 0) || a.localeCompare(b));
+    status.textContent = hits.length
+      ? hits.length + ' of ' + names.length + ' maps on the index'
+      : 'Nothing on the index matches "' + q + '".';
+    for (const n of hits.slice(0, 40)) {
+      list.append(el('button', {
+        class: 'btn nav-cand' + (isPfx(n) ? ' primary' : ''),
+        text: n + '.bsp' + (isPfx(n) ? '  (matches the mission name)' : ''),
+        onclick: () => download(n)
+      }));
+    }
+    if (hits.length > 40) list.append(el('div', { class: 'nav-gate-sub', text: '+' + (hits.length - 40) + ' more — narrow the filter' }));
+  };
+
+  filter.addEventListener('input', () => {
+    mapPickFilter.set(file.id, filter.value);
+    if (mapIndexCache.names) refresh(mapIndexCache.names);
+  });
+
+  panel.append(el('div', { class: 'btn-row' }, filter), status, list);
+  container.append(panel);
+
+  if (mapDlActive.has(file.id)) {
+    status.textContent = 'Downloading…';
+    return;
+  }
+  status.textContent = 'Reading the index…';
+  potatoMapIndex().then(names => {
+    if (!list.isConnected) return;
+    if (!names) { status.textContent = 'Could not reach the potato.tf index.'; return; }
+    refresh(names);
+  });
 }
 
 function buildApproxBanner(file, mapData) {
@@ -599,7 +765,7 @@ function buildApproxBanner(file, mapData) {
 
 function playStateFor(file, waveIndex) {
   const key = file.id + ':' + waveIndex;
-  if (!playStates.has(key)) playStates.set(key, { t: 0, playing: false, speed: 1, raf: 0, mode: localStorage.getItem('popvis.mapmode') || 'full', tool: null, brush: 1, killRadius: KILL_RADIUS, hover: null, optionsOpen: localStorage.getItem('popvis.simpanel') !== '0' });
+  if (!playStates.has(key)) playStates.set(key, { t: 0, playing: false, speed: 1, raf: 0, mode: localStorage.getItem('popvis.mapmode') || '3d', tool: null, brush: 1, killRadius: KILL_RADIUS, hover: null, optionsOpen: localStorage.getItem('popvis.simpanel') !== '0' });
   return playStates.get(key);
 }
 
@@ -665,19 +831,98 @@ function requestMapTexture(file) {
   if (!native.isElectron || !window.popnative.mapTexture) return;
   if (file.mapTexture !== undefined || file.mapTexReq) return;
   const reqName = file.name;
+  const task = startTask('Baking map textures', { stage: 'reading VTF materials' });
   file.mapTexReq = (async () => {
     try {
-      const t = await window.popnative.mapTexture(file.name, await getTFPath(), popDirOf(file));
-      if (file.name !== reqName) return;
+      const t = await window.popnative.mapTexture(mapQueryName(file), await getTFPath(), popDirOf(file));
+      if (file.name !== reqName) { task.succeed(); return; }
       if (t && t.rgba && t.width && t.height) {
         const u8 = t.rgba instanceof Uint8Array ? t.rgba : new Uint8Array(t.rgba);
         const cv = document.createElement('canvas');
         cv.width = t.width; cv.height = t.height;
         cv.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(u8.buffer, u8.byteOffset, u8.byteLength), t.width, t.height), 0, 0);
-        file.mapTexture = { bounds: t.bounds, canvas: cv, width: t.width, height: t.height };
-      } else file.mapTexture = null;
-    } catch { if (file.name === reqName) file.mapTexture = null; }
+        let hg = null;
+        if (t.heightGrid && t.heightGrid.grid) {
+          const gb = t.heightGrid.grid;
+          const g8 = gb instanceof Uint8Array ? gb : new Uint8Array(gb);
+          const gbuf = g8.byteOffset % 4 === 0 ? g8.buffer.slice(g8.byteOffset, g8.byteOffset + g8.byteLength) : g8.slice().buffer;
+          hg = { grid: new Float32Array(gbuf), gw: t.heightGrid.gw, gh: t.heightGrid.gh, cellPx: t.heightGrid.cellPx, zMin: t.heightGrid.zMin, zMax: t.heightGrid.zMax };
+        }
+        file.mapTexture = { bounds: t.bounds, canvas: cv, width: t.width, height: t.height, heightGrid: hg };
+        task.succeed('Map textures ready');
+      } else { file.mapTexture = null; task.succeed(); }
+    } catch { if (file.name === reqName) file.mapTexture = null; task.fail('texture bake failed'); }
     finally { file.mapTexReq = null; worldCache.clear(); emit('map'); }
+  })();
+}
+
+function requestMapFaces3d(file) {
+  if (!native.isElectron || !window.popnative.mapFaces3d) return;
+  if (file.mapFaces3d !== undefined || file.mapFaces3dReq) return;
+  const reqName = file.name;
+  const task = startTask('Loading 3D geometry', { stage: 'reading map faces' });
+  file.mapFaces3dReq = (async () => {
+    try {
+      const r = await window.popnative.mapFaces3d(mapQueryName(file), await getTFPath(), popDirOf(file));
+      if (file.name !== reqName) { task.succeed(); return; }
+      if (r && r.materials) {
+        if (r.bsp) file.mapBspPath = r.bsp;
+        const toF32 = b => { const u = b instanceof Uint8Array ? b : new Uint8Array(b); const buf = u.byteOffset % 4 === 0 ? u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength) : u.slice().buffer; return new Float32Array(buf); };
+        const toU8 = b => b instanceof Uint8Array ? b : new Uint8Array(b);
+        file.mapFaces3d = {
+          bounds: r.bounds,
+          exposure: r.exposure,
+          minLight: r.minLight,
+          lmUpBright: r.lmUpBright,
+          ambient: r.ambient || null,
+          materials: r.materials.map(m => ({ name: m.name, count: m.count, positions: toF32(m.positions), uvs: toF32(m.uvs), lm: toF32(m.lm) })),
+          lightmap: r.lightmap ? { width: r.lightmap.width, height: r.lightmap.height, range: r.lightmap.range, rgba: toU8(r.lightmap.rgba) } : null
+        };
+        task.succeed('3D geometry ready');
+      } else { file.mapFaces3d = null; task.succeed(); }
+    } catch { if (file.name === reqName) file.mapFaces3d = null; task.fail('geometry load failed'); }
+    finally { file.mapFaces3dReq = null; emit('map'); }
+  })();
+}
+
+function requestMapLighting(file) {
+  if (!native.isElectron || !window.popnative.mapLighting) return;
+  if (file.mapLighting !== undefined || file.mapLightingReq) return;
+  const reqName = file.name;
+  file.mapLightingReq = (async () => {
+    try {
+      const r = await window.popnative.mapLighting(mapQueryName(file), await getTFPath(), popDirOf(file));
+      if (file.name !== reqName) return;
+      if (r && r.cubes) {
+        const ta = (b, T) => { const u = b instanceof Uint8Array ? b : new Uint8Array(b); const ab = u.byteOffset % 8 === 0 ? u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength) : u.slice().buffer; return new T(ab); };
+        file.mapLighting = {
+          planes: ta(r.planes, Float32Array), nodes: ta(r.nodes, Int32Array),
+          leafMins: ta(r.leafMins, Int16Array), leafMaxs: ta(r.leafMaxs, Int16Array),
+          ambCount: ta(r.ambCount, Uint16Array), ambFirst: ta(r.ambFirst, Uint16Array),
+          cubes: ta(r.cubes, Float32Array), ambPos: ta(r.ambPos, Uint8Array),
+          lights: r.lights || []
+        };
+      } else file.mapLighting = null;
+    } catch { if (file.name === reqName) file.mapLighting = null; }
+    finally { file.mapLightingReq = null; emit('map'); }
+  })();
+}
+
+function requestMapProps(file) {
+  if (!native.isElectron || !window.popnative.mapProps) return;
+  if (file.mapProps !== undefined || file.mapPropsReq) return;
+  const reqName = file.name;
+  const task = startTask('Loading props', { stage: 'reading static props' });
+  file.mapPropsReq = (async () => {
+    try {
+      const r = await window.popnative.mapProps(mapQueryName(file), await getTFPath(), popDirOf(file));
+      if (file.name !== reqName) { task.succeed(); return; }
+      const list = Array.isArray(r) ? r : (r && r.props);
+      file.mapProps = Array.isArray(list) ? list : null;
+      if (r && r.bsp) file.mapBspPath = r.bsp;
+      task.succeed(file.mapProps ? file.mapProps.length + ' props' : 'no props');
+    } catch { if (file.name === reqName) file.mapProps = null; task.fail('props load failed'); }
+    finally { file.mapPropsReq = null; emit('map'); }
   })();
 }
 
@@ -772,11 +1017,11 @@ function aiRunFor(file, wave, sim, mapData, key, opts) {
   if (run && run.key === key) return run;
   const staleAi = (run ? (run.ai || run.staleAi) : null) || lastAi.get(stableKey);
   if (run) run.cancelled = true;
-  const stepper = createBotSim(wave, sim, mapData, opts);
-  run = { key, ai: null, staleAi, cancelled: false, progressEl: null, stepper };
+  run = { key, ai: null, staleAi, cancelled: false, progressEl: null, stepper: null };
   aiRuns.set(sim, run);
   const tick = () => {
     if (run.cancelled) return;
+    const stepper = run.stepper;
     const start = performance.now();
     let done = false;
     while (!done && performance.now() - start < 24) done = stepper.stepMany(16);
@@ -791,12 +1036,43 @@ function aiRunFor(file, wave, sim, mapData, key, opts) {
       emit('map');
     } else setTimeout(tick, 0);
   };
-  setTimeout(tick, 0);
+  initNavWasm().then(() => {
+    if (run.cancelled) return;
+    run.stepper = createBotSim(wave, sim, mapData, opts);
+    setTimeout(tick, 0);
+  });
   return run;
+}
+
+const eventLogCache = new WeakMap();
+function eventLogFor(ai) {
+  let log = eventLogCache.get(ai);
+  if (log) return log;
+  log = [];
+  for (const a of ai.actors) {
+    if (!a.spawned) continue;
+    const label = a.kind === 'tank' ? 'Tank' : a.kind === 'prop' ? ((a.prop && a.prop.name) || 'Prop') : botDisplayName(a.bot);
+    const wsn = a.ws && a.ws.name ? ' — ' + a.ws.name : '';
+    log.push({ t: a.spawnT, kind: 'spawn', text: label + ' spawned' + wsn });
+    if (Number.isFinite(a.dieT) && a.dieT <= ai.end) {
+      if (a.done && ai.bomb.deliveredAt != null && Math.abs(a.dieT - ai.bomb.deliveredAt) < 0.3) {
+        log.push({ t: a.dieT, kind: 'deliver', text: label + ' deployed the bomb' + wsn });
+      } else {
+        log.push({ t: a.dieT, kind: 'death', text: label + (a.kind === 'tank' ? ' destroyed' : ' died') + wsn });
+      }
+    }
+  }
+  if (ai.truncation && ai.truncation.endedEarly) {
+    log.push({ t: ai.truncation.endT, kind: 'warn', text: 'Simulation stopped at its step limit — late activity missing' });
+  }
+  log.sort((x, y) => x.t - y.t);
+  eventLogCache.set(ai, log);
+  return log;
 }
 
 export function renderMapView(container, file, waveIndex) {
   clear(container);
+  clearStatusPrefix('map:');
   const wave = file.model.waves[waveIndex];
   if (!wave) { container.append(el('div', { class: 'empty-note', text: 'No such wave' })); return; }
   if (!native.isElectron) {
@@ -806,22 +1082,25 @@ export function renderMapView(container, file, waveIndex) {
   if (file.mapData === undefined || file.mapGeo === undefined) {
     if (!file.mapDataReq) {
       const reqName = file.name;
+      const task = startTask('Loading map ' + mapQueryName(file).replace(/\.pop$/i, ''), { stage: 'reading geometry' });
       file.mapDataReq = (async () => {
         try {
           const tfPath = await getTFPath();
           const [md, mg] = await Promise.all([
-            window.popnative.mapData(file.name, tfPath, popDirOf(file)),
-            window.popnative.mapGeo(file.name, tfPath, popDirOf(file))
+            window.popnative.mapData(mapQueryName(file), tfPath, popDirOf(file)),
+            window.popnative.mapGeo(mapQueryName(file), tfPath, popDirOf(file))
           ]);
-          if (file.name !== reqName) return;
+          if (file.name !== reqName) { task.succeed(); return; }
           file.mapData = md;
           if (mg && mg.data) {
             const u8 = mg.data instanceof Uint8Array ? mg.data : new Uint8Array(mg.data);
             const buf = u8.byteOffset % 4 === 0 ? u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) : u8.slice().buffer;
             file.mapGeo = { polys: mg.polys, bounds: mg.bounds, zRange: mg.zRange, lit: mg.lit, data: new Float32Array(buf) };
           } else file.mapGeo = null;
-        } catch {
+          task.succeed(md ? 'Loaded map ' + md.map : 'No map found');
+        } catch (err) {
           if (file.name === reqName) { file.mapData = null; file.mapGeo = null; }
+          task.fail('could not read the map');
         } finally {
           file.mapDataReq = null;
         }
@@ -832,43 +1111,7 @@ export function renderMapView(container, file, waveIndex) {
     return;
   }
   if (!file.mapData) {
-    const busy = mapDlActive.has(file.id);
-    const note = el('div', { class: 'empty-note', text: busy ? 'Downloading map...' : 'No matching BSP found for "' + file.name + '".' });
-    const dlBtn = el('button', { class: 'btn primary', text: 'Download map from potato.tf', disabled: busy, onclick: async () => {
-      if (mapDlActive.has(file.id)) return;
-      mapDlActive.add(file.id);
-      dlBtn.disabled = true;
-      try {
-        const tfPath = await getTFPath();
-        const parts = file.name.toLowerCase().replace(/\.pop$/, '').split('_');
-        let got = null;
-        for (let n = parts.length; n >= 2 && !got; n--) {
-          const cand = parts.slice(0, n).join('_');
-          note.textContent = 'Trying ' + cand + '.bsp ...';
-          const res = await window.popnative.potatoMap(cand, tfPath);
-          if (res && !res.error) got = { cand, res };
-        }
-        if (!got) {
-          note.textContent = 'Not found on the index (also checked shorter names).';
-          return;
-        }
-        note.textContent = 'Downloaded ' + got.cand + '.bsp';
-        await window.popnative.mapFlush();
-        file.mapData = undefined;
-        file.mapGeo = undefined;
-        file.mapTexture = undefined;
-        file.mapDataReq = null;
-        file.tankPathsKey = null;
-        mapDlActive.delete(file.id);
-        emit('map');
-      } catch (e) {
-        note.textContent = 'Download failed: ' + e.message;
-      } finally {
-        mapDlActive.delete(file.id);
-        dlBtn.disabled = false;
-      }
-    } });
-    container.append(note, el('div', { class: 'btn-row mb-dlrow' }, dlBtn));
+    renderMapPicker(container, file);
     return;
   }
 
@@ -884,6 +1127,7 @@ export function renderMapView(container, file, waveIndex) {
   const paint = paintFor(mapData.map);
   const paintV = paintVersions.get(mapData.map) || 0;
   const ps = playStateFor(file, waveIndex);
+  if (ps.logOpen === undefined) ps.logOpen = localStorage.getItem('popvis.maplog') === '1';
 
   const killPts = killPointsFor(mapData.map);
   const objIdx = objectiveIdxFor(mapData.map);
@@ -906,6 +1150,15 @@ export function renderMapView(container, file, waveIndex) {
   if (zMode === 'custom') aiOpts.zoneWeights = paint;
   const run = aiRunFor(file, wave, sim, mapData, aiKey, aiOpts);
 
+  setStatus('map:bsp', { view: 'map', text: 'map ' + mapData.map, title: 'Loaded map geometry (BSP)' });
+  setStatus('map:nav', mapData.nav
+    ? { view: 'map', text: 'nav ' + mapData.nav.name + (mapData.nav.approx ? ' (approximate)' : ''), kind: mapData.nav.approx ? 'warn' : null, title: 'Navigation mesh the simulation runs on' }
+    : { view: 'map', text: 'no nav mesh', kind: 'warn', title: 'No navigation mesh — movement falls back to straight lines' });
+  if (!run.ai) setStatus('map:run', { view: 'map', text: run.staleAi ? 'resimulating…' : 'simulating…', title: 'The movement simulation is computing in the background' });
+  else clearStatus('map:run');
+  if (file.mapTexReq) setStatus('map:bake', { view: 'map', text: 'baking textures…', title: 'Reading the map textures' });
+  else clearStatus('map:bake');
+
   if (ps.raf) { cancelAnimationFrame(ps.raf); ps.raf = 0; }
   if (ps.pulse) { clearTimeout(ps.pulse); ps.pulse = 0; }
 
@@ -927,6 +1180,13 @@ export function renderMapView(container, file, waveIndex) {
   const waveEnd = ai.end;
   ps.t = Math.min(ps.t, waveEnd);
   ps.waveEnd = waveEnd;
+  const actorKey = a => (a.ws && a.ws.node ? a.ws.node.id : '?') + '#' + a.spawnT.toFixed(2) + '#' + (a.squadId || 0) + '#' + (a.memberIdx || 0);
+  const selectedActor = () => ps.selKey ? ai.actors.find(a => actorKey(a) === ps.selKey) || null : null;
+  if (ps.selectFirst && !ps.selKey) {
+    const first = ai.actors.find(a => a.kind === 'bot' && ps.t >= a.spawnT && ps.t <= a.dieT) || ai.actors.find(a => a.kind === 'bot');
+    if (first) ps.selKey = actorKey(first);
+    ps.selectFirst = false;
+  }
   const chains = buildTrackChains(mapData, file.model.extraTankPaths);
   const areasById = new Map();
   if (mapData.nav) for (const a of mapData.nav.areas) areasById.set(a.id, a);
@@ -966,8 +1226,9 @@ export function renderMapView(container, file, waveIndex) {
     return null;
   };
   const modeSeg = el('span', { class: 'map-modes' },
-    ...[['full', 'Full'], ['layout', 'Nav']].map(([m, label]) => el('button', {
+    ...[['full', 'Full'], ['layout', 'Nav'], ['3d', '3D']].map(([m, label]) => el('button', {
       class: 'seg-btn' + (ps.mode === m ? ' on' : ''), text: label,
+      title: m === '3d' ? 'Orbit a 3D height-mesh of the map (drag to rotate, wheel to zoom)' : null,
       onclick: () => {
         ps.mode = m;
         localStorage.setItem('popvis.mapmode', m);
@@ -988,12 +1249,52 @@ export function renderMapView(container, file, waveIndex) {
     }
   });
 
+  const truncParts = [];
+  if (ai.truncation) {
+    if (ai.truncation.capHit && ai.truncation.skipped > 0) truncParts.push('~' + ai.truncation.skipped + ' late robots not simulated (' + ai.truncation.cap + '-actor cap)');
+    if (ai.truncation.endedEarly) {
+      const tails = [];
+      if (ai.truncation.unspawned > 0) tails.push(ai.truncation.unspawned + ' never spawned');
+      if (ai.truncation.unfinished > 0) tails.push(ai.truncation.unfinished + ' still active');
+      truncParts.push('stopped at ' + fmtTime(ai.truncation.endT) + (tails.length ? ' — ' + tails.join(', ') : ''));
+    }
+  }
+  setStatus('map:sim', {
+    view: 'map',
+    text: model + ' model · seed ' + ((RNG_SEED_BASE ^ wave.index) >>> 0).toString(16),
+    title: 'Deterministic run — the death model and the RNG seed used for this wave'
+  });
+  if (truncParts.length) setStatus('map:trunc', { view: 'map', kind: 'warn', text: 'sim truncated', title: truncParts.join('; ') });
+  else clearStatus('map:trunc');
+  const logBtn = el('button', {
+    class: 'btn sm' + (ps.logOpen ? ' on' : ''), text: 'Log',
+    title: 'Simulation event log — spawns, deaths, deliveries; click an event to jump there',
+    onclick: () => { ps.logOpen = !ps.logOpen; localStorage.setItem('popvis.maplog', ps.logOpen ? '1' : '0'); emit('map'); }
+  });
+  const tbtn = (glyph, label, action) => el('button', {
+    class: 'icon-btn sm', text: glyph, title: label, 'aria-label': label,
+    onclick: () => mapTransport(file, waveIndex, action)
+  });
+  const transport = el('span', { class: 'map-group map-transport' },
+    tbtn('↺', 'Restart (Home)', 'restart'),
+    tbtn('«', 'Previous event ([)', 'prev-event'),
+    tbtn('‹', 'Step back one tick (←)', 'step-back'),
+    playBtn,
+    tbtn('›', 'Step forward one tick (→)', 'step-fwd'),
+    tbtn('»', 'Next event (])', 'next-event'),
+    speedSel);
+  const zoomLbl = el('button', { class: 'btn sm map-zoom', title: 'Zoom — click to fit the map', onclick: () => { fit(); drawFrame(); } });
   const bar = el('div', { class: 'map-toolbar' },
-    el('span', { class: 'map-group' }, playBtn, speedSel),
+    transport,
     mini, timeLbl, nextLbl,
-    el('span', { class: 'map-group' }, fitBtn, modeSeg),
-    displayBtn,
+    el('span', { class: 'map-group' }, fitBtn, zoomLbl, modeSeg),
+    displayBtn, logBtn,
     el('span', { class: 'map-note', text: mapData.map + ' — ' + navNote }),
+    truncParts.length ? el('span', {
+      class: 'map-trunc',
+      title: 'The movement simulation hit an internal limit, so late activity is missing from this playback. The timeline schedule is not affected.',
+      text: 'truncated — ' + truncParts.join('; ')
+    }) : null,
     file.mapTexReq ? el('span', { class: 'map-baking', title: 'Reading the map textures — surfaces stay flat until this finishes', text: 'baking textures…' }) : null);
 
   function buildOptionsPanel() {
@@ -1016,6 +1317,11 @@ export function renderMapView(container, file, waveIndex) {
     };
 
     panel.append(simOptsPanel(file));
+    panel.append(el('div', {
+      class: 'opt-note info',
+      title: 'Every run of this wave uses the same random seed, so results are reproducible',
+      text: 'Deterministic — seed ' + ((RNG_SEED_BASE ^ wave.index) >>> 0).toString(16)
+    }));
 
     if (model === 'damage') {
       const zoneSeg = el('span', { class: 'map-modes' },
@@ -1122,11 +1428,272 @@ export function renderMapView(container, file, waveIndex) {
   const approx = mapData.nav.approx && !approxDismissed.has(mapData.map)
     ? buildApproxBanner(file, mapData)
     : null;
+
+  const dpr = window.devicePixelRatio || 1;
+
+  // Playback controls must work in every mode. 3D repaints through the WebGL view's own
+  // scheduler (its draw loop advances ps.t while playing); 2D repaints via drawFrame().
+  function repaintNow() {
+    if (ps.mode === '3d') { if (active3D) active3D.redraw(); drawMini(); }
+    else drawFrame();
+  }
+
+  function wirePlayback() {
+    playBtn.addEventListener('click', () => {
+      if (!ps.playing && ps.t >= waveEnd) ps.t = 0;
+      ps.playing = !ps.playing;
+      playBtn.textContent = ps.playing ? 'Pause' : 'Play';
+      if (ps.mode === '3d') { if (active3D) active3D.redraw(); }
+      else if (ps.playing && !ps.raf) ps.raf = requestAnimationFrame(() => loop(0));
+    });
+    speedSel.addEventListener('change', () => { ps.speed = parseFloat(speedSel.value); repaintNow(); });
+    let dragging = false;
+    const seek = ev => {
+      const r = mini.getBoundingClientRect();
+      ps.t = Math.max(0, Math.min(1, (ev.clientX - r.left) / Math.max(1, r.width))) * waveEnd;
+      repaintNow();
+    };
+    mini.addEventListener('mousedown', e => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      dragging = true;
+      seek(e);
+      const mv = ev => { if (dragging) seek(ev); };
+      const up2 = () => { dragging = false; removeEventListener('mousemove', mv); removeEventListener('mouseup', up2); };
+      addEventListener('mousemove', mv);
+      addEventListener('mouseup', up2);
+    });
+    mini.addEventListener('wheel', e => {
+      e.preventDefault();
+      const step = (e.shiftKey ? 5 : 1) * (e.deltaY > 0 ? 1 : -1);
+      ps.playing = false;
+      playBtn.textContent = 'Play';
+      ps.t = Math.max(0, Math.min(waveEnd, ps.t + step));
+      repaintNow();
+    }, { passive: false });
+  }
+
+  if (ps.mode === '3d') {
+    wirePlayback();
+    render3DMode();
+    drawMini();
+    return;
+  }
+  wirePlayback();
+
+  function hexRGB(h) {
+    const n = parseInt(String(h || '#9aa0a6').slice(1), 16);
+    return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255];
+  }
+  function actorColorSize(a) {
+    if (a.kind === 'tank') return { c: [0.74, 0.28, 0.24], s: 0.92 };
+    if (a.kind === 'prop') return { c: [0.5, 0.55, 0.62], s: 0.4 };
+    let c = hexRGB((CLASS_INFO[a.bot.cls] || CLASS_INFO.unknown).color);
+    let s = 0.36;
+    if (a.bot.isBoss) { c = c.map(x => Math.min(1, x * 0.55 + 0.45)); s = 0.85; }
+    else if (a.bot.isGiant) { c = c.map(x => Math.min(1, x * 0.7 + 0.25)); s = 0.6; }
+    return { c, s };
+  }
+  function actorsAt3D(t) {
+    const out = [];
+    let freshItems = false;
+    for (const a of ai.actors) {
+      if (a.kind === 'bot' && a.bot.items) for (const it of a.bot.items) if (!itemsRequested.has(it)) { itemsRequested.add(it); freshItems = true; }
+    }
+    if (freshItems && !itemsPending) {
+      itemsPending = true;
+      resolveBotItems([...itemsRequested]).then(c => { itemsPending = false; if (c) emit('map'); }).catch(() => { itemsPending = false; });
+    }
+    for (const a of ai.actors) {
+      if (t < a.spawnT || t > a.dieT) continue;
+      const p = actorPosAt(a, t);
+      if (!p) continue;
+      const cs = actorColorSize(a);
+      let heading = a.__h3d || 0;
+      let moving = false;
+      const prev = actorPosAt(a, Math.max(a.spawnT, t - 0.28));
+      if (prev) {
+        const dx = p[0] - prev[0], dy = p[1] - prev[1];
+        const d2 = dx * dx + dy * dy;
+        if (d2 > 4) { heading = Math.atan2(dy, dx); a.__h3d = heading; }
+        moving = d2 > 2.25;
+      }
+      let scale = 1, modelBase = null, attachments = null, loadoutKey = null;
+      if (a.kind === 'bot') {
+        scale = a.bot.scale != null ? a.bot.scale : (a.bot.isGiant ? 1.75 : 1);
+        modelBase = botModelBase(a.bot);
+        const weps = botWeaponModels(a.bot);
+        const cos = botCosmeticModels(a.bot);
+        attachments = [...weps, ...cos];
+        loadoutKey = modelBase + '|' + attachments.join('|');
+      }
+      out.push({
+        x: p[0], y: p[1], z: actorZAt(a, t), size: cs.s, r: cs.c[0], g: cs.c[1], b: cs.c[2],
+        kind: a.kind, cls: a.kind === 'bot' ? a.bot.cls : null,
+        crit: a.kind === 'bot' && !!a.bot.alwaysCrit,
+        modelBase, attachments, loadoutKey, moving, carrying: false,
+        heading, scale, phase: (Math.floor(a.spawnT * 13) + (a.memberIdx || 0) * 5) % 128
+      });
+    }
+    if (ai.bomb && ai.bomb.samples && ai.bomb.samples.length) {
+      const bi = Math.max(0, Math.min(ai.bomb.samples.length - 1, Math.round(t / STEP)));
+      const bp = ai.bomb.samples[bi];
+      if (bp) {
+        let carrier = null, bd = 48 * 48;
+        for (const o of out) {
+          if (o.kind !== 'bot') continue;
+          const d = (o.x - bp[0]) ** 2 + (o.y - bp[1]) ** 2;
+          if (d < bd) { bd = d; carrier = o; }
+        }
+        if (carrier) carrier.carrying = true;
+        else out.push({ x: bp[0], y: bp[1], z: bp[2], size: 0.55, r: 1, g: 0.85, b: 0.15, kind: 'bomb' });
+      }
+    }
+    return out;
+  }
+  function countActiveAt(t) {
+    let n = 0;
+    for (const a of ai.actors) if (t >= a.spawnT && t <= a.dieT) n++;
+    return n;
+  }
+
+  function render3DMode() {
+    const wrap3d = el('div', { class: 'map-canvaswrap' });
+    container.append(el('div', { class: 'mapview' }, approx, bar, wrap3d));
+    playBtn.addEventListener('click', () => mapTransport(file, waveIndex, 'toggle'));
+    fitBtn.title = 'Reset the 3D camera';
+    fitBtn.addEventListener('click', () => active3D && active3D.resetCamera());
+    if (ps.optionsOpen) wrap3d.append(buildOptionsPanel());
+    if (ps.logOpen) wrap3d.append(buildEventLog());
+    if (!tex || !tex.heightGrid) {
+      wrap3d.append(el('div', { class: 'empty-note', text: tex ? 'This map has no baked geometry to build a 3D mesh — use Full or Nav.' : 'Baking the map… 3D appears once the textures finish.' }));
+      return;
+    }
+    requestMapFaces3d(file);
+    requestMapProps(file);
+    requestMapLighting(file);
+    let cam = cam3dCache.get(mapData.map);
+    if (!cam) { cam = {}; cam3dCache.set(mapData.map, cam); }
+    const scene = {
+      mapName: mapData.map, bspPath: file.mapBspPath || null, tex: tex.canvas, heightGrid: tex.heightGrid, bounds: tex.bounds, faces3d: file.mapFaces3d || null, props: file.mapProps || null, lighting: file.mapLighting || null, ps, cam, waveEnd,
+      actorsAt: actorsAt3D,
+      tool: ps.tool, killPoints: killPts,
+      onKill: (wx, wy, remove) => {
+        const list = killPointsFor(mapData.map);
+        const hit = list.findIndex(k => (k[0] - wx) ** 2 + (k[1] - wy) ** 2 < (k[2] || KILL_RADIUS) ** 2);
+        if (remove) { if (hit < 0) return; list.splice(hit, 1); }
+        else list.push([wx, wy, ps.killRadius]);
+        saveKillPoints(mapData.map, list);
+        emit('map');
+      },
+      onTime: tt => {
+        timeLbl.textContent = fmtTime(tt) + ' / ' + fmtTime(waveEnd) + ' — ' + countActiveAt(tt) + ' active';
+        if (!ps.playing && playBtn.textContent !== 'Play') playBtn.textContent = 'Play';
+        drawMini();
+      },
+      onPlayEnd: () => emit('map')
+    };
+    if (active3D && active3D.mapName === mapData.map) {
+      active3D.update(scene);
+      wrap3d.append(active3D.canvas);
+    } else {
+      if (active3D) active3D.dispose();
+      active3D = createMap3D(scene);
+      if (!active3D) { wrap3d.append(el('div', { class: 'empty-note', text: 'WebGL is unavailable — 3D mode needs it. Use Full or Nav.' })); return; }
+      wrap3d.append(active3D.canvas);
+    }
+    wrap3d.append(el('div', { class: 'map-3d-hint', text: 'left-drag orbit · right-drag pan · wheel zoom · Fit resets' }));
+    timeLbl.textContent = fmtTime(ps.t) + ' / ' + fmtTime(waveEnd) + ' — ' + countActiveAt(ps.t) + ' active';
+  }
+
+  function buildEventLog() {
+    const wrap = el('div', { class: 'map-eventlog map-tools' });
+    wrap.append(el('div', { class: 'pop-title' },
+      el('span', { text: 'EVENT LOG' }),
+      el('button', {
+        class: 'icon-btn sm', text: '×', title: 'Close', 'aria-label': 'Close event log',
+        onclick: () => { ps.logOpen = false; localStorage.setItem('popvis.maplog', '0'); emit('map'); }
+      })));
+    let log = eventLogFor(ai);
+    if (log.length > 400) {
+      let idx = 0;
+      while (idx < log.length && log[idx].t < ps.t) idx++;
+      const from = Math.max(0, idx - 200);
+      const slice = log.slice(from, from + 400);
+      wrap.append(el('div', { class: 'evlog-note', text: 'showing ' + slice.length + ' of ' + log.length + ' events around the playhead' }));
+      log = slice;
+    }
+    const list = el('div', { class: 'evlog-list', role: 'list' });
+    if (!log.length) list.append(el('div', { class: 'evlog-note', text: 'No events' }));
+    for (const ev of log) {
+      list.append(el('div', {
+        class: 'evlog-row ' + ev.kind + (ev.t <= ps.t ? ' past' : ''),
+        role: 'listitem', tabindex: 0, 'data-kbd': true,
+        title: 'Jump playback to ' + fmtTime(ev.t),
+        onclick: () => { ps.t = Math.max(0, Math.min(ev.t, waveEnd)); ps.playing = false; emit('map'); }
+      },
+        el('span', { class: 'evlog-t', text: fmtTime(ev.t) }),
+        el('span', { class: 'evlog-x', text: ev.text })));
+    }
+    wrap.append(list);
+    return wrap;
+  }
+
+  function buildActorCard(sel) {
+    const isBot = sel.kind === 'bot';
+    const wrap = el('div', { class: 'map-actorcard map-tools' });
+    wrap.append(el('div', { class: 'pop-title' },
+      el('span', { text: 'ACTOR' }),
+      el('button', {
+        class: 'icon-btn sm', text: '×', title: 'Deselect (Esc)', 'aria-label': 'Deselect',
+        onclick: () => { ps.selKey = null; ps.follow = false; emit('map'); }
+      })));
+    const head = el('div', { class: 'ac-head' });
+    if (isBot) head.append(botVisual(sel.bot));
+    else if (sel.kind === 'tank') head.append(tankVisual(sel.tank));
+    head.append(el('div', { class: 'ac-name', text: isBot ? botDisplayName(sel.bot) : sel.kind === 'tank' ? 'Tank' : (sel.prop.label || 'Entity') }));
+    wrap.append(head);
+    const rows = el('div', { class: 'ac-rows' });
+    const row = (k, v) => rows.append(el('div', { class: 'ac-row' }, el('span', { class: 'ac-k', text: k }), el('span', { class: 'ac-v', text: v })));
+    if (isBot) {
+      row('Class', (CLASS_INFO[sel.bot.cls] || {}).name || sel.bot.cls);
+      row('Health', sel.bot.health + ' HP');
+      row('Speed', Math.round(botMaxSpeed(sel.bot, false)) + ' HU/s');
+      const tags = [];
+      if (sel.bot.isBoss) tags.push('boss'); else if (sel.bot.isGiant) tags.push('giant');
+      if (sel.bot.alwaysCrit) tags.push('always-crit');
+      if (sel.squadId) tags.push('squad ' + sel.squadRole);
+      if (tags.length) row('Type', tags.join(', '));
+    } else if (sel.kind === 'tank') {
+      row('Health', sel.tank.health + ' HP');
+      row('Speed', sel.tank.speed + ' HU/s');
+    }
+    row('From', '"' + (sel.ws.name || 'unnamed') + '"');
+    row('Spawns', fmtTime(sel.spawnT));
+    if (Number.isFinite(sel.dieT) && sel.dieT <= waveEnd) {
+      const cause = sel.done ? 'reaches the hatch' : sel.kind === 'tank' ? 'destroyed' : 'leaves the field';
+      row('Ends', fmtTime(sel.dieT) + ' · ' + cause);
+    } else row('Ends', 'survives the window');
+    const now = ps.t < sel.spawnT ? 'not spawned yet' : ps.t > sel.dieT ? 'gone' : isBot ? sel.state : 'active';
+    row('At ' + fmtTime(ps.t), now);
+    wrap.append(rows);
+    if (isBot || sel.kind === 'tank') {
+      wrap.append(el('button', {
+        class: 'btn sm ac-follow' + (ps.follow ? ' on' : ''),
+        text: ps.follow ? 'Following' : 'Follow', title: 'Keep the camera on this actor (F)',
+        onclick: () => { ps.follow = !ps.follow; emit('map'); }
+      }));
+    }
+    return wrap;
+  }
+
   container.append(el('div', { class: 'mapview' }, approx, bar, canvasWrap));
   if (ps.optionsOpen) canvasWrap.append(buildOptionsPanel());
+  if (ps.logOpen) canvasWrap.append(buildEventLog());
+  const selNow = selectedActor();
+  if (selNow) canvasWrap.append(buildActorCard(selNow));
 
   const ctx = canvas.getContext('2d');
-  const dpr = window.devicePixelRatio || 1;
   const worldKey = file.id + ':' + ps.mode + ':' + (geo ? 'g' : 'n') + ':' + (tex ? 't' : '');
   const world = buildWorldCanvas(worldKey, ps.mode, mapData, geo, tex);
   if (!world) {
@@ -1135,11 +1702,14 @@ export function renderMapView(container, file, waveIndex) {
   }
   let vs = viewStates.get(file.id);
 
-  function fit() {
+  function fitScaleFor() {
     const w = canvas.clientWidth || 800;
     const h = canvas.clientHeight || 500;
     const bw = world.bounds[2] - world.bounds[0], bh = world.bounds[3] - world.bounds[1];
-    const scale = Math.min(w / (bw + 150), h / (bh + 150));
+    return Math.min(w / (bw + 150), h / (bh + 150));
+  }
+  function fit() {
+    const scale = fitScaleFor();
     vs = { cx: (world.bounds[0] + world.bounds[2]) / 2, cy: (world.bounds[1] + world.bounds[3]) / 2, scale };
     viewStates.set(file.id, vs);
   }
@@ -1629,6 +2199,11 @@ export function renderMapView(container, file, waveIndex) {
     if (model === 'damage' && zMode !== 'off' && mapData.nav) drawZones();
     drawOverlayStatic();
     const t = ps.t;
+    const sel = selectedActor();
+    if (ps.follow && sel && t >= sel.spawnT && t <= sel.dieT) {
+      const sp = actorPosAt(sel, t);
+      if (sp) { vs.cx = sp[0]; vs.cy = sp[1]; }
+    }
     if (ps.showRoute !== false && ai.route) {
       const bi = Math.max(0, Math.min(ai.bomb.samples.length - 1, Math.round(t / STEP)));
       drawRoute(ctx, ai.route, toScreen, t, routeProgress(ai.route, ai.bomb.samples[bi]));
@@ -1651,14 +2226,36 @@ export function renderMapView(container, file, waveIndex) {
     lastPositions = shown;
     drawSquadLinks(shown);
     for (const q of shown) drawActor(q.a, t, q.sx, q.sy, q.zf, q.n);
+    if (sel && t >= sel.spawnT && t <= sel.dieT) {
+      const sp = actorPosAt(sel, t);
+      if (sp) { const [rx, ry] = toScreen(sp[0], sp[1]); drawSelRing(rx, ry, plateSize(sel) * (1 + heightFrac(sel, t) * LIFT_SCALE)); }
+    }
     labelRects = [];
     for (const q of shown) {
       if (q.n > 1) drawCount(q.sx, q.sy, q.plate * (1 + q.zf * LIFT_SCALE) * stackScale(q.n), q.n);
     }
     drawBomb(t);
     timeLbl.textContent = fmtTime(t) + ' / ' + fmtTime(waveEnd) + ' — ' + alive + ' active';
+    const fs = fitScaleFor();
+    if (fs) zoomLbl.textContent = Math.round(vs.scale / fs * 100) + '%';
     drawMini();
     updateWavePanel(t, alive, waveEnd);
+  }
+
+  function drawSelRing(sx, sy, plate) {
+    const r = plate * 0.72 + 6;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(sx, sy, r + 3, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(124,196,255,.35)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = '#7cc4ff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
   }
 
   function drawMini() {
@@ -1698,27 +2295,6 @@ export function renderMapView(container, file, waveIndex) {
     nextLbl.textContent = u ? 'NEXT: ' + u.name : '';
   }
 
-  let scrubbing = false;
-  const scrubTo = ev => {
-    const r = mini.getBoundingClientRect();
-    ps.t = Math.max(0, Math.min(1, (ev.clientX - r.left) / Math.max(1, r.width))) * waveEnd;
-    drawFrame();
-  };
-  mini.addEventListener('mousedown', e => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    scrubbing = true;
-    scrubTo(e);
-    const mv = ev => { if (scrubbing) scrubTo(ev); };
-    const up2 = () => {
-      scrubbing = false;
-      removeEventListener('mousemove', mv);
-      removeEventListener('mouseup', up2);
-    };
-    addEventListener('mousemove', mv);
-    addEventListener('mouseup', up2);
-  });
-
   function loop(prev) {
     ps.raf = 0;
     if (!canvas.isConnected || !ps.playing) { schedulePulse(); return; }
@@ -1751,13 +2327,6 @@ export function renderMapView(container, file, waveIndex) {
     }, 1000 / CRIT_FPS);
   }
 
-  playBtn.addEventListener('click', () => {
-    if (!ps.playing && ps.t >= waveEnd) ps.t = 0;
-    ps.playing = !ps.playing;
-    playBtn.textContent = ps.playing ? 'Pause' : 'Play';
-    if (ps.playing && !ps.raf) ps.raf = requestAnimationFrame(() => loop(0));
-  });
-  speedSel.addEventListener('change', () => { ps.speed = parseFloat(speedSel.value); });
   fitBtn.addEventListener('click', () => { fit(); drawFrame(); });
 
   const painting = () => ps.tool === 'paint' && zMode === 'custom' && model === 'damage';
@@ -1801,7 +2370,7 @@ export function renderMapView(container, file, waveIndex) {
       paintAt(e.clientX - rect.left, e.clientY - rect.top, e.button === 2);
       return;
     }
-    dragging = { x: e.clientX, y: e.clientY, cx: vs.cx, cy: vs.cy };
+    dragging = { x: e.clientX, y: e.clientY, cx: vs.cx, cy: vs.cy, lx: e.clientX - rect.left, ly: e.clientY - rect.top, moved: false, followOff: false };
   });
   addEventListener('mousemove', onMove);
   addEventListener('mouseup', onUp);
@@ -1813,9 +2382,15 @@ export function renderMapView(container, file, waveIndex) {
       return;
     }
     if (dragging) {
-      vs.cx = dragging.cx - (e.clientX - dragging.x) / vs.scale;
-      vs.cy = dragging.cy + (e.clientY - dragging.y) / vs.scale;
-      drawFrame();
+      if (!dragging.moved && Math.abs(e.clientX - dragging.x) + Math.abs(e.clientY - dragging.y) > 4) {
+        dragging.moved = true;
+        if (ps.follow) { ps.follow = false; dragging.followOff = true; }
+      }
+      if (dragging.moved) {
+        vs.cx = dragging.cx - (e.clientX - dragging.x) / vs.scale;
+        vs.cy = dragging.cy + (e.clientY - dragging.y) / vs.scale;
+        drawFrame();
+      }
       return;
     }
     if (ps.tool === 'kill' || ps.tool === 'killerase') {
@@ -1849,6 +2424,7 @@ export function renderMapView(container, file, waveIndex) {
     } else hideTip();
   }
   function onUp() {
+    const d = dragging;
     dragging = null;
     if (paintingDown) {
       paintingDown = false;
@@ -1857,6 +2433,23 @@ export function renderMapView(container, file, waveIndex) {
         savePaint(mapData.map);
         emit('map');
       }
+      return;
+    }
+    if (!d) return;
+    if (!d.moved) {
+      let hit = null, bestD = 260;
+      for (const lp of lastPositions) {
+        const dd = (lp.sx - d.lx) ** 2 + (lp.sy - d.ly) ** 2;
+        if (dd < bestD) { bestD = dd; hit = lp; }
+      }
+      const key = hit ? actorKey(hit.a) : null;
+      if (key !== ps.selKey || (!key && ps.follow)) {
+        ps.selKey = key;
+        if (!key) ps.follow = false;
+        emit('map');
+      }
+    } else if (d.followOff) {
+      emit('map');
     }
   }
 

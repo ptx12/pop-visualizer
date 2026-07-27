@@ -24,6 +24,11 @@ contextBridge.exposeInMainWorld('popnative', {
   mapData: (popName, tfPath, popDir) => ipcRenderer.invoke('map:data', popName, tfPath, popDir),
   mapGeo: (popName, tfPath, popDir) => ipcRenderer.invoke('map:geo', popName, tfPath, popDir),
   mapTexture: (popName, tfPath, popDir) => ipcRenderer.invoke('map:texture', popName, tfPath, popDir),
+  mapFaces3d: (popName, tfPath, popDir) => ipcRenderer.invoke('map:faces3d', popName, tfPath, popDir),
+  particlesSystem: (name, tfPath) => ipcRenderer.invoke('particles:system', name, tfPath),
+  particlesList: (pattern, tfPath) => ipcRenderer.invoke('particles:list', pattern, tfPath),
+  mapLighting: (popName, tfPath, popDir) => ipcRenderer.invoke('map:lighting', popName, tfPath, popDir),
+  mapProps: (popName, tfPath, popDir) => ipcRenderer.invoke('map:props', popName, tfPath, popDir),
   winList: () => ipcRenderer.invoke('wins:list'),
   dockStart: (target, opts) => ipcRenderer.invoke('dock:start', target, opts),
   dockPos: (position) => ipcRenderer.invoke('dock:pos', position),
@@ -32,9 +37,10 @@ contextBridge.exposeInMainWorld('popnative', {
   watchAdd: (p) => ipcRenderer.invoke('watch:add', p),
   watchRemove: (p) => ipcRenderer.invoke('watch:remove', p),
   fsxList: (dir) => ipcRenderer.invoke('fsx:list', dir),
-  matRead: (rel, tfPath) => ipcRenderer.invoke('mat:read', rel, tfPath),
-  matTexture: (rel, tfPath) => ipcRenderer.invoke('mat:texture', rel, tfPath),
+  matRead: (rel, tfPath, bspPath) => ipcRenderer.invoke('mat:read', rel, tfPath, bspPath),
+  matTexture: (rel, tfPath, bspPath) => ipcRenderer.invoke('mat:texture', rel, tfPath, bspPath),
   modelLoad: (src) => ipcRenderer.invoke('model:load', src),
+  itemsResolve: (names, tfPath) => ipcRenderer.invoke('items:resolve', names, tfPath),
   hlmvFind: (tfPath, override) => ipcRenderer.invoke('hlmv:find', tfPath, override),
   hlmvOpen: (exe, tfPath, mdlPath) => ipcRenderer.invoke('hlmv:open', exe, tfPath, mdlPath),
   potatoList: (rel) => ipcRenderer.invoke('potato:list', rel),
@@ -42,5 +48,7 @@ contextBridge.exposeInMainWorld('popnative', {
   potatoMap: (name, tfPath) => ipcRenderer.invoke('potato:map', name, tfPath),
   potatoNavs: (name) => ipcRenderer.invoke('potato:navs', name),
   potatoNav: (name, source, tfPath) => ipcRenderer.invoke('potato:nav', name, source, tfPath),
-  mapFlush: () => ipcRenderer.invoke('map:flush')
+  navUse: (popName, source, tfPath, popDir) => ipcRenderer.invoke('nav:use', popName, source, tfPath, popDir),
+  mapFlush: () => ipcRenderer.invoke('map:flush'),
+  reveal: (p) => ipcRenderer.invoke('file:reveal', p)
 });

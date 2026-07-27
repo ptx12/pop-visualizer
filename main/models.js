@@ -5,11 +5,35 @@ import { spawn } from 'node:child_process';
 import { parseMDL, parseVVD, parseVTX, buildMeshes, sampleAnim } from '../shared/mdl.js';
 import { detectTFPath } from './tfpath.js';
 import { httpGet, potatoUrl } from './potato.js';
+import { indexVPK, readVPKEntry } from '../shared/vpk.js';
 
-async function readModelSet(src) {
+const modelVpkIndexes = new Map();
+function modelVpkIndex(tfPath, ext) {
+  const key = tfPath + ':' + ext;
+  if (modelVpkIndexes.has(key)) return modelVpkIndexes.get(key);
+  const map = new Map();
+  try {
+    for (const [k, e] of indexVPK(path.join(tfPath, 'tf2_misc_dir.vpk'), (x, dir) => x === ext && dir.startsWith('models'))) map.set(k, e);
+  } catch {}
+  modelVpkIndexes.set(key, map);
+  return map;
+}
+
+async function readModelSet(src, tfPath) {
   const need = async rel => {
     if (src.kind === 'file') {
       try { return await fs.readFile(src.base + rel); } catch { return null; }
+    }
+    if (src.kind === 'vpk') {
+      const ext = rel.endsWith('.vtx') ? 'vtx' : rel.slice(1);
+      const full = (src.base + rel).toLowerCase().replace(/\\/g, '/');
+      if (full.includes('..')) return null;
+      const e = modelVpkIndex(tfPath, ext).get(full);
+      if (e) { try { return readVPKEntry(path.join(tfPath, 'tf2_misc_dir.vpk'), e); } catch {} }
+      for (const root of [path.join(tfPath, 'download'), tfPath]) {
+        try { return await fs.readFile(path.join(root, full.replace(/\//g, path.sep))); } catch {}
+      }
+      return null;
     }
     try { return await httpGet(potatoUrl(src.base + rel), 128 * 1024 * 1024); } catch { return null; }
   };
@@ -21,10 +45,11 @@ async function readModelSet(src) {
   return { mdl, vvd, vtx };
 }
 
-function animFramesFor(mdl, targetBones, boneMap) {
+function animFramesFor(mdl, targetBones, boneMap, match) {
   const out = [];
   for (const a of mdl.anims) {
     if (a.animblock !== 0 || a.numframes < 1 || a.numframes > 1000) continue;
+    if (match && !a.name.toLowerCase().includes(match)) continue;
     const frames = new Float32Array(a.numframes * targetBones.length * 7);
     let ok = true;
     for (let f = 0; f < a.numframes; f++) {
@@ -50,7 +75,9 @@ function animFramesFor(mdl, targetBones, boneMap) {
 export function register() {
   ipcMain.handle('model:load', async (e, src) => {
     try {
-      const set = await readModelSet(src);
+      const tfPath = src.kind === 'vpk' ? (src.tfPath || await detectTFPath()) : null;
+      if (src.kind === 'vpk' && !tfPath) return { error: 'TF folder not found' };
+      const set = await readModelSet(src, tfPath);
       if (!set) return { error: 'model not found' };
       const mdl = parseMDL(set.mdl);
       const bones = mdl.bones.map(b => ({ name: b.name, parent: b.parent, pos: b.pos, quat: b.quat }));
@@ -61,6 +88,7 @@ export function register() {
         cdtextures: mdl.cdtextures,
         skins: mdl.skins,
         bones,
+        attachments: mdl.attachments || [],
         anims: []
       };
       if (set.vvd && set.vtx) {
@@ -106,14 +134,15 @@ export function register() {
         result.meshes = meshes;
         result.bbox = bbox;
       }
-      result.anims = animFramesFor(mdl, mdl.bones, null);
+      const match = src.animMatch ? String(src.animMatch).toLowerCase() : null;
+      result.anims = animFramesFor(mdl, mdl.bones, null, match);
       try {
-        const compSet = await readModelSet({ kind: src.kind, base: src.base + '_animations' });
+        const compSet = await readModelSet({ kind: src.kind, base: src.base + '_animations' }, tfPath);
         if (compSet && compSet.mdl) {
           const comp = parseMDL(compSet.mdl);
           const nameToIdx = new Map(comp.bones.map((b, i) => [b.name.toLowerCase(), i]));
           const boneMap = mdl.bones.map(b => nameToIdx.get(b.name.toLowerCase()) ?? -1);
-          result.anims.push(...animFramesFor(comp, mdl.bones, boneMap));
+          result.anims.push(...animFramesFor(comp, mdl.bones, boneMap, match));
         }
       } catch {}
       return result;

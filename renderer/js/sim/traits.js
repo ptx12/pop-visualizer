@@ -87,6 +87,7 @@ registerTraits([
   { id: 'classicon', key: 'classicon', apply(info, value) { info.icon = value; } },
   { id: 'attributes', key: 'attributes', apply(info, value) { info.attrs.push(value); } },
   { id: 'item', key: 'item', apply(info, value) { info.items.push(value); } },
+  { id: 'model', key: 'model', apply(info, value) { if (value) info.model = String(value).replace(/\\/g, '/'); } },
   { id: 'tag', key: 'tag', apply(info, value) { if (value) info.tags.push(String(value).toLowerCase()); } },
   { id: 'weaponrestrictions', key: 'weaponrestrictions', apply(info, value) { info.restriction = value; } },
 
@@ -152,8 +153,8 @@ const KNOWN_FLAGS = [
 registerTraits(KNOWN_FLAGS.map(f => ({ id: 'flag-' + f, flag: f, apply(info) { info.knownFlags.add(f); } })));
 
 const LOADOUT_KEYS = [
-  'stripitemslot', 'dropweapon', 'usecustommodel', 'usehumanmodel', 'usehumananimations',
-  'usebustermodel', 'deathsound', 'additionalstepsound', 'customeyeglowcolor', 'alwaysglow',
+  'dropweapon', 'usehumananimations',
+  'deathsound', 'additionalstepsound', 'customeyeglowcolor', 'alwaysglow',
   'noglow', 'rocketcustomparticle', 'forceromevision', 'voicepitchscale',
   'skin', 'bodypartscalespeed', 'rocketcustommodel', 'painsound', 'firesound'
 ];
@@ -208,5 +209,13 @@ registerTraits([
   { id: 'health-regen-attr', attribute: /^health regen$/i, apply(info, value) {
     const v = parseFloat(value);
     if (Number.isFinite(v)) info.healthRegen += v;
-  } }
+  } },
+  { id: 'usecustommodel', key: 'usecustommodel', apply(info, value) { if (value) info.model = String(value).replace(/\\/g, '/').trim(); } },
+  { id: 'usehumanmodel', key: 'usehumanmodel', apply(info, value) { info.useHumanModel = String(value) !== '0'; } },
+  { id: 'usebustermodel', key: 'usebustermodel', apply(info, value) { info.useBusterModel = String(value) !== '0'; } },
+  { id: 'customweaponmodel', block: 'customweaponmodel', apply(info, node, api) {
+    const m = api.getValue(node, 'Model', null);
+    if (m) info.customWeapons.push({ slot: parseInt(api.getValue(node, 'Slot', '0'), 10) || 0, model: String(m).replace(/\\/g, '/').trim() });
+  } },
+  { id: 'stripitemslot', key: 'stripitemslot', apply(info, value) { const s = parseInt(value, 10); if (Number.isFinite(s)) info.stripSlots.push(s); } }
 ]);

@@ -8,6 +8,23 @@ import { buildTriggerGraph, analyzeWave, isGated, navToggles, firesAny } from '.
 
 let fileSeq = 1;
 
+const STATE_VERSION = 2;
+const stateMigrations = {
+  1: () => { try { localStorage.setItem('popvis.mapmode', '3d'); } catch {} }
+};
+
+(function migratePersistedState() {
+  let v = 0;
+  try { v = parseInt(localStorage.getItem('popvis.stateVersion') || '0', 10) || 0; } catch { return; }
+  if (v >= STATE_VERSION) return;
+  while (v < STATE_VERSION) {
+    const step = stateMigrations[v];
+    if (step) { try { step(); } catch {} }
+    v++;
+  }
+  try { localStorage.setItem('popvis.stateVersion', String(STATE_VERSION)); } catch {}
+})();
+
 export const state = {
   files: [],
   activeId: null,
@@ -29,6 +46,10 @@ const TANK_PATH_TIMES = {
 export function mapKeyOf(file) {
   const m = file.name.toLowerCase().match(/^mvm_([a-z0-9]+)/);
   return m ? m[1] : null;
+}
+
+export function mapQueryName(file) {
+  return localStorage.getItem('popvis.mapfor.' + file.name.toLowerCase()) || file.name;
 }
 
 export function defaultTankTime(file) {
@@ -225,7 +246,7 @@ function loadTankPathsFor(file) {
   (async () => {
     try {
       const tfPath = await getTFPath();
-      const res = await window.popnative.tankPath(file.name, tfPath, [...starts], native.dirname(file.path));
+      const res = await window.popnative.tankPath(mapQueryName(file), tfPath, [...starts], native.dirname(file.path));
       if (file.tankPathsKey !== key || file.name !== reqName) return;
       file.tankPaths = res;
       if (res && res.results && Object.keys(res.results).length) {
@@ -277,7 +298,7 @@ export function simFor(file, wave) {
       gateStateFor: ws => {
         const g = gates.get(ws);
         if (!isGated(g)) return null;
-        return { gated: true, triggerAt: wsTriggerTime(file, wave, ws) };
+        return { gated: true, triggerAt: wsTriggerTime(file, wave, ws), parked: !!g.parked };
       }
     }));
   }

@@ -1,9 +1,10 @@
-import { readLump } from './bsp.js';
+import { readLump, brushModelDrawn, applyBrushXform, skyboxFaceMask } from './bsp.js';
 
 const SURF_SKY2D = 0x2, SURF_SKY = 0x4, SURF_WARP = 0x8, SURF_TRIGGER = 0x40, SURF_NODRAW = 0x80, SURF_HINT = 0x100, SURF_SKIP = 0x200;
 const SKIP_FLAGS = SURF_SKY2D | SURF_SKY | SURF_TRIGGER | SURF_NODRAW | SURF_HINT | SURF_SKIP;
 const LUM = (r, g, b) => r * 0.2126 + g * 0.7152 + b * 0.0722;
-const ROOF_CLEARANCE = 170;
+const ROOF_CLEARANCE = 110;
+export const LM_RANGE = 16;
 
 export function buildNavCeil(nav, points = []) {
   const areas = (nav && nav.areas) || [];
@@ -32,12 +33,28 @@ export function buildNavCeil(nav, points = []) {
   };
   for (const a of areas) stamp(a.nw[0], a.nw[1], a.se[0], a.se[1], Math.max(a.nw[2], a.se[2], a.neZ, a.swZ));
   for (const p of pts) stamp(p[0], p[1], p[0], p[1], Number.isFinite(p[2]) ? p[2] : 0);
-  return (x, y) => {
+  {
+    const queue = new Int32Array(cols * rows);
+    let head = 0, tail = 0;
+    for (let i = 0; i < z.length; i++) if (z[i] !== -Infinity) queue[tail++] = i;
+    while (head < tail) {
+      const i = queue[head++];
+      const c = i % cols, r = (i - c) / cols;
+      const zi = z[i];
+      if (c > 0 && z[i - 1] === -Infinity) { z[i - 1] = zi; queue[tail++] = i - 1; }
+      if (c + 1 < cols && z[i + 1] === -Infinity) { z[i + 1] = zi; queue[tail++] = i + 1; }
+      if (r > 0 && z[i - cols] === -Infinity) { z[i - cols] = zi; queue[tail++] = i - cols; }
+      if (r + 1 < rows && z[i + cols] === -Infinity) { z[i + cols] = zi; queue[tail++] = i + cols; }
+    }
+  }
+  const lookup = (x, y) => {
     const c = Math.floor((x - minX) / CELL), r = Math.floor((y - minY) / CELL);
     if (c < 0 || c >= cols || r < 0 || r >= rows) return null;
     const v = z[r * cols + c];
     return v === -Infinity ? null : v;
   };
+  lookup.inBounds = (x, y) => x >= minX && x <= maxX && y >= minY && y <= maxY;
+  return lookup;
 }
 
 function readVerts(buf) {
@@ -46,7 +63,192 @@ function readVerts(buf) {
   return out;
 }
 
-export function extractFaces(bspPath, cull = null) {
+function triNormal(pts) {
+  const ux = pts[1][0] - pts[0][0], uy = pts[1][1] - pts[0][1], uz = pts[1][2] - pts[0][2];
+  const vx = pts[2][0] - pts[0][0], vy = pts[2][1] - pts[0][1], vz = pts[2][2] - pts[0][2];
+  const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+  const l = Math.hypot(nx, ny, nz) || 1;
+  return [nx / l, ny / l, nz / l];
+}
+
+function packLightmaps(faces, maxDim = 4096) {
+  const items = faces.filter(f => f.lm);
+  let total = 16;
+  for (const f of items) total += (f.lm.w + 2) * (f.lm.h + 2);
+  let W = 512;
+  while (W < maxDim && total > W * W * 0.72) W <<= 1;
+  const GUT = 1;
+  items.sort((a, b) => b.lm.h - a.lm.h);
+  let x = 4, y = 0, shelfH = 4, H = 4;
+  for (const f of items) {
+    const w = f.lm.w + GUT, h = f.lm.h + GUT;
+    if (x + w > W) { x = 0; y += shelfH; shelfH = 0; }
+    if (y + h > maxDim) { f.lmPlace = null; continue; }
+    f.lmPlace = { x, y };
+    x += w;
+    if (h > shelfH) shelfH = h;
+    if (y + shelfH > H) H = y + shelfH;
+  }
+  H = Math.min(maxDim, H);
+  const rgba = new Uint8Array(W * H * 4);
+  // "white" (unlit) texel must decode to lm=1.0 under the shader's pow(s,2.2)*LM_RANGE recovery.
+  const white = Math.round(Math.pow(1 / LM_RANGE, 1 / 2.2) * 255);
+  for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) { const o = (j * W + i) * 4; rgba[o] = rgba[o + 1] = rgba[o + 2] = white; rgba[o + 3] = 255; }
+  for (const f of items) {
+    if (!f.lmPlace) continue;
+    const { w, h, bytes } = f.lm, { x: px, y: py } = f.lmPlace;
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+      const s = (j * w + i) * 4, o = ((py + j) * W + (px + i)) * 4;
+      if (o + 3 >= rgba.length) continue;
+      rgba[o] = bytes[s]; rgba[o + 1] = bytes[s + 1]; rgba[o + 2] = bytes[s + 2]; rgba[o + 3] = 255;
+    }
+  }
+  return { rgba, width: W, height: H, whiteU: 0.5 / W, whiteV: 0.5 / H };
+}
+
+export function extractWorldFaces(bspPath, opts = {}) {
+  const points = [...(opts.spawns || []).map(s => s.origin), ...(opts.tracks || []).map(t => t.origin)];
+  const ceilAt = buildNavCeil(opts.nav, points);
+  const cull = ceilAt ? (cx, cy) => !ceilAt.inBounds(cx, cy) : null;
+  const { faces, bounds } = extractFaces(bspPath, cull, { keepAll: true, lightmap: true });
+  if (!faces.length || !bounds) return null;
+
+  const atlas = packLightmaps(faces);
+
+  const groups = new Map();
+  for (const f of faces) {
+    const [tv0, tv1] = f.tv;
+    const n = f.normal || [0, 0, 1];
+    const nx = n[0], ny = n[2], nz = -n[1];
+    const lm = f.lm, place = f.lmPlace;
+    let g = groups.get(f.name);
+    if (!g) { g = { pos: [], uv: [], nrm: [], lm: [] }; groups.set(f.name, g); }
+    // Displacement lightmaps are NOT addressed by projecting a position through lightmapVecs:
+    // vrad lays the luxels out on the displacement's own (s,t) grid, spanning the whole block
+    // (s -> [0,sizeInLuxels[0]], t -> [0,sizeInLuxels[1]]). Which grid axis maps to u, and the
+    // sign of each, vary per displacement with its start-corner/edge ordering, so derive them
+    // from how the projected corner luxel coords actually move along s and t.
+    let dispMap = null;
+    if (lm && place && f.st && f.dispCorners && f.dispCorners.length === 4) {
+      const S = lm.vecs[0], T = lm.vecs[1];
+      const pr = c => [c[0] * S[0] + c[1] * S[1] + c[2] * S[2] + S[3], c[0] * T[0] + c[1] * T[1] + c[2] * T[2] + T[3]];
+      const L0 = pr(f.dispCorners[0]), L1 = pr(f.dispCorners[1]), L3 = pr(f.dispCorners[3]);
+      const lenS = Math.hypot(L3[0] - L0[0], L3[1] - L0[1]);
+      const lenT = Math.hypot(L1[0] - L0[0], L1[1] - L0[1]);
+      const su = lm.w - 1, sv = lm.h - 1;
+      // Which grid axis maps to the block's u is decided by matching each axis's LENGTH in
+      // luxel space against the block dimensions — comparing du/ds against du/dt instead
+      // measures the texinfo axes, which tells you nothing when the block is transposed.
+      const swap = (Math.abs(lenS - sv) + Math.abs(lenT - su)) < (Math.abs(lenS - su) + Math.abs(lenT - sv));
+      dispMap = { swap, su, sv };
+    }
+    // texinfo texture and lightmap axes are in the brush model's own space, so a brush entity
+    // moved by its origin/angles must be sampled at its untransformed position.
+    const local = f.lpts;
+    const emit = (p, idx) => {
+      const q = local ? local[idx] : p;
+      g.pos.push(p[0], p[2], -p[1]);
+      g.uv.push(q[0] * tv0[0] + q[1] * tv0[1] + q[2] * tv0[2] + tv0[3], q[0] * tv1[0] + q[1] * tv1[1] + q[2] * tv1[2] + tv1[3]);
+      g.nrm.push(nx, ny, nz);
+      if (lm && place) {
+        let lu, lv;
+        if (dispMap && f.st[idx]) {
+          const pu = dispMap.swap ? f.st[idx][1] : f.st[idx][0];
+          const pv = dispMap.swap ? f.st[idx][0] : f.st[idx][1];
+          lu = pu * dispMap.su;
+          lv = pv * dispMap.sv;
+        } else {
+          const S = lm.vecs[0], T = lm.vecs[1];
+          lu = q[0] * S[0] + q[1] * S[1] + q[2] * S[2] + S[3] - lm.mins[0];
+          lv = q[0] * T[0] + q[1] * T[1] + q[2] * T[2] + T[3] - lm.mins[1];
+        }
+        lu = Math.max(0, Math.min(lm.w - 1, lu));
+        lv = Math.max(0, Math.min(lm.h - 1, lv));
+        g.lm.push((place.x + lu + 0.5) / atlas.width, (place.y + lv + 0.5) / atlas.height);
+      } else {
+        g.lm.push(atlas.whiteU, atlas.whiteV);
+      }
+    };
+    for (let i = 1; i + 1 < f.pts.length; i++) { emit(f.pts[0], 0); emit(f.pts[i], i); emit(f.pts[i + 1], i + 1); }
+  }
+
+  const materials = [];
+  for (const [name, g] of groups) {
+    if (!g.pos.length) continue;
+    materials.push({
+      name,
+      positions: Float32Array.from(g.pos),
+      uvs: Float32Array.from(g.uv),
+      normals: Float32Array.from(g.nrm),
+      lm: Float32Array.from(g.lm),
+      count: g.pos.length / 3
+    });
+  }
+  // Auto-exposure, faithful to Source's CLuminanceHistogramSystem (viewpostprocess.cpp):
+  // pick the tonemap scale so the brightest mat_tonemap_percent_bright_pixels (2%) of pixels
+  // sit at mat_tonemap_percent_target (60%), with a mat_tonemap_min_avglum (3%) floor,
+  // clamped to [mat_autoexposure_min 0.5, mat_autoexposure_max 2.0]. Measured on scene
+  // luminance (albedo*lightmap); per-texel albedo isn't known at bake so a 0.25 average
+  // diffuse reflectivity stands in. Luxels are ~uniform in world space so the lightmap
+  // texel histogram approximates the screen pixel histogram; at convergence the tonemap
+  // scale is exactly 0.60 / (2%-brightest scene luminance), so this computes it directly.
+  const NB = 64, hist = new Float64Array(NB);
+  const dhist = new Float64Array(256);
+  let total = 0, sceneSum = 0, litCount = 0;
+  // Scene luminance = albedo * lightmap. Use each material's REAL average albedo (texdata
+  // reflectivity, what vrad itself uses) instead of one constant for the whole map: with a
+  // flat 0.25 stand-in, maps whose surfaces are much brighter than that (mannhattan's pale
+  // roofs) had their scene luminance underestimated, so auto-exposure ran too high and sunlit
+  // surfaces clipped to washed-out white.
+  const ALBEDO_REF = 0.25;
+  for (const f of faces) {
+    if (!f.lm) continue;
+    const albedo = f.refl ? Math.max(0.02, Math.min(1, LUM(f.refl[0], f.refl[1], f.refl[2]))) : ALBEDO_REF;
+    const b = f.lm.bytes;
+    for (let i = 0; i < b.length; i += 4) {
+      const r = Math.pow(b[i] / 255, 2.2) * LM_RANGE, g = Math.pow(b[i + 1] / 255, 2.2) * LM_RANGE, bl = Math.pow(b[i + 2] / 255, 2.2) * LM_RANGE;
+      const sl = Math.min(1, albedo * LUM(r, g, bl));
+      hist[Math.min(NB - 1, Math.floor(sl * NB))]++; total++; sceneSum += sl;
+      if (sl > 0.0005) { dhist[Math.min(255, Math.floor(Math.pow(sl, 1 / 2.2) * 255))]++; litCount++; }
+    }
+  }
+  let l2 = 1;
+  if (total) { let acc = 0; for (let k = NB - 1; k >= 0; k--) { acc += hist[k]; if (acc >= 0.02 * total) { l2 = (k + 0.5) / NB; break; } } }
+  const avgScene = total ? sceneSum / total : 0.1;
+  const target = Math.max(0.60 / Math.max(0.02, l2), 0.03 / Math.max(0.004, avgScene));
+  const exposure = Math.max(0.5, Math.min(2.0, target));
+  // Minimum-ambient level for faces vrad baked with zero light (sealed interiors/undersides
+  // that TF2 hides behind its PVS but this previewer has to draw). Magnitude = the dimmest
+  // light this map actually gives a lit surface (10th percentile of lit texels, display
+  // space, pre-exposure) so night maps floor low and daylit maps floor higher; the hue comes
+  // from the map's real light_environment _ambient. No invented constant.
+  let minLight = 0.05;
+  if (litCount) { let acc = 0; for (let k = 0; k < 256; k++) { acc += dhist[k]; if (acc >= 0.10 * litCount) { minLight = k / 255; break; } } }
+  minLight = Math.max(0.02, Math.min(0.16, minLight));
+
+  // Reference brightness of sunlit, up-facing world surfaces, in the same units the shader
+  // feeds the lightmap. Models are lit from the leaf ambient cube, which is ambient-only; the
+  // difference between this and the ambient cube is the direct sun, so this lets the sun term
+  // be calibrated from real vrad output instead of guessed.
+  const upLums = [];
+  for (const f of faces) {
+    const n = f.normal;
+    if (!f.lm || !n || n[2] < 0.9) continue;
+    const b = f.lm.bytes;
+    let sum = 0, cnt = 0;
+    for (let i = 0; i < b.length; i += 4) {
+      sum += LUM(Math.pow(b[i] / 255, 2.2) * LM_RANGE, Math.pow(b[i + 1] / 255, 2.2) * LM_RANGE, Math.pow(b[i + 2] / 255, 2.2) * LM_RANGE);
+      cnt++;
+    }
+    if (cnt) upLums.push(sum / cnt);
+  }
+  upLums.sort((a, b) => a - b);
+  const lmUpBright = upLums.length ? upLums[Math.floor(upLums.length * 0.9)] : 0;
+  return { materials, bounds, lightmap: { rgba: atlas.rgba, width: atlas.width, height: atlas.height, range: LM_RANGE }, exposure, minLight, lmUpBright };
+}
+
+export function extractFaces(bspPath, cull = null, opts = {}) {
+  const keepAll = !!opts.keepAll;
   const planesBuf = readLump(bspPath, 1);
   const vertsBuf = readLump(bspPath, 3);
   const texinfoBuf = readLump(bspPath, 6);
@@ -59,12 +261,40 @@ export function extractFaces(bspPath, cull = null) {
   const dispInfoBuf = readLump(bspPath, 26);
   const dispVertsBuf = readLump(bspPath, 33);
   const lightBuf = readLump(bspPath, 8);
+  const hdrLightBuf = readLump(bspPath, 53);
+  const lmBuf = hdrLightBuf || lightBuf;
   if (!facesBuf || !vertsBuf || !edgesBuf || !surfedgesBuf || !planesBuf || !texinfoBuf) return { faces: [], bounds: null };
 
   const verts = readVerts(vertsBuf);
   const numFaces = Math.floor(facesBuf.length / 56);
   const numTexinfo = Math.floor(texinfoBuf.length / 72);
   const numTexdata = texdataBuf ? Math.floor(texdataBuf.length / 32) : 0;
+
+  // Only draw faces the game draws: worldspawn plus the brush entities whose class does not
+  // spawn with EF_NODRAW. Without this the invisible gameplay volumes come through as solid
+  // geometry, and they are enormous -- mannhattan's two map-spanning func_nav_prerequisite
+  // brushes alone are 376M units^2, fourteen times the rest of the map put together.
+  const faceDrawn = new Uint8Array(numFaces).fill(1);
+  const faceXform = new Array(numFaces).fill(null);
+  try {
+    const { models, drawn, xform } = brushModelDrawn(bspPath);
+    if (models.length > 1) {
+      faceDrawn.fill(0);
+      for (let mi = 0; mi < models.length; mi++) {
+        if (!drawn[mi]) continue;
+        const m = models[mi];
+        const end = Math.min(numFaces, m.firstface + m.numfaces);
+        for (let f = Math.max(0, m.firstface); f < end; f++) { faceDrawn[f] = 1; faceXform[f] = xform[mi]; }
+      }
+    }
+  } catch {}
+  // The 3D skybox is a miniature the engine draws scaled and re-centred on the viewer, never as
+  // world geometry at its build location. Leaving it in put a second, distant copy of the
+  // scenery in the scene and blew up the map bounds the camera fits to.
+  try {
+    const skyMask = skyboxFaceMask(bspPath);
+    if (skyMask) for (let f = 0; f < numFaces && f < skyMask.length; f++) if (skyMask[f]) faceDrawn[f] = 0;
+  } catch {}
 
   const matName = ti => {
     if (ti < 0 || ti >= numTexinfo) return '';
@@ -83,6 +313,15 @@ export function extractFaces(bspPath, cull = null) {
     if (td < 0 || td >= numTexdata) return [128, 128, 128];
     const f = v => Math.max(14, Math.min(235, Math.round(Math.pow(Math.max(0, v), 1 / 2.2) * 255)));
     return [f(texdataBuf.readFloatLE(td * 32)), f(texdataBuf.readFloatLE(td * 32 + 4)), f(texdataBuf.readFloatLE(td * 32 + 8))];
+  };
+  // texdata reflectivity = the material's average LINEAR albedo, the same value vrad uses.
+  const matRefl = ti => {
+    if (ti < 0 || ti >= numTexinfo || !texdataBuf) return null;
+    const td = texinfoBuf.readInt32LE(ti * 72 + 68);
+    if (td < 0 || td >= numTexdata) return null;
+    const r = texdataBuf.readFloatLE(td * 32), g = texdataBuf.readFloatLE(td * 32 + 4), b = texdataBuf.readFloatLE(td * 32 + 8);
+    if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return null;
+    return [Math.max(0, r), Math.max(0, g), Math.max(0, b)];
   };
   const texVecs = ti => {
     const b = ti * 72;
@@ -109,6 +348,42 @@ export function extractFaces(bspPath, cull = null) {
     }
     return [r / count, g / count, b / count];
   };
+  // Real per-texel lightmap: decode the (w+1)x(h+1) ColorRGBExp32 sample block (style 0)
+  // straight from LUMP_LIGHTING (8), plus the luxel-space texture axes it maps to.
+  const faceLightmap = (fi, ti) => {
+    if (!lmBuf) return null;
+    const base = fi * 56;
+    if (facesBuf.readUInt8(base + 16) === 255) return null;
+    const ofs = facesBuf.readInt32LE(base + 20);
+    if (ofs < 0) return null;
+    const w = facesBuf.readInt32LE(base + 36) + 1;
+    const h = facesBuf.readInt32LE(base + 40) + 1;
+    if (w < 1 || h < 1 || w > 256 || h > 256) return null;
+    const count = w * h;
+    if (ofs + count * 4 > lmBuf.length) return null;
+    const bytes = new Uint8Array(count * 4);
+    for (let i = 0; i < count; i++) {
+      const p = ofs + i * 4;
+      const sc = Math.pow(2, lmBuf.readInt8(p + 3)) / 255;
+      for (let c = 0; c < 3; c++) {
+        // Preserve the real HDR range (radiosity can exceed 1.0) by storing lin/LM_RANGE,
+        // sRGB-encoded for precision; the shader recovers lin = pow(sample,2.2)*LM_RANGE.
+        const lin = Math.min(1, Math.max(0, lmBuf[p + c] * sc) / LM_RANGE);
+        bytes[i * 4 + c] = Math.round(Math.pow(lin, 1 / 2.2) * 255);
+      }
+      bytes[i * 4 + 3] = 255;
+    }
+    const b = ti * 72;
+    return {
+      w, h,
+      mins: [facesBuf.readInt32LE(base + 28), facesBuf.readInt32LE(base + 32)],
+      vecs: [
+        [texinfoBuf.readFloatLE(b + 32), texinfoBuf.readFloatLE(b + 36), texinfoBuf.readFloatLE(b + 40), texinfoBuf.readFloatLE(b + 44)],
+        [texinfoBuf.readFloatLE(b + 48), texinfoBuf.readFloatLE(b + 52), texinfoBuf.readFloatLE(b + 56), texinfoBuf.readFloatLE(b + 60)]
+      ],
+      bytes
+    };
+  };
 
   const faceVerts = fi => {
     const firstedge = facesBuf.readInt32LE(fi * 56 + 4);
@@ -132,6 +407,7 @@ export function extractFaces(bspPath, cull = null) {
   const grow = pts => { for (const p of pts) { bounds[0] = Math.min(bounds[0], p[0]); bounds[1] = Math.min(bounds[1], p[1]); bounds[2] = Math.max(bounds[2], p[0]); bounds[3] = Math.max(bounds[3], p[1]); } };
 
   for (let fi = 0; fi < numFaces; fi++) {
+    if (!faceDrawn[fi]) continue;
     const base = fi * 56;
     const planenum = facesBuf.readUInt16LE(base);
     const side = facesBuf.readUInt8(base + 2);
@@ -140,40 +416,70 @@ export function extractFaces(bspPath, cull = null) {
     if (ti < 0) continue;
     const flags = texinfoBuf.readInt32LE(ti * 72 + 64);
     if (flags & SKIP_FLAGS) continue;
+    // No material-name filtering here. "Does this material draw" is answered by the VMT's
+    // %compilenodraw, which vbsp turns into SURF_NODRAW and SKIP_FLAGS already catches. Names
+    // that look like compile helpers are not: tools/toolsblack is a plain LightmappedGeneric
+    // the game draws as solid black (65k faces across 231 maps) and dev/reflectivity_* are
+    // ordinary greys used as real surfaces, so skipping them punches holes in the map.
     const name = matName(ti);
-    if (name.startsWith('tools/')) continue;
     const tv = texVecs(ti);
     const col = matColor(ti);
+    const refl = matRefl(ti);
     const isWater = !!(flags & SURF_WARP);
+    // Brush-entity vertices are model space; the entity's origin/angles place them. Texture and
+    // lightmap axes are model space too, so the untransformed points stay on the face as lpts
+    // and only the world position moves.
+    const xf = faceXform[fi];
+    const toWorld = xf ? pts => pts.map(p => applyBrushXform(xf, p)) : null;
 
     if (di >= 0 && dispInfoBuf && dispVertsBuf) {
       if (dispDone.has(di)) continue;
       dispDone.add(di);
-      const quads = dispQuads(di, faceVerts(fi), dispInfoBuf, dispVertsBuf);
+      const dq = dispQuads(di, faceVerts(fi), dispInfoBuf, dispVertsBuf);
       const light = faceLight(fi);
-      for (const q of quads) {
+      const lm = opts.lightmap ? faceLightmap(fi, ti) : null;
+      for (const e of dq.quads) {
+        const q = toWorld ? toWorld(e.pts) : e.pts;
         let z = 0, cx = 0, cy = 0;
         for (const p of q) { z += p[2]; cx += p[0]; cy += p[1]; }
         z /= q.length; cx /= q.length; cy /= q.length;
         if (cull && cull(cx, cy, z)) continue;
-        faces.push({ pts: q, tv, col, name, light, water: isWater, z });
+        faces.push({ pts: q, lpts: toWorld ? e.pts : null, st: e.st, dispCorners: dq.corners, tv, col, refl, name, light, lm, water: isWater, z, normal: keepAll ? triNormal(q) : null });
         grow(q);
       }
       continue;
     }
-    let nz = planesBuf.readFloatLE(planenum * 20 + 8);
-    if (side) nz = -nz;
-    if (nz < 0.25) continue;
-    const pts = faceVerts(fi);
-    if (!pts) continue;
-    let area2 = 0;
-    for (let i = 1; i + 1 < pts.length; i++) area2 += Math.abs((pts[i][0] - pts[0][0]) * (pts[i + 1][1] - pts[0][1]) - (pts[i + 1][0] - pts[0][0]) * (pts[i][1] - pts[0][1]));
-    if (area2 < 60) continue;
+    let pnx = planesBuf.readFloatLE(planenum * 20), pny = planesBuf.readFloatLE(planenum * 20 + 4), pnz = planesBuf.readFloatLE(planenum * 20 + 8);
+    if (side) { pnx = -pnx; pny = -pny; pnz = -pnz; }
+    if (xf && xf.m) {
+      const m = xf.m;
+      const rx = pnx * m[0] + pny * m[1] + pnz * m[2];
+      const ry = pnx * m[3] + pny * m[4] + pnz * m[5];
+      const rz = pnx * m[6] + pny * m[7] + pnz * m[8];
+      pnx = rx; pny = ry; pnz = rz;
+    }
+    if (!keepAll && pnz < 0.25) continue;
+    const lpts = faceVerts(fi);
+    if (!lpts) continue;
+    const pts = toWorld ? toWorld(lpts) : lpts;
+    if (keepAll) {
+      let a3 = 0;
+      for (let i = 1; i + 1 < pts.length; i++) {
+        const ux = pts[i][0] - pts[0][0], uy = pts[i][1] - pts[0][1], uz = pts[i][2] - pts[0][2];
+        const vx = pts[i + 1][0] - pts[0][0], vy = pts[i + 1][1] - pts[0][1], vz = pts[i + 1][2] - pts[0][2];
+        a3 += Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+      }
+      if (a3 < 24) continue;
+    } else {
+      let area2 = 0;
+      for (let i = 1; i + 1 < pts.length; i++) area2 += Math.abs((pts[i][0] - pts[0][0]) * (pts[i + 1][1] - pts[0][1]) - (pts[i + 1][0] - pts[0][0]) * (pts[i][1] - pts[0][1]));
+      if (area2 < 60) continue;
+    }
     let z = 0, cx = 0, cy = 0;
     for (const p of pts) { z += p[2]; cx += p[0]; cy += p[1]; }
     z /= pts.length; cx /= pts.length; cy /= pts.length;
     if (cull && cull(cx, cy, z)) continue;
-    faces.push({ pts, tv, col, name, light: faceLight(fi), water: isWater, z });
+    faces.push({ pts, lpts: toWorld ? lpts : null, tv, col, refl, name, light: faceLight(fi), lm: opts.lightmap ? faceLightmap(fi, ti) : null, water: isWater, z, normal: keepAll ? [pnx, pny, pnz] : null });
     grow(pts);
   }
   return { faces, bounds: faces.length ? bounds : null };
@@ -194,7 +500,7 @@ function dispQuads(di, corners, dispInfoBuf, dispVertsBuf) {
     if (d < bestD) { bestD = d; bestI = i; }
   }
   const c = [corners[bestI], corners[(bestI + 1) % 4], corners[(bestI + 2) % 4], corners[(bestI + 3) % 4]];
-  const grid = [];
+  const grid = [], flat = [], st = [];
   for (let j = 0; j < n; j++) {
     const t = j / (n - 1);
     const left = [c[0][0] + (c[1][0] - c[0][0]) * t, c[0][1] + (c[1][1] - c[0][1]) * t, c[0][2] + (c[1][2] - c[0][2]) * t];
@@ -205,14 +511,40 @@ function dispQuads(di, corners, dispInfoBuf, dispVertsBuf) {
       if (vi * 20 + 20 > dispVertsBuf.length) return [];
       const vx = dispVertsBuf.readFloatLE(vi * 20), vy = dispVertsBuf.readFloatLE(vi * 20 + 4), vz = dispVertsBuf.readFloatLE(vi * 20 + 8);
       const dist = dispVertsBuf.readFloatLE(vi * 20 + 12);
-      grid.push([left[0] + (right[0] - left[0]) * s + vx * dist, left[1] + (right[1] - left[1]) * s + vy * dist, left[2] + (right[2] - left[2]) * s + vz * dist]);
+      const fx = left[0] + (right[0] - left[0]) * s, fy = left[1] + (right[1] - left[1]) * s, fz = left[2] + (right[2] - left[2]) * s;
+      grid.push([fx + vx * dist, fy + vy * dist, fz + vz * dist]);
+      flat.push([fx, fy, fz]);
+      st.push([s, t]);
     }
   }
   const quads = [];
   for (let j = 0; j + 1 < n; j++) for (let i = 0; i + 1 < n; i++) {
-    quads.push([grid[j * n + i], grid[j * n + i + 1], grid[(j + 1) * n + i + 1], grid[(j + 1) * n + i]]);
+    const a = j * n + i, b = j * n + i + 1, c2 = (j + 1) * n + i + 1, d = (j + 1) * n + i;
+    quads.push({ pts: [grid[a], grid[b], grid[c2], grid[d]], st: [st[a], st[b], st[c2], st[d]] });
   }
-  return quads;
+  return { quads, corners: c };
+}
+
+function withMips(tex) {
+  const mips = [{ rgba: tex.rgba, width: tex.width, height: tex.height }];
+  let cur = mips[0];
+  while (cur.width > 32 && cur.height > 32) {
+    const w = cur.width >> 1, h = cur.height >> 1;
+    const rgba = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const s0 = ((y * 2) * cur.width + x * 2) * 4;
+        const s1 = s0 + 4;
+        const s2 = s0 + cur.width * 4;
+        const s3 = s2 + 4;
+        const d = (y * w + x) * 4;
+        for (let c = 0; c < 4; c++) rgba[d + c] = (cur.rgba[s0 + c] + cur.rgba[s1 + c] + cur.rgba[s2 + c] + cur.rgba[s3 + c]) / 4;
+      }
+    }
+    cur = { rgba, width: w, height: h };
+    mips.push(cur);
+  }
+  return { mips };
 }
 
 function faceShade(face, white) {
@@ -229,7 +561,8 @@ export async function bakeTopDown(bspPath, loadTexture, opts = {}) {
   const points = [...(opts.spawns || []).map(s => s.origin), ...(opts.tracks || []).map(t => t.origin)];
   const ceilAt = buildNavCeil(opts.nav, points);
   const clearance = Number.isFinite(opts.roofClearance) ? opts.roofClearance : ROOF_CLEARANCE;
-  const cull = ceilAt ? (cx, cy, z) => { const c = ceilAt(cx, cy); return c !== null && z > c + clearance; } : null;
+  const cull = ceilAt ? (cx, cy) => !ceilAt.inBounds(cx, cy) : null;
+  const roof = ceilAt ? { at: ceilAt, clearance } : null;
   const { faces, bounds } = extractFaces(bspPath, cull);
   if (!faces.length || !bounds) return null;
 
@@ -243,7 +576,7 @@ export async function bakeTopDown(bspPath, loadTexture, opts = {}) {
     if (texCache.has(f.name)) continue;
     let tex = null;
     try { tex = await loadTexture(f.name); } catch {}
-    texCache.set(f.name, tex && tex.rgba && tex.width && tex.height ? tex : null);
+    texCache.set(f.name, tex && tex.rgba && tex.width && tex.height ? withMips(tex) : null);
   }
 
   const W = bounds[2] - bounds[0], H = bounds[3] - bounds[1];
@@ -252,14 +585,89 @@ export async function bakeTopDown(bspPath, loadTexture, opts = {}) {
   const scale = Math.min(maxDim / W, maxDim / H, 1.4);
   const outW = Math.max(64, Math.round(W * scale)), outH = Math.max(64, Math.round(H * scale));
   const img = new Uint8ClampedArray(outW * outH * 4);
+  const heightBuf = new Float32Array(outW * outH).fill(NaN);
 
   faces.sort((a, b) => a.z - b.z);
-  for (const f of faces) rasterFace(img, outW, outH, bounds, scale, f, texCache.get(f.name), faceShade(f, white));
+  for (const f of faces) rasterFace(img, heightBuf, outW, outH, bounds, scale, f, texCache.get(f.name), faceShade(f, white), roof);
 
-  return { width: outW, height: outH, bounds, rgba: img, scale };
+  if (opts.relief !== false) applyRelief(img, heightBuf, outW, outH, scale);
+
+  const heightGrid = opts.heightGrid === false ? null : downsampleHeights(heightBuf, outW, outH);
+
+  return { width: outW, height: outH, bounds, rgba: img, scale, heightGrid };
 }
 
-function rasterFace(img, W, H, bounds, scale, face, tex, shade) {
+function downsampleHeights(h, W, H, cellPx = 7) {
+  const gw = Math.max(2, Math.ceil(W / cellPx));
+  const gh = Math.max(2, Math.ceil(H / cellPx));
+  const grid = new Float32Array(gw * gh).fill(NaN);
+  let zMin = Infinity, zMax = -Infinity;
+  for (let gy = 0; gy < gh; gy++) {
+    for (let gx = 0; gx < gw; gx++) {
+      let sum = 0, cnt = 0, tot = 0;
+      const x0 = gx * cellPx, y0 = gy * cellPx;
+      for (let y = y0; y < Math.min(H, y0 + cellPx); y++) {
+        for (let x = x0; x < Math.min(W, x0 + cellPx); x++) {
+          tot++;
+          const v = h[y * W + x];
+          if (v === v) { sum += v; cnt++; }
+        }
+      }
+      if (cnt > 0 && cnt >= tot * 0.25) {
+        const z = sum / cnt;
+        grid[gy * gw + gx] = z;
+        if (z < zMin) zMin = z;
+        if (z > zMax) zMax = z;
+      }
+    }
+  }
+  if (!Number.isFinite(zMin)) { zMin = 0; zMax = 0; }
+  return { grid, gw, gh, cellPx, zMin, zMax };
+}
+
+function applyRelief(img, h, W, H, scale) {
+  let n = 0, sum = 0, sumSq = 0;
+  for (let i = 0; i < h.length; i++) { const v = h[i]; if (v === v) { n++; sum += v; sumSq += v * v; } }
+  if (n < 16) return;
+  const mean = sum / n;
+  const std = Math.sqrt(Math.max(1, sumSq / n - mean * mean));
+  const lo = mean - 1.6 * std;
+  const span = Math.max(1, 3.2 * std);
+
+  let lx = -0.62, ly = -0.5, lz = 1;
+  const ll = Math.hypot(lx, ly, lz); lx /= ll; ly /= ll; lz /= ll;
+  const GRAD_CLAMP = 48;
+  const STRENGTH = 0.09;
+  const AMBIENT = 0.7;
+  const GAIN = 2;
+  const TINT = 0.15;
+  const clamp = (g) => g > GRAD_CLAMP ? GRAD_CLAMP : g < -GRAD_CLAMP ? -GRAD_CLAMP : g;
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 1; x < W - 1; x++) {
+      const i = y * W + x;
+      const c = h[i];
+      if (c !== c) continue;
+      const hl = h[i - 1], hr = h[i + 1], hu = h[i - W], hd = h[i + W];
+      const gx = clamp((hr === hr ? hr : c) - (hl === hl ? hl : c));
+      const gy = clamp((hd === hd ? hd : c) - (hu === hu ? hu : c));
+      let nx = -gx * STRENGTH, ny = -gy * STRENGTH, nz = 1;
+      const nl = Math.hypot(nx, ny, nz);
+      const d = (nx * lx + ny * ly + nz * lz) / nl;
+      let f = AMBIENT + (1 - AMBIENT) * Math.max(0, d) * GAIN;
+      const norm = Math.max(0, Math.min(1, (c - lo) / span));
+      f *= (1 - TINT) + 2 * TINT * norm;
+      const drop = Math.max((hl === hl ? hl : c) - c, (hu === hu ? hu : c) - c, (hr === hr ? hr : c) - c, (hd === hd ? hd : c) - c);
+      if (drop > 8) f *= Math.max(0.5, 1 - Math.min(1, drop / 180) * 0.45);
+      if (f < 0.4) f = 0.4; else if (f > 1.5) f = 1.5;
+      const o = i * 4;
+      img[o] = img[o] * f;
+      img[o + 1] = img[o + 1] * f;
+      img[o + 2] = img[o + 2] * f;
+    }
+  }
+}
+
+function rasterFace(img, hbuf, W, H, bounds, scale, face, tex, shade, roof) {
   const [tv0, tv1] = face.tv;
   const vp = face.pts.map(p => {
     const sx = (p[0] - bounds[0]) * scale;
@@ -268,10 +676,10 @@ function rasterFace(img, W, H, bounds, scale, face, tex, shade) {
     const v = p[0] * tv1[0] + p[1] * tv1[1] + p[2] * tv1[2] + tv1[3];
     return { sx, sy, u, v };
   });
-  for (let i = 1; i + 1 < vp.length; i++) rasterTri(img, W, H, vp[0], vp[i], vp[i + 1], face, tex, shade);
+  for (let i = 1; i + 1 < vp.length; i++) rasterTri(img, hbuf, W, H, vp[0], vp[i], vp[i + 1], face, tex, shade, bounds, scale, roof);
 }
 
-function rasterTri(img, W, H, a, b, c, face, tex, shade) {
+function rasterTri(img, hbuf, W, H, a, b, c, face, tex, shade, bounds, scale, roof) {
   const minX = Math.max(0, Math.floor(Math.min(a.sx, b.sx, c.sx)));
   const maxX = Math.min(W - 1, Math.ceil(Math.max(a.sx, b.sx, c.sx)));
   const minY = Math.max(0, Math.floor(Math.min(a.sy, b.sy, c.sy)));
@@ -282,8 +690,16 @@ function rasterTri(img, W, H, a, b, c, face, tex, shade) {
   const inv = 1 / area;
   const [tr, tg, tb] = face.col;
   const sm = shade.m, st = shade.tint;
-  const hasTex = !!tex;
-  const tw = hasTex ? tex.width : 0, th = hasTex ? tex.height : 0, tpx = hasTex ? tex.rgba : null;
+  let hasTex = !!tex;
+  let tw = 0, th = 0, tpx = null, mipDiv = 1;
+  if (hasTex) {
+    const [tv0, tv1] = face.tv;
+    const texPerWorld = Math.max(Math.hypot(tv0[0], tv0[1], tv0[2]), Math.hypot(tv1[0], tv1[1], tv1[2]));
+    const texPerPx = texPerWorld / scale;
+    const level = Math.min(tex.mips.length - 1, Math.max(0, Math.floor(Math.log2(Math.max(1, texPerPx)))));
+    const m = tex.mips[level];
+    tw = m.width; th = m.height; tpx = m.rgba; mipDiv = 1 << level;
+  }
 
   for (let y = minY; y <= maxY; y++) {
     const py = y + 0.5;
@@ -293,10 +709,14 @@ function rasterTri(img, W, H, a, b, c, face, tex, shade) {
       const w1 = ((c.sx - px) * (a.sy - py) - (c.sy - py) * (a.sx - px)) * inv;
       const w2 = 1 - w0 - w1;
       if (w0 < -0.001 || w1 < -0.001 || w2 < -0.001) continue;
+      if (roof) {
+        const cz = roof.at(bounds[0] + px / scale, bounds[3] - py / scale);
+        if (cz !== null && face.z > cz + roof.clearance) continue;
+      }
       let r, g, bl;
       if (hasTex) {
-        const u = a.u * w0 + b.u * w1 + c.u * w2;
-        const v = a.v * w0 + b.v * w1 + c.v * w2;
+        const u = (a.u * w0 + b.u * w1 + c.u * w2) / mipDiv;
+        const v = (a.v * w0 + b.v * w1 + c.v * w2) / mipDiv;
         let tx = Math.floor(u) % tw; if (tx < 0) tx += tw;
         let ty = Math.floor(v) % th; if (ty < 0) ty += th;
         const tp = (ty * tw + tx) * 4;
@@ -308,6 +728,7 @@ function rasterTri(img, W, H, a, b, c, face, tex, shade) {
       img[o + 1] = g * sm * st[1];
       img[o + 2] = bl * sm * st[2];
       img[o + 3] = 255;
+      hbuf[y * W + x] = face.z;
     }
   }
 }

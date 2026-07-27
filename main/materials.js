@@ -7,6 +7,7 @@ import { pakEntries, readPakEntry } from '../shared/bsp.js';
 import { detectTFPath } from './tfpath.js';
 
 const matVpkIndexes = new Map();
+const pakCache = new Map();
 
 function pakIndexFor(bspPath) {
   const index = new Map();
@@ -16,6 +17,15 @@ function pakIndexFor(bspPath) {
     }
   } catch {}
   return index;
+}
+
+function pakFor(bspPath) {
+  if (!bspPath) return null;
+  const key = String(bspPath);
+  if (pakCache.has(key)) return pakCache.get(key);
+  const pak = { path: key, index: pakIndexFor(key) };
+  pakCache.set(key, pak);
+  return pak;
 }
 
 function matVpkIndex(vpkPath, ext) {
@@ -107,51 +117,20 @@ export function makeMaterialLoader(tfPath, bspPath) {
 }
 
 export function register() {
-  ipcMain.handle('mat:read', async (e, relPath, tfPathOverride) => {
+  ipcMain.handle('mat:read', async (e, relPath, tfPathOverride, bspPath) => {
     const tfPath = tfPathOverride || await detectTFPath();
+    if (!tfPath) return null;
     const rel = String(relPath).replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
     if (rel.includes('..')) return null;
-    const ext = rel.split('.').pop();
-    if (tfPath) {
-      for (const root of [path.join(tfPath, 'download'), tfPath]) {
-        try { return await fs.readFile(path.join(root, rel)); } catch {}
-      }
-      try {
-        const customs = await fs.readdir(path.join(tfPath, 'custom'), { withFileTypes: true });
-        for (const c of customs) {
-          if (!c.isDirectory()) continue;
-          try { return await fs.readFile(path.join(tfPath, 'custom', c.name, rel)); } catch {}
-        }
-      } catch {}
-      for (const vpkName of ext === 'vtf' ? ['tf2_textures_dir.vpk', 'tf2_misc_dir.vpk'] : ['tf2_misc_dir.vpk']) {
-        const vpk = path.join(tfPath, vpkName);
-        const entry = matVpkIndex(vpk, ext).get(rel);
-        if (entry) {
-          try { return readVPKEntry(vpk, entry); } catch {}
-        }
-      }
-    }
-    return null;
+    return await readMaterialFile(rel, tfPath, pakFor(bspPath));
   });
 
-  ipcMain.handle('mat:texture', async (e, relPath, tfPathOverride) => {
-    const rel = String(relPath).replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
+  ipcMain.handle('mat:texture', async (e, relPath, tfPathOverride, bspPath) => {
     const tfPath = tfPathOverride || await detectTFPath();
-    let buf = null;
-    if (tfPath) {
-      for (const root of [path.join(tfPath, 'download'), tfPath]) {
-        try { buf = await fs.readFile(path.join(root, rel)); break; } catch {}
-      }
-      if (!buf) {
-        for (const vpkName of ['tf2_textures_dir.vpk', 'tf2_misc_dir.vpk']) {
-          const vpk = path.join(tfPath, vpkName);
-          const entry = matVpkIndex(vpk, 'vtf').get(rel);
-          if (entry) {
-            try { buf = readVPKEntry(vpk, entry); break; } catch {}
-          }
-        }
-      }
-    }
+    if (!tfPath) return null;
+    const rel = String(relPath).replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
+    if (rel.includes('..')) return null;
+    const buf = await readMaterialFile(rel, tfPath, pakFor(bspPath));
     if (!buf) return null;
     try {
       const { width, height, rgba } = decodeVTF(buf);

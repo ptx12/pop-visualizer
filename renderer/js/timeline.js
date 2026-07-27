@@ -617,7 +617,7 @@ function buildRow(container, file, wave, waveIndex, ws, sim, pps, index, isColla
   row.append(gutter, track);
   const mainEl = track.querySelector('.bar, .logic-marker');
   if (mainEl) attachHoverDim(mainEl, row, ws, wave, sim);
-  attachArrowHover(row, container, ws.node.id);
+  attachArrowHover([gutter, mainEl], container, ws.node.id);
   row.addEventListener('mousedown', e => {
     if (e.button !== 0) return;
     if (!file.multi) file.multi = new Set();
@@ -679,15 +679,20 @@ function attachHoverDim(barEl, row, ws, wave, sim) {
   });
 }
 
-function attachArrowHover(row, container, wsId) {
-  row.addEventListener('mouseenter', () => {
+function attachArrowHover(els, container, wsId) {
+  const on = () => {
     container.querySelectorAll('.dep-arrow, .dep-dot').forEach(p => {
       if (p.dataset.src === String(wsId) || p.dataset.dst === String(wsId)) p.classList.add('hov');
     });
-  });
-  row.addEventListener('mouseleave', () => {
+  };
+  const off = () => {
     container.querySelectorAll('.dep-arrow.hov, .dep-dot.hov').forEach(p => p.classList.remove('hov'));
-  });
+  };
+  for (const e of els) {
+    if (!e) continue;
+    e.addEventListener('mouseenter', on);
+    e.addEventListener('mouseleave', off);
+  }
 }
 
 function selectWS(file, ws) {

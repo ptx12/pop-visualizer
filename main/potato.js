@@ -9,21 +9,26 @@ import { flushMapCaches, sharedPrefixLen } from './maps.js';
 
 const POTATO_BASE = 'https://testing.potato.tf/tf/';
 
-export function httpGet(url, maxBytes = 512 * 1024 * 1024, redirects = 3) {
+export function httpGet(url, maxBytes = 512 * 1024 * 1024, redirects = 3, onProgress = null) {
   return new Promise((resolve, reject) => {
     const req = httpsRequest(url, res => {
       if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location && redirects > 0) {
         res.resume();
-        resolve(httpGet(new URL(res.headers.location, url).href, maxBytes, redirects - 1));
+        resolve(httpGet(new URL(res.headers.location, url).href, maxBytes, redirects - 1, onProgress));
         return;
       }
       if (res.statusCode !== 200) { res.resume(); resolve(null); return; }
+      const total = Number(res.headers['content-length']) || 0;
       const chunks = [];
-      let n = 0;
+      let n = 0, lastEmit = 0;
       res.on('data', c => {
         n += c.length;
         if (n > maxBytes) { req.destroy(new Error('too large')); return; }
         chunks.push(c);
+        if (onProgress && (n - lastEmit > 262144 || (total && n >= total))) {
+          lastEmit = n;
+          onProgress(n, total);
+        }
       });
       res.on('end', () => resolve(Buffer.concat(chunks)));
     });
@@ -55,8 +60,8 @@ export function potatoUrl(rel) {
   return POTATO_BASE + clean.split('/').map(encodeURIComponent).join('/').replace(/%2F/g, '/');
 }
 
-function dlProgress(label) {
-  sendCmd({ type: 'dlprog', label });
+function dlProgress(label, done, total) {
+  sendCmd({ type: 'dlprog', label, done, total });
 }
 
 async function saveUnder(tfPath, rel, buf) {
@@ -76,9 +81,10 @@ async function fetchToDownload(tfPath, rel, results, optional = false) {
       return await fs.readFile(path.join(root, clean));
     } catch {}
   }
-  dlProgress('Downloading ' + clean);
+  const dlLabel = 'Downloading ' + clean;
+  dlProgress(dlLabel);
   let buf = null;
-  try { buf = await httpGet(potatoUrl(clean)); } catch {}
+  try { buf = await httpGet(potatoUrl(clean), 512 * 1024 * 1024, 3, (done, total) => dlProgress(dlLabel, done, total)); } catch {}
   if (!buf) {
     if (!optional) results.push({ path: clean, status: 'missing' });
     return null;
@@ -205,9 +211,10 @@ export function register() {
     const name = String(mapName).toLowerCase().replace(/\.bsp$/, '');
     const src = String(sourceName).toLowerCase().replace(/\.nav$/, '');
     if (!/^[a-z0-9_\-.]+$/.test(name) || !/^[a-z0-9_\-.]+$/.test(src)) return { error: 'bad map name' };
-    dlProgress('Downloading ' + src + '.nav');
+    const navLabel = 'Downloading ' + src + '.nav';
+    dlProgress(navLabel);
     let buf = null;
-    try { buf = await httpGet(potatoUrl('maps/' + src + '.nav')); } catch {}
+    try { buf = await httpGet(potatoUrl('maps/' + src + '.nav'), 512 * 1024 * 1024, 3, (done, total) => dlProgress(navLabel, done, total)); } catch {}
     dlProgress('');
     if (!buf) return { error: src + '.nav is not on the index' };
     const dest = await saveUnder(tfPath, 'maps/' + name + '.nav', buf);

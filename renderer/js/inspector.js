@@ -203,7 +203,7 @@ function waveAnalysis(file, waveIndex) {
         emit('timeline');
       }, { min: 0, step: 1, placeholder: 'never' });
       input.classList.add('sm');
-      wrap.append(el('div', { class: 'wa-gaterow', title: by.length ? 'Re-enabled by: ' + by.join(', ') : 'No re-enable found in the popfile' },
+      wrap.append(el('div', { class: 'wa-gaterow', title: g.parked ? g.pausedBy + ' — parked until you set a trigger time' : (by.length ? 'Re-enabled by: ' + by.join(', ') : 'No re-enable found in the popfile') },
         el('span', { class: 'wa-gate-name', text: ws.name || '(unnamed)' }),
         input));
     }

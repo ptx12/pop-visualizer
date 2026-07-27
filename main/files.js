@@ -1,4 +1,4 @@
-import { app, ipcMain, dialog } from 'electron';
+import { app, ipcMain, dialog, shell } from 'electron';
 import fs from 'node:fs/promises';
 import { watch as fsWatch } from 'node:fs';
 import path from 'node:path';
@@ -52,6 +52,12 @@ export function register() {
     return true;
   });
 
+  ipcMain.handle('file:reveal', (e, p) => {
+    const target = path.normalize(String(p));
+    if (!target || target.includes('\0')) return false;
+    shell.showItemInFolder(target);
+    return true;
+  });
   ipcMain.handle('file:exists', async (e, p) => {
     try { await fs.access(p); return true; } catch { return false; }
   });

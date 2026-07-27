@@ -8,12 +8,15 @@ import * as icons from './main/icons.js';
 import * as materials from './main/materials.js';
 import * as maps from './main/maps.js';
 import * as models from './main/models.js';
+import * as items from './main/items.js';
+import * as particlesMod from './main/particles.js';
 import * as potato from './main/potato.js';
 import * as dock from './main/dock.js';
 
 app.setPath('userData', path.join(app.getPath('appData'), 'popfile-visualizer'));
 
-for (const mod of [tfpath, files, icons, materials, maps, models, potato, dock]) mod.register();
+for (const mod of [tfpath, files, icons, materials, maps, models, items, potato, dock]) mod.register();
+particlesMod.register();
 
 let closeConfirmed = false;
 let closeAckTimer = null;

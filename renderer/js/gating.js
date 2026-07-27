@@ -1,6 +1,7 @@
 import { findAll, getValue } from './kv.js';
 
 const ESC = String.fromCharCode(27);
+export const PARK_WAIT = 3600;
 const PAUSE_INPUTS = new Set(['$pausewavespawn']);
 const RESUME_INPUTS = new Set(['$resumewavespawn']);
 const STOP_INPUTS = new Set(['$killwavespawn', '$finishwavespawn']);
@@ -233,6 +234,11 @@ export function analyzeWave(wave, tg) {
         if (wildcardMatch(pat, w)) { g.enabledAtStart = true; break; }
       }
       if (g.whereDisabled) break;
+    }
+    if (Math.max(0, ws.waitBeforeStarting || 0) >= PARK_WAIT) {
+      g.paused = true;
+      g.parked = true;
+      if (!g.pausedBy) g.pausedBy = 'WaitBeforeStarting ' + ws.waitBeforeStarting;
     }
   }
   return result;

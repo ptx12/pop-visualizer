@@ -1,10 +1,10 @@
 import { initNavWasm } from './navwasm.js';
-import { el, clear, toast, isModalOpen, closeMenu, modal, closeModal, closePopover } from './ui.js';
+import { el, clear, toast, isModalOpen, closeMenu, modal, closeModal, closePopover, contextMenu } from './ui.js';
 import { state, activeFile, activateFile, onChange, emit, openFile, closeFile, undo, redo, saveFile, beginEdit, commitEdit, reloadFromDisk, refreshBases, newFile, blockProfileWrites } from './state.js';
 import { renderSidebar } from './sidebar.js';
 import { renderTimeline, applySelectionClasses, duplicateWS, deleteWS, pasteWS, zoomBy, fitWave, addWaveSpawn } from './timeline.js';
 import { renderInspector } from './inspector.js';
-import { renderMapView, presetMapTime, renderMapInspector } from './mapview.js';
+import { renderMapView, presetMapTime, presetMapLog, presetMapSelect, presetMapMode, mapTransport, renderMapInspector } from './mapview.js';
 import { exportWavePng } from './exportpng.js';
 import { icon } from './svgicon.js';
 import { loadTFFonts } from './tffont.js';
@@ -13,6 +13,10 @@ import { renderModelBrowser } from './modelbrowser.js';
 import { renderOverview, renderMissions, renderTemplates, renderSettings, renderWelcome, renderRelays, renderDiff, openViaDialog, showVanillaBrowser } from './views.js';
 import { native } from './native.js';
 import { setValue, removeNode, serialize, parse } from './kv.js';
+import { initProblems, toggleProblems } from './problems.js';
+import { initStatusBar } from './statusbar.js';
+import { report, diagnosticsText } from './diagnostics.js';
+import { initTasks, handleDlProg } from './tasks.js';
 
 const $ = id => document.getElementById(id);
 
@@ -43,6 +47,18 @@ function renderTabs() {
         if (e.button !== 1) return;
         e.preventDefault();
         requestClose(f);
+      },
+      oncontextmenu: e => {
+        e.preventDefault();
+        contextMenu(e.clientX, e.clientY, [
+          { label: 'Copy file path', action: async () => {
+            try { await navigator.clipboard.writeText(f.path); toast('Path copied'); }
+            catch { toast('Clipboard unavailable', 'error'); }
+          } },
+          { label: 'Open containing folder', disabled: !native.isElectron || !!f.virtual, action: () => window.popnative.reveal(f.path) },
+          '-',
+          { label: 'Close', action: () => requestClose(f) }
+        ]);
       }
     },
       el('span', { class: 'tab-name', text: f.name }),
@@ -313,6 +329,11 @@ function helpModal() {
     el('div', { class: 'help-title', text: title }),
     ...lines.map(l => el('div', { class: 'help-line', text: l })));
   modal('Help', el('div', { class: 'help-body' },
+    sec('General', [
+      'Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+Z / Ctrl+Y undo, redo.',
+      'Ctrl+F filter wavespawns. Ctrl+K command palette. Ctrl+Shift+M problems panel.',
+      'Right-click a tab: copy its path or open the containing folder.'
+    ]),
     sec('Timeline', [
       'Drag a bar: WaitBeforeStarting. Snaps to other bars (Shift = no snap, Alt = 0.1s steps).',
       'Drag the right edge: WaitBetweenSpawns.',
@@ -329,7 +350,9 @@ function helpModal() {
       'Bot movement follows the TF2 bot AI (fetch, carry, escort, squads, spy teleports, engineer nests).',
       'Zones: defender damage bands. High DPS at the front line and the hatch, lower in between.',
       'DPS: combined defender damage per second. Bots and tanks die from zone damage against their HP.',
-      'Wheel: zoom. Drag: pan. Hover a robot for details.'
+      'Wheel: zoom. Drag: pan. Hover a robot for details. Click a robot to select it and open its card.',
+      'Playback: Space play/pause, ← → step a tick, [ ] jump to the previous/next event, Home restart.',
+      'F follows the selected robot with the camera; Esc deselects. Log lists every spawn, death and delivery.'
     ]),
     sec('Models', [
       'Models (toolbar) browses local folders or the potato.tf index.',
@@ -386,6 +409,11 @@ function buildCommands(file) {
     }
     cmds.push({ label: 'Toggle compact rows', hint: 'view', run: () => { localStorage.setItem('popvis.compact', localStorage.getItem('popvis.compact') === '1' ? '0' : '1'); emit('timeline'); } });
   }
+  cmds.push({ label: 'Toggle Problems panel', hint: 'view', run: () => toggleProblems() });
+  cmds.push({ label: 'Copy diagnostics report', hint: 'debug', run: async () => {
+    try { await navigator.clipboard.writeText(diagnosticsText()); toast('Diagnostics report copied'); }
+    catch { toast('Clipboard unavailable', 'error'); }
+  } });
   cmds.push({ label: 'Help', hint: 'shortcuts', run: () => helpModal() });
   return cmds;
 }
@@ -441,6 +469,10 @@ function openCommandPalette() {
 }
 
 $('btn-help').addEventListener('click', helpModal);
+$('btn-problems').addEventListener('click', toggleProblems);
+initProblems();
+initStatusBar();
+initTasks();
 $('btn-models').addEventListener('click', () => {
   state.view = state.view.mode === 'models' ? { mode: 'overview', wave: 0 } : { mode: 'models', wave: 0 };
   emit();
@@ -491,6 +523,7 @@ async function doSave(file, as) {
     toast('Saved ' + file.name, 'ok');
     return true;
   } catch (e) {
+    report({ operation: 'save', severity: 'error', document: file.path, error: e });
     toast('Save failed: ' + e.message, 'error');
     return false;
   }
@@ -528,8 +561,21 @@ addEventListener('keydown', e => {
   if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey)) && !textTyping) { e.preventDefault(); redo(file); return; }
   if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); searchBox.focus(); searchBox.select(); return; }
   if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); openCommandPalette(); return; }
+  if (mod && e.shiftKey && e.key.toLowerCase() === 'm') { e.preventDefault(); toggleProblems(); return; }
   if (typing) return;
   if (!file) return;
+
+  if (state.view.mode === 'map' && !mod) {
+    const idx = state.view.wave;
+    if (e.key === ' ' && tag !== 'BUTTON') { e.preventDefault(); mapTransport(file, idx, 'toggle'); return; }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); mapTransport(file, idx, 'step-back'); return; }
+    if (e.key === 'ArrowRight') { e.preventDefault(); mapTransport(file, idx, 'step-fwd'); return; }
+    if (e.key === '[') { e.preventDefault(); mapTransport(file, idx, 'prev-event'); return; }
+    if (e.key === ']') { e.preventDefault(); mapTransport(file, idx, 'next-event'); return; }
+    if (e.key === 'Home') { e.preventDefault(); mapTransport(file, idx, 'restart'); return; }
+    if (e.key.toLowerCase() === 'f') { e.preventDefault(); mapTransport(file, idx, 'follow'); return; }
+    if (e.key === 'Escape' && mapTransport(file, idx, 'deselect')) return;
+  }
 
   if (mod && e.key.toLowerCase() === 'v' && state.view.mode === 'wave') {
     const wave = file.model.waves[state.view.wave];
@@ -746,8 +792,13 @@ native.onCommand(async cmd => {
       if (cmd.view) state.view = { mode: cmd.view, wave: cmd.wave ?? 0 };
       else if (cmd.wave !== null && cmd.wave !== undefined) state.view = { mode: 'wave', wave: cmd.wave };
       if (cmd.time !== null && cmd.time !== undefined && opened) presetMapTime(opened, cmd.wave ?? 0, cmd.time);
+      if (cmd.maplog && opened) presetMapLog(opened, cmd.wave ?? 0);
+      if (cmd.mapselect && opened) presetMapSelect(opened, cmd.wave ?? 0);
+      if (cmd.mapmode && opened) presetMapMode(opened, cmd.wave ?? 0, cmd.mapmode);
+      if (cmd.problems) state.showLint = true;
       emit();
     } catch (e) {
+      report({ operation: 'open', severity: 'error', document: cmd.path, error: e });
       toast('Open failed: ' + e.message, 'error');
     }
     return;
@@ -854,6 +905,7 @@ native.onCommand(async cmd => {
     return;
   }
   if (cmd.type === 'dlprog') {
+    handleDlProg(cmd);
     dispatchEvent(new CustomEvent('popvis-dlprog', { detail: cmd.label }));
     return;
   }

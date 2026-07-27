@@ -140,7 +140,8 @@ export function resolveBot(node, templates, stack = []) {
     addConds: [], changeAttributes: [], blocks: {},
     suppressFetch: false, neutral: false,
     action: null,
-    cls: null, clsRaw: null, name: null, health: null, scale: null, skill: null,
+    cls: null, clsRaw: null, name: null, health: null, scale: null, skill: null, model: null,
+    useHumanModel: false, useBusterModel: false, customWeapons: [], stripSlots: [],
     icon: null, attrs: [], items: [], tags: [], restriction: null, templateChain: [],
     missingTemplates: [], moveSpeedMult: 1, chargeTimeMult: 1, chargeRechargeMult: 1,
     interrupts: [], actions: [], node

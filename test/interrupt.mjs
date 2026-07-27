@@ -283,6 +283,16 @@ function peakAlive(res) {
   return peak;
 }
 
+const floodR = floodSim.results.get(floodWave.wavespawns[0]);
+const floodCad = floodWave.wavespawns[0].waitBetweenSpawns;
+const tickGaps = floodR.tickTimes.slice(1).map((t, i) => t - floodR.tickTimes[i]);
+check('declared tick cadence stays constant under robot-limit throttling',
+  floodR.tickTimes.length === 6 && tickGaps.every(g => Math.abs(g - floodCad) < 1e-9),
+  'gaps ' + tickGaps.map(g => g.toFixed(2)).join(','));
+check('the declared bar end matches first tick plus (n-1) cadences',
+  Math.abs(floodR.barEnd - (floodR.tickTimes[0] + 5 * floodCad)) < 1e-9,
+  'barEnd ' + floodR.barEnd);
+
 const limit = mm.robotLimit || 22;
 const spawned = flood.actors.filter(a => a.sampleStart != null).length;
 const peak = peakAlive(flood);
@@ -291,6 +301,114 @@ check('the AI sim never exceeds the robot limit', peak <= limit, `peak ${peak} v
 check('every robot still spawns eventually', spawned === 60, String(spawned));
 check('the case would breach the limit without the cap',
   peakAlive(uncapped) > limit, `uncapped peak ${peakAlive(uncapped)}`);
+
+const flagMap = { ...mapData, flags: [AT(0)], capzones: [AT(N - 1)] };
+const POP_SCRIPTED = `WaveSchedule
+{
+	Wave
+	{
+		WaveSpawn
+		{
+			Name	boss
+			TotalCount	1
+			MaxActive	1
+			SpawnCount	1
+			Where	spawnbot
+			TotalCurrency	100
+			TFBot
+			{
+				Class	Soldier
+				InterruptAction
+				{
+					Target	"500 150 16"
+					Duration	9999
+					Delay	0.01
+					Repeats	1
+				}
+			}
+		}
+		WaveSpawn
+		{
+			Name	horde
+			TotalCount	3
+			MaxActive	3
+			SpawnCount	3
+			Where	spawnbot
+			WaitBeforeStarting	3
+			TotalCurrency	100
+			TFBot { Class Heavyweapons }
+		}
+	}
+}`;
+const mScr = modelFor(POP_SCRIPTED);
+const scrWave = mScr.waves[0];
+const scripted = simulateBotAI(scrWave, simulateWave(scrWave, { robotLimit: mScr.robotLimit }), flagMap, { deathModel: 'hatch' });
+const boss = scripted.actors.find(a => a.kind === 'bot' && a.bot.interrupts.length);
+const bossHeld = boss && (() => { let n = 0; for (let i = 0; i + 1 < boss.track.length; i += 2) if (Math.hypot(boss.track[i] - 500, boss.track[i + 1] - 150) < 80) n++; return n > boss.track.length / 4; })();
+check('the scripted boss really is held at its podium', bossHeld, 'boss not held — scenario invalid');
+check('a permanently-interrupted bot does not hijack the bomb — the horde still delivers',
+  scripted.bomb.deliveredAt !== null, 'bomb never delivered (scripted bot pinned it)');
+
+const POP_PARKED = `WaveSchedule
+{
+	Wave
+	{
+		WaveSpawn
+		{
+			Name	main
+			TotalCount	4
+			MaxActive	4
+			SpawnCount	2
+			Where	spawnbot
+			TotalCurrency	100
+			TFBot { Class Scout }
+		}
+		WaveSpawn
+		{
+			Name	sentinel
+			WaitBeforeStarting	99999
+			TotalCount	2
+			MaxActive	2
+			SpawnCount	2
+			Where	spawnbot
+			TotalCurrency	100
+			TFBot { Class Heavyweapons }
+		}
+		WaveSpawn
+		{
+			Name	slowlegit
+			WaitBeforeStarting	1800
+			TotalCount	1
+			MaxActive	1
+			SpawnCount	1
+			Where	spawnbot
+			TotalCurrency	100
+			TFBot { Class Soldier }
+		}
+	}
+}`;
+const mp = modelFor(POP_PARKED);
+const pWave = mp.waves[0];
+const pGates = analyzeWave(pWave, buildTriggerGraph(parse(POP_PARKED)));
+const sentinelWs = pWave.wavespawns.find(w => w.name === 'sentinel');
+const legitWs = pWave.wavespawns.find(w => w.name === 'slowlegit');
+check('a sentinel WaitBeforeStarting parks the wavespawn as gated',
+  pGates.get(sentinelWs).parked === true && isGated(pGates.get(sentinelWs)));
+check('a long-but-legitimate wait is not parked', !pGates.get(legitWs).parked);
+const pSim = simulateWave(pWave, { robotLimit: 22 });
+check('a parked wavespawn does not blow up the wave end',
+  pSim.waveEnd < 2000, 'waveEnd ' + Math.round(pSim.waveEnd));
+check('the parked row spawns nothing until triggered',
+  pSim.results.get(sentinelWs).events.length === 0 && pSim.results.get(sentinelWs).untriggered === true);
+check('the legitimate slow row still spawns at its wait',
+  pSim.results.get(legitWs).firstSpawn >= 1800, String(pSim.results.get(legitWs).firstSpawn));
+const pTrig = simulateWave(pWave, {
+  robotLimit: 22,
+  gateStateFor: w => w.name === 'sentinel' ? { gated: true, parked: true, triggerAt: 30 } : null
+});
+check('a trigger time fires a parked row at that time, not time plus the sentinel wait',
+  Math.abs(pTrig.results.get(sentinelWs).firstSpawn - 30) < 0.01,
+  String(pTrig.results.get(sentinelWs).firstSpawn));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

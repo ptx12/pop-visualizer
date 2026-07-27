@@ -29,7 +29,9 @@ export function parseMDL(buf) {
     numskinfamilies: buf.readInt32LE(224),
     skinindex: buf.readInt32LE(228),
     numbodyparts: buf.readInt32LE(232),
-    bodypartindex: buf.readInt32LE(236)
+    bodypartindex: buf.readInt32LE(236),
+    numlocalattachments: buf.readInt32LE(240),
+    localattachmentindex: buf.readInt32LE(244)
   };
 
   cap(h.numtextures, LIMITS.mdlTextures, 'mdl textures');
@@ -72,11 +74,11 @@ export function parseMDL(buf) {
     bones.push({
       name: cstr(buf, base + buf.readInt32LE(base)),
       parent: buf.readInt32LE(base + 4),
-      pos: [buf.readFloatLE(base + 28), buf.readFloatLE(base + 32), buf.readFloatLE(base + 36)],
-      quat: [buf.readFloatLE(base + 40), buf.readFloatLE(base + 44), buf.readFloatLE(base + 48), buf.readFloatLE(base + 52)],
-      rot: [buf.readFloatLE(base + 56), buf.readFloatLE(base + 60), buf.readFloatLE(base + 64)],
-      posscale: [buf.readFloatLE(base + 68), buf.readFloatLE(base + 72), buf.readFloatLE(base + 76)],
-      rotscale: [buf.readFloatLE(base + 80), buf.readFloatLE(base + 84), buf.readFloatLE(base + 88)]
+      pos: [buf.readFloatLE(base + 32), buf.readFloatLE(base + 36), buf.readFloatLE(base + 40)],
+      quat: [buf.readFloatLE(base + 44), buf.readFloatLE(base + 48), buf.readFloatLE(base + 52), buf.readFloatLE(base + 56)],
+      rot: [buf.readFloatLE(base + 60), buf.readFloatLE(base + 64), buf.readFloatLE(base + 68)],
+      posscale: [buf.readFloatLE(base + 72), buf.readFloatLE(base + 76), buf.readFloatLE(base + 80)],
+      rotscale: [buf.readFloatLE(base + 84), buf.readFloatLE(base + 88), buf.readFloatLE(base + 92)]
     });
   }
 
@@ -141,7 +143,21 @@ export function parseMDL(buf) {
     });
   }
 
-  return { header: h, textures, cdtextures, skins, bones, bodyparts, sequences, anims, buf };
+  const attachments = [];
+  const numAtt = h.numlocalattachments;
+  if (numAtt > 0 && numAtt < 256 && h.localattachmentindex > 0) {
+    for (let i = 0; i < numAtt; i++) {
+      const base = h.localattachmentindex + i * 92;
+      if (base + 92 > buf.length) break;
+      const name = cstr(buf, base + buf.readInt32LE(base));
+      const localbone = buf.readInt32LE(base + 8);
+      const m = [];
+      for (let k = 0; k < 12; k++) m.push(buf.readFloatLE(base + 12 + k * 4));
+      attachments.push({ name, localbone, local: [m[0], m[4], m[8], 0, m[1], m[5], m[9], 0, m[2], m[6], m[10], 0, m[3], m[7], m[11], 1] });
+    }
+  }
+
+  return { header: h, textures, cdtextures, skins, bones, bodyparts, sequences, anims, attachments, buf };
 }
 
 const STUDIO_ANIM_RAWPOS = 0x01;

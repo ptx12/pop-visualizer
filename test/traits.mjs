@@ -103,7 +103,7 @@ const vip = botOf(VIP);
 check('VIP: giant engineer core is read', vip.cls === 'engineer' && vip.health === 5000 && vip.isGiant && vip.isBoss && vip.scale === 1.7, JSON.stringify([vip.cls, vip.health, vip.isGiant, vip.isBoss]));
 check('VIP: both TeleportWhere values are kept', vip.teleportWhere.length === 2 && vip.teleportWhere[0] === 'spawnbot_allies_l', JSON.stringify(vip.teleportWhere));
 check('VIP: StripItem is captured', vip.stripItems.join() === 'Zombie Engineer');
-check('VIP: SpawnTemplate + custom model + aim interval', vip.spawnTemplates[0] === 'EngineerCapzone' && vip.loadout.usecustommodel && vip.combat.aimtrackinginterval === '0.05');
+check('VIP: SpawnTemplate + custom model + aim interval', vip.spawnTemplates[0] === 'EngineerCapzone' && vip.model === 'models/bots/engineer/bot_engineer.mdl' && vip.combat.aimtrackinginterval === '0.05');
 check('VIP: move speed 0.5 and health regen 35', vip.moveSpeedMult === 0.5 && vip.healthRegen === 35, JSON.stringify([vip.moveSpeedMult, vip.healthRegen]));
 check('VIP: EventChangeAttributes states parsed', vip.eventAttributes.length === 2 && vip.eventAttributes.map(s => s.event).join() === 'FINAL_NODE_REACHED,ENGY_DISSAPEAR');
 const finalNode = vip.eventAttributes[0];
@@ -149,6 +149,16 @@ check('the raw mult_player_movespeed_active attribute is a move-speed multiplier
   botOf('Class Scout CharacterAttributes { "mult_player_movespeed_active" 0.5 }').moveSpeedMult === 0.5);
 check('CharacterAttributes move speed still multiplies (regression)',
   botOf('Class Pyro CharacterAttributes { "move speed bonus" 0.5 }').moveSpeedMult === 0.5);
+
+check('RafMod UseCustomModel sets the model',
+  botOf('Class Soldier UseCustomModel "models/bots/soldier/goliatron2022_v3.mdl"').model === 'models/bots/soldier/goliatron2022_v3.mdl');
+check('RafMod UseHumanModel flag is captured',
+  botOf('Class Scout UseHumanModel 1').useHumanModel === true);
+check('RafMod CustomWeaponModel block captures slot + model',
+  (b => b.customWeapons.length === 1 && b.customWeapons[0].slot === 2 && b.customWeapons[0].model === 'models/weapons/c_models/c_atom_launcher/c_atom_launcher.mdl')(
+    botOf('Class Demoman CustomWeaponModel { Slot 2 Model "models/weapons/c_models/c_atom_launcher/c_atom_launcher.mdl" }')));
+check('RafMod StripItemSlot is captured',
+  botOf('Class Heavy StripItemSlot 0 StripItemSlot 1').stripSlots.join() === '0,1');
 
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');

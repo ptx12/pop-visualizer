@@ -106,9 +106,10 @@ export function extractMapEntities(ents, models) {
   const brushBox = en => {
     const m = models[parseInt(String(en.model || '').slice(1), 10)];
     if (!m) return null;
+    const eo = vec(en.origin) || [0, 0, 0];
     return {
-      mins: [m.mins[0] + m.origin[0], m.mins[1] + m.origin[1], m.mins[2] + m.origin[2]],
-      maxs: [m.maxs[0] + m.origin[0], m.maxs[1] + m.origin[1], m.maxs[2] + m.origin[2]]
+      mins: [m.mins[0] + m.origin[0] + eo[0], m.mins[1] + m.origin[1] + eo[1], m.mins[2] + m.origin[2] + eo[2]],
+      maxs: [m.maxs[0] + m.origin[0] + eo[0], m.maxs[1] + m.origin[1] + eo[1], m.maxs[2] + m.origin[2] + eo[2]]
     };
   };
   const spawns = [];
@@ -136,6 +137,7 @@ export function extractMapEntities(ents, models) {
         break;
       }
       case 'func_capturezone': {
+        if (String(en.teamnum) === '2') break;
         const b = brushBox(en);
         if (!b) break;
         const c = [(b.mins[0] + b.maxs[0]) / 2, (b.mins[1] + b.maxs[1]) / 2, (b.mins[2] + b.maxs[2]) / 2];

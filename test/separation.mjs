@@ -145,6 +145,35 @@ check('two bots on one floor shove each other apart', sameGap > 30,
 check('two bots on different floors pass straight through each other', crossGap < sameGap / 2,
   'cross-floor gap ' + crossGap.toFixed(1) + 'u vs same-floor ' + sameGap.toFixed(1) + 'u — the z gate is not doing anything');
 
+function gapCorridor() {
+  const z1 = 600, z2 = 400, X = 300;
+  const seg = (id, y0, y1, z) => ({ id, nw: [0, y0, z], se: [X, y1, z], neZ: z, swZ: z, connect: [], tfAttributes: 0 });
+  const a = [
+    seg(0, -2000, -1800, z1), seg(1, -1800, -1600, z1), seg(2, -1600, -1400, z1), seg(3, -1400, -1200, z1),
+    seg(4, -1125, -925, z2), seg(5, -925, -725, z2), seg(6, -725, -525, z2)
+  ];
+  for (let i = 0; i < a.length; i++) { if (i > 0) a[i].connect.push(i - 1); if (i < a.length - 1) a[i].connect.push(i + 1); }
+  return a;
+}
+const gapAreas = gapCorridor();
+const CTR = id => [(gapAreas[id].nw[0] + gapAreas[id].se[0]) / 2, (gapAreas[id].nw[1] + gapAreas[id].se[1]) / 2, (gapAreas[id].nw[2] + gapAreas[id].se[2]) / 2];
+const gapMap = {
+  map: 'test_gap', nav: { areas: gapAreas }, spawns: [{ name: 'spawnbot', origin: CTR(0) }], redSpawns: [],
+  flags: [CTR(0)], capzones: [CTR(6)], tracks: [], hints: [], navVolumes: [], pathProps: [], spawnRooms: [], bombPaths: []
+};
+const gapPop = count => `WaveSchedule\n{\n\tWave\n\t{\n\t\tWaveSpawn\n\t\t{\n\t\t\tName\tw\n\t\t\tTotalCount\t${count}\n\t\t\tMaxActive\t${count}\n\t\t\tSpawnCount\t${count}\n\t\t\tWhere\tspawnbot\n\t\t\tTFBot { Class Heavyweapons	Skill Normal }\n\t\t}\n\t}\n}\n`;
+const runGap = count => {
+  const model = buildModel(parse(gapPop(count)), []);
+  const wave = model.waves[0];
+  return simulateBotAI(wave, simulateWave(wave, { robotLimit: 99 }), gapMap, { deathModel: 'hatch', robotLimit: 99 });
+};
+const loneGap = runGap(1);
+check('a lone carrier crosses the drop-down gap and delivers (geometry is traversable)',
+  loneGap.bomb.deliveredAt !== null, 'lone bot could not cross the gap');
+const crowdGap = runGap(14);
+check('a crowd does not pin the carrier at the gap ledge — the bomb still crosses and delivers',
+  crowdGap.bomb.deliveredAt !== null, 'bomb pinned at the ledge, never delivered');
+
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');
 if (fail) process.exit(1);

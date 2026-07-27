@@ -59,7 +59,7 @@ async function runScreenshot(win, shot) {
   const timeArg = argValue('--time');
   const held = parseInt(argValue('--wait') || '0', 10);
   if (openPop) {
-    sendCmd({ type: 'open', path: openPop, wave: waveArg ? parseInt(waveArg, 10) : null, view: viewArg, time: timeArg ? parseFloat(timeArg) : null });
+    sendCmd({ type: 'open', path: openPop, wave: waveArg ? parseInt(waveArg, 10) : null, view: viewArg, time: timeArg ? parseFloat(timeArg) : null, problems: process.argv.includes('--problems'), maplog: process.argv.includes('--maplog'), mapselect: process.argv.includes('--mapselect'), mapmode: argValue('--mapmode') });
     await wait(held > 0 ? held : 2500);
   } else if (argValue('--model')) {
     sendCmd({ type: 'viewmodel', base: argValue('--model') });

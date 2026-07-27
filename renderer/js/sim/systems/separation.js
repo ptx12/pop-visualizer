@@ -58,7 +58,13 @@ function pass(ctx, dt, s) {
       : 0;
     if (push < 0.01) continue;
     let ddx = hx, ddy = hy;
-    if (ddx * ddx + ddy * ddy < 1e-4) { ddx = a.jx; ddy = a.jy; }
+    if (ddx * ddx + ddy * ddy < 1e-4) {
+      const lo = Math.min(i, hj);
+      const ref = s.act[lo];
+      const flip = i === lo ? 1 : -1;
+      ddx = (ref.jx || 1) * flip;
+      ddy = (ref.jy || 0) * flip;
+    }
     const sn = a.samples.length;
     let vx = sn >= 2 ? a.pos[0] - a.samples[sn - 2] : 0;
     let vy = sn >= 2 ? a.pos[1] - a.samples[sn - 1] : 0;

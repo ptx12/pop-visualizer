@@ -1,4 +1,5 @@
 import { extractMapEntities, entityOutputs, resolveToggles, rerollSources } from '../main/mapentities.js';
+import { objectiveCandidates, buildTrackChains } from '../renderer/js/botai.js';
 
 let pass = 0, fail = 0;
 
@@ -109,6 +110,33 @@ eq('comma-separated outputs parse like escape-separated ones',
 
 eq('no entities yields empty collections',
   extractMapEntities([], models).bombPaths, []);
+
+const originedEnts = [
+  { classname: 'func_capturezone', model: '*2', origin: '0 -2368 48', teamnum: '3' },
+  { classname: 'func_capturezone', model: '*2', origin: '0 -2368 48', teamnum: '2' },
+  { classname: 'func_respawnroom', model: '*2', teamnum: '3', origin: '500 600 0' }
+];
+const ro = extractMapEntities(originedEnts, models);
+eq('a brush entity origin offsets its model bounds into world space', ro.capzones, [[0, -2368, 48]]);
+eq('a RED capturezone is never a bot objective', ro.capzones.length, 1);
+eq('respawnroom bounds honour the entity origin',
+  ro.spawnRooms, [{ mins: [495, 595, -5], maxs: [505, 605, 5] }]);
+
+const objBase = { spawns: [], redSpawns: [], hints: [], navVolumes: [], pathProps: [], spawnRooms: [], bombPaths: [], nav: null };
+const objMap = o => ({ ...objBase, flags: [], capzones: [], tracks: [], ...o });
+const objTracks = [
+  { name: 'p1', origin: [0, 0, 0], target: 'p2' },
+  { name: 'p2', origin: [4000, 0, 0], target: '' }
+];
+const candsOf = m => objectiveCandidates(m, buildTrackChains(m));
+check('a capturezone outranks flags and track ends as the hatch',
+  candsOf(objMap({ capzones: [[900, 900, 0]], flags: [[10, 10, 0]], tracks: objTracks }))[0].label === 'hatch');
+const noCap = candsOf(objMap({ flags: [[10, 10, 0]], tracks: objTracks }));
+check('without a capturezone the track end outranks the flag — the flag is the bomb start, not the goal',
+  noCap[0].label === 'end of p1' && noCap[0].pos[0] === 4000,
+  JSON.stringify(noCap[0]));
+check('the flag is only a last-resort objective',
+  candsOf(objMap({ flags: [[10, 10, 0]] }))[0].label === 'bomb');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

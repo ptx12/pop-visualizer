@@ -1,11 +1,12 @@
 import { ipcMain } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { readEntityLump, parseEntities, pathTracks, chainLength, readModels, pakEntries, readPakEntry } from '../shared/bsp.js';
+import { readEntityLump, parseEntities, pathTracks, chainLength, readModels, pakEntries, readPakEntry, readStaticProps, readDynamicProps } from '../shared/bsp.js';
 import { parseNav } from '../shared/nav.js';
 import { indexVPK, readVPKEntry } from '../shared/vpk.js';
 import { extractGeometry } from '../shared/bspgeo.js';
-import { bakeTopDown } from '../shared/bsprender.js';
+import { bakeTopDown, extractWorldFaces } from '../shared/bsprender.js';
+import { extractLighting } from '../shared/lighting.js';
 import { lru } from './context.js';
 import { detectTFPath, flushTFPath } from './tfpath.js';
 import { makeMaterialLoader } from './materials.js';
@@ -15,10 +16,13 @@ const bspTrackCache = lru(24);
 const mapDataCache = lru(12);
 const mapGeoCache = lru(4);
 const mapTexCache = lru(4);
+const mapFaces3dCache = lru(3);
+const mapLightCache = lru(3);
 
 export function flushMapCaches() {
   mapDataCache.clear();
   mapTexCache.clear();
+  mapFaces3dCache.clear();
 }
 
 export async function mapDirs(tfPath, popDir) {
@@ -49,6 +53,35 @@ async function listBSPs(tfPath, popDir) {
       }
     } catch {}
   }
+  return out;
+}
+
+const ambientCache = new Map();
+
+// The map's own ambient light colour, straight from light_environment (_ambientHDR wins,
+// "-1 -1 -1 -1" means "fall back to the LDR key"). Returned normalised to unit luminance —
+// the hue is what's wanted; magnitude comes from the measured lightmap.
+function skyAmbientOf(bspPath) {
+  if (ambientCache.has(bspPath)) return ambientCache.get(bspPath);
+  let out = null;
+  try {
+    const ents = parseEntities(readEntityLump(bspPath));
+    const le = ents.find(e => e.classname === 'light_environment');
+    if (le) {
+      const pick = raw => {
+        if (!raw) return null;
+        const v = String(raw).trim().split(/\s+/).map(Number);
+        if (v.length < 3 || v.some(n => !Number.isFinite(n)) || v[0] < 0) return null;
+        return [v[0], v[1], v[2]];
+      };
+      const rgb = pick(le._ambienthdr) || pick(le._ambient);
+      if (rgb) {
+        const lum = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+        if (lum > 1) out = rgb.map(c => c / lum);
+      }
+    }
+  } catch {}
+  ambientCache.set(bspPath, out);
   return out;
 }
 
@@ -131,6 +164,7 @@ async function loadNavFor(bsp, tfPath, popDir) {
     else buf = readPakEntry(pick.where, pick.entry);
     if (!buf) return { nav: null, searched, near, reason: 'unreadable' };
     const nav = parseNav(buf);
+    if (!nav.areas.length) return { nav: null, searched, near, reason: 'empty:' + pick.name };
     return {
       searched, near,
       nav: {
@@ -231,9 +265,116 @@ export function register() {
         spawns: data ? data.spawns : [],
         tracks: data ? data.tracks : []
       });
-      if (baked) result = { width: baked.width, height: baked.height, bounds: baked.bounds, rgba: Buffer.from(baked.rgba.buffer, baked.rgba.byteOffset, baked.rgba.byteLength) };
+      if (baked) {
+        result = { width: baked.width, height: baked.height, bounds: baked.bounds, rgba: Buffer.from(baked.rgba.buffer, baked.rgba.byteOffset, baked.rgba.byteLength) };
+        const hg = baked.heightGrid;
+        if (hg) result.heightGrid = { grid: Buffer.from(hg.grid.buffer, hg.grid.byteOffset, hg.grid.byteLength), gw: hg.gw, gh: hg.gh, cellPx: hg.cellPx, zMin: hg.zMin, zMax: hg.zMax };
+      }
     } catch (err) { console.error('[map:texture]', err); }
     return mapTexCache.set(best.full, result);
+  });
+
+  ipcMain.handle('map:faces3d', async (e, popName, tfPathOverride, popDir) => {
+    const tfPath = tfPathOverride || await detectTFPath();
+    if (!tfPath) return null;
+    const best = await findBSPFor(popName, tfPath, popDir);
+    if (!best) return null;
+    if (mapFaces3dCache.has(best.full)) return mapFaces3dCache.get(best.full);
+    let result = null;
+    try {
+      const data = await mapDataFor(best, tfPath, popDir);
+      const w = extractWorldFaces(best.full, {
+        nav: data ? data.nav : (await loadNavFor(best, tfPath, popDir)).nav,
+        spawns: data ? data.spawns : [],
+        tracks: data ? data.tracks : []
+      });
+      if (w) {
+        const buf = a => Buffer.from(a.buffer, a.byteOffset, a.byteLength);
+        result = {
+          bsp: best.full,
+          bounds: w.bounds,
+          exposure: w.exposure,
+          minLight: w.minLight,
+          lmUpBright: w.lmUpBright,
+          ambient: skyAmbientOf(best.full),
+          materials: w.materials.map(m => ({ name: m.name, count: m.count, positions: buf(m.positions), uvs: buf(m.uvs), normals: buf(m.normals), lm: buf(m.lm) })),
+          lightmap: w.lightmap ? { width: w.lightmap.width, height: w.lightmap.height, range: w.lightmap.range, rgba: buf(w.lightmap.rgba) } : null
+        };
+      }
+    } catch (err) { console.error('[map:faces3d]', err); }
+    return mapFaces3dCache.set(best.full, result);
+  });
+
+  ipcMain.handle('map:props', async (e, popName, tfPathOverride, popDir) => {
+    const tfPath = tfPathOverride || await detectTFPath();
+    if (!tfPath) return null;
+    const best = await findBSPFor(popName, tfPath, popDir);
+    if (!best) return null;
+    try {
+      const stat = readStaticProps(best.full);
+      const dyn = readDynamicProps(best.full);
+      const seen = new Set();
+      const out = [];
+      for (const p of stat.concat(dyn)) {
+        const key = p.model + '@' + Math.round(p.origin[0]) + ',' + Math.round(p.origin[1]) + ',' + Math.round(p.origin[2]);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(p);
+      }
+      return { props: out, bsp: best.full };
+    } catch { return { props: [], bsp: best.full }; }
+  });
+
+  ipcMain.handle('nav:use', async (e, popName, sourceName, tfPathOverride, popDir) => {
+    const tfPath = tfPathOverride || await detectTFPath();
+    if (!tfPath) return { error: 'TF folder not found' };
+    const best = await findBSPFor(popName, tfPath, popDir);
+    if (!best) return { error: 'no matching BSP' };
+    const src = String(sourceName).toLowerCase().replace(/\.nav$/, '');
+    if (!/^[a-z0-9_\-.]+$/.test(src)) return { error: 'bad nav name' };
+    const candidates = [...await looseNavs(tfPath, popDir), ...vpkNavs(tfPath)];
+    try {
+      for (const p of pakEntries(best.full)) {
+        if (p.name.endsWith('.nav')) candidates.push({ name: p.name.split('/').pop().replace(/\.nav$/, ''), kind: 'pak', where: best.full, entry: p });
+      }
+    } catch {}
+    const pick = candidates.find(c => c.name === src);
+    if (!pick) return { error: src + '.nav not found' };
+    let buf = null;
+    try {
+      if (pick.kind === 'file') buf = await fs.readFile(pick.where);
+      else if (pick.kind === 'vpk') buf = readVPKEntry(pick.where, pick.entry);
+      else buf = readPakEntry(pick.where, pick.entry);
+    } catch (err) { return { error: err.message }; }
+    if (!buf) return { error: src + '.nav could not be read' };
+    const dest = path.join(tfPath, 'download', 'maps', best.name + '.nav');
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.writeFile(dest, buf);
+    flushMapCaches();
+    return { saved: dest, source: src, renamed: src !== best.name };
+  });
+
+  ipcMain.handle('map:lighting', async (e, popName, tfPathOverride, popDir) => {
+    const tfPath = tfPathOverride || await detectTFPath();
+    if (!tfPath) return null;
+    const best = await findBSPFor(popName, tfPath, popDir);
+    if (!best) return null;
+    if (mapLightCache.has(best.full)) return mapLightCache.get(best.full);
+    let result = null;
+    try {
+      const L = extractLighting(best.full);
+      if (L) {
+        const buf = a => Buffer.from(a.buffer, a.byteOffset, a.byteLength);
+        result = {
+          planes: buf(L.planes), nodes: buf(L.nodes),
+          leafMins: buf(L.leafMins), leafMaxs: buf(L.leafMaxs),
+          ambCount: buf(L.ambCount), ambFirst: buf(L.ambFirst),
+          cubes: buf(L.cubes), ambPos: buf(L.ambPos),
+          lights: L.lights
+        };
+      }
+    } catch (err) { console.error('[map:lighting]', err); }
+    return mapLightCache.set(best.full, result);
   });
 
   ipcMain.handle('map:flush', () => {

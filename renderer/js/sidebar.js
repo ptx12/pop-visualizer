@@ -91,7 +91,7 @@ export function renderSidebar(container, file) {
   nav.append(item('Overview', 'overview'));
   if (m.waves.length) nav.append(item('Map', 'map', { wave: state.view.mode === 'map' || state.view.mode === 'wave' ? state.view.wave : 0 }));
 
-  const addWaveBtn = el('button', { class: 'icon-btn sm', text: '+', title: 'Add wave at end', onclick: e => {
+  const addWaveBtn = el('button', { class: 'icon-btn sm', text: '+', title: 'Add wave at end', 'aria-label': 'Add wave at end', onclick: e => {
     e.stopPropagation();
     beginEdit(file);
     m.root.children.push(makeBlock('Wave', [
@@ -121,6 +121,8 @@ export function renderSidebar(container, file) {
             el('span', { class: 'nav-wave-num', text: 'W' + (w.index + 1) }),
             el('span', { class: 'nav-wave-bots', text: w.totalBots + (w.supportBots || w.wavespawns.some(x => x.support === 'unlimited') ? '+' : '') }),
             w.tankCount ? el('span', { class: 'badge tank sm', text: w.tankCount > 1 ? 'TANK ×' + w.tankCount : 'TANK' }) : null,
+            lintErr ? el('span', { class: 'lint-badge err', text: lintErr, title: lintErr + (lintErr === 1 ? ' error' : ' errors') + ' in wave ' + (w.index + 1) }) : null,
+            lintWarn ? el('span', { class: 'lint-badge warn', text: lintWarn, title: lintWarn + (lintWarn === 1 ? ' warning' : ' warnings') + ' in wave ' + (w.index + 1) }) : null,
             state.search && matches ? el('span', { class: 'lint-badge match', text: matches }) : null
           ),
           el('div', { class: 'nav-wave-chips' }, compositionChips(pseudo, 7, { size: 'sm' }))

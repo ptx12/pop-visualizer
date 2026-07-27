@@ -1,3 +1,5 @@
+import { PARK_WAIT } from './gating.js';
+
 export const DEFAULT_SIM_OPTS = {
   botLifetime: 12,
   giantLifetime: 35,
@@ -37,9 +39,11 @@ export function simulateWave(wave, opts = {}) {
     const unlimited = ws.support === 'unlimited';
     const hasBots = ws.bots.length > 0;
     const gs = gateStateFor(ws);
+    const parkedSelf = !gs && Math.max(0, ws.waitBeforeStarting || 0) >= PARK_WAIT;
     return {
       ws, unlimited,
-      gated: !!(gs && gs.gated),
+      gated: !!(gs && gs.gated) || parkedSelf,
+      parked: !!(gs && gs.parked) || parkedSelf,
       triggerAt: gs && Number.isFinite(gs.triggerAt) ? Math.max(0, gs.triggerAt) : null,
       life: lifetimeFor(ws),
       batch: Math.max(1, ws.squadSize > 1 ? Math.ceil(ws.spawnCount / ws.squadSize) * ws.squadSize : ws.spawnCount),
@@ -126,7 +130,7 @@ export function simulateWave(wave, opts = {}) {
       }
       if (!ok) continue;
       s.gate = gate;
-      s.startTime = gate + Math.max(0, s.ws.waitBeforeStarting);
+      s.startTime = gate + (s.parked ? 0 : Math.max(0, s.ws.waitBeforeStarting));
       s.nextAllowed = s.startTime;
       if (s.total === 0) { s.finishedAt = s.startTime; s.lastDeath = s.startTime; }
     }
