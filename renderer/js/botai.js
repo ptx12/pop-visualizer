@@ -112,7 +112,11 @@ function volumeActive(v, activeNames, bombPath, mapPaths) {
     const n = v.name.toLowerCase();
     if (inList(activeNames.disabled, n)) return false;
     if (inList(activeNames.enabled, n)) return true;
-    if (mapPaths && mapPaths.pool.has(n)) return mapPaths.on.has(n);
+    if (mapPaths && mapPaths.pool.has(n)) {
+      if (mapPaths.on.has(n)) return true;
+      if (mapPaths.off.has(n)) return false;
+      return !v.startDisabled;
+    }
     if (v.startDisabled) return bombPath ? pathKeyOf(v.name) === bombPath : false;
     return true;
   }
@@ -123,9 +127,16 @@ function mapPathSets(mapData, bombPath) {
   const paths = mapData.bombPaths || [];
   if (!paths.length) return null;
   const pool = new Set();
-  for (const p of paths) for (const n of p.enable) pool.add(n);
+  for (const p of paths) {
+    for (const n of p.enable) pool.add(n);
+    for (const n of p.disable || []) pool.add(n);
+  }
   const chosen = bombPath ? paths.find(p => p.key === bombPath) : null;
-  return { pool, on: new Set(chosen ? chosen.enable : []) };
+  return {
+    pool,
+    on: new Set(chosen ? chosen.enable : []),
+    off: new Set(chosen && chosen.disable ? chosen.disable : [])
+  };
 }
 
 export function activeNavVolumes(mapData, opts = {}) {
