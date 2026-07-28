@@ -783,6 +783,10 @@ async function restoreSession() {
   emit();
 }
 
+function isWatching() {
+  return document.visibilityState === 'visible';
+}
+
 native.onCommand(async cmd => {
   if (cmd.type === 'open' && cmd.path) {
     try {
@@ -839,19 +843,14 @@ native.onCommand(async cmd => {
         for (const f of users) {
           try { await refreshBases(f); } catch {}
         }
-        toast(cmd.path.split(/[\\/]/).pop() + ' changed — templates re-resolved');
+        if (isWatching()) toast(cmd.path.split(/[\\/]/).pop() + ' changed — templates re-resolved');
       }
-      return;
-    }
-    if (file.dirty && !state.dock) {
-      file.conflict = true;
-      emit();
       return;
     }
     try {
       const hadEdits = file.dirty;
       await reloadFromDisk(file, { preserveUndo: hadEdits });
-      toast(hadEdits ? file.name + ' reloaded from disk — Ctrl+Z restores your edits' : file.name + ' reloaded from disk');
+      if (isWatching()) toast(hadEdits ? file.name + ' reloaded — Ctrl+Z restores your edits' : file.name + ' reloaded');
     } catch (e) {
       toast('Reload failed: ' + e.message, 'error');
     }
