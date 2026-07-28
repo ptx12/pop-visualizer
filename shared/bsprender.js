@@ -239,7 +239,7 @@ export function extractFaces(bspPath, cull = null, opts = {}) {
   const dispInfoBuf = readLump(bspPath, 26);
   const dispVertsBuf = readLump(bspPath, 33);
   const lightBuf = readLump(bspPath, 8);
-  const hdrLightBuf = readLump(bspPath, 53);
+  const hdrLightBuf = opts.lightmap ? readLump(bspPath, 53) : null;
   const lmBuf = hdrLightBuf || lightBuf;
   if (!facesBuf || !vertsBuf || !edgesBuf || !surfedgesBuf || !planesBuf || !texinfoBuf) return { faces: [], bounds: null };
 
