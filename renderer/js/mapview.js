@@ -2177,7 +2177,8 @@ export function renderMapView(container, file, waveIndex) {
       if (members.length === 1) { out.push(members[0]); continue; }
       const plate = members.reduce((m, q) => Math.max(m, q.plate), 0);
       const capacity = Math.max(2, Math.floor(Math.PI * 2 * SPREAD_LIMIT));
-      if (members.length > capacity) {
+      const wasStacked = mem.has(members[0].key) && mem.get(members[0].key).stacked;
+      if (members.length > (wasStacked ? capacity - 1 : capacity)) {
         let cx = 0, cy = 0;
         for (const q of members) { cx += q.sx; cy += q.sy; }
         const lead = members[0];
@@ -2204,7 +2205,7 @@ export function renderMapView(container, file, waveIndex) {
         q.dx = prev.dx + (q.dx - prev.dx) * DECLUTTER_EASE;
         q.dy = prev.dy + (q.dy - prev.dy) * DECLUTTER_EASE;
       }
-      mem.set(q.key, { dx: q.dx, dy: q.dy, lead: q.lead || q.key });
+      mem.set(q.key, { dx: q.dx, dy: q.dy, lead: q.lead || q.key, stacked: q.n > 1 });
       seen.add(q.key);
     }
     if (mem.size > seen.size) for (const k of [...mem.keys()]) if (!seen.has(k)) mem.delete(k);

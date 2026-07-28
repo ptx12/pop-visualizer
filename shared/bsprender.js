@@ -5,6 +5,8 @@ const SURF_SKY2D = 0x2, SURF_SKY = 0x4, SURF_WARP = 0x8, SURF_TRIGGER = 0x40, SU
 const SKIP_FLAGS = SURF_SKY2D | SURF_SKY | SURF_TRIGGER | SURF_NODRAW | SURF_HINT | SURF_SKIP;
 const LUM = (r, g, b) => r * 0.2126 + g * 0.7152 + b * 0.0722;
 const ROOF_CLEARANCE = 110;
+const SKY_DIM = 0.5;
+const SKY_DESAT = 0.4;
 export const LM_RANGE = 16;
 
 const LM_LIN = new Float64Array(256);
@@ -552,7 +554,11 @@ export async function bakeTopDown(bspPath, loadTexture, opts = {}) {
 
   if (opts.sky !== false) {
     const sky = await loadSkyTexture(bspPath, loadTexture);
-    if (sky) fillSky(img, outW, outH, sky);
+    if (sky) {
+      const dim = Number.isFinite(opts.skyDim) ? opts.skyDim : SKY_DIM;
+      const desat = Number.isFinite(opts.skyDesat) ? opts.skyDesat : SKY_DESAT;
+      fillSky(img, outW, outH, sky, dim, desat);
+    }
   }
 
   return { width: outW, height: outH, bounds, rgba: img, scale, heightGrid };
@@ -581,7 +587,7 @@ async function loadSkyTexture(bspPath, loadTexture) {
   return null;
 }
 
-function fillSky(img, W, H, tex) {
+function fillSky(img, W, H, tex, dim, desat) {
   const tw = tex.width, th = tex.height, tp = tex.rgba;
   const s = Math.max(W / tw, H / th);
   const ox = (W - tw * s) / 2, oy = (H - th * s) / 2;
@@ -595,11 +601,14 @@ function fillSky(img, W, H, tex) {
       const tx0 = Math.floor(tx), tx1 = Math.min(tw - 1, tx0 + 1), fx = tx - tx0;
       const p00 = (ty0 * tw + tx0) * 4, p01 = (ty0 * tw + tx1) * 4;
       const p10 = (ty1 * tw + tx0) * 4, p11 = (ty1 * tw + tx1) * 4;
+      const px = [0, 0, 0];
       for (let c = 0; c < 3; c++) {
         const top = tp[p00 + c] * (1 - fx) + tp[p01 + c] * fx;
         const bot = tp[p10 + c] * (1 - fx) + tp[p11 + c] * fx;
-        img[o + c] = top * (1 - fy) + bot * fy;
+        px[c] = top * (1 - fy) + bot * fy;
       }
+      const lum = LUM(px[0], px[1], px[2]);
+      for (let c = 0; c < 3; c++) img[o + c] = (px[c] * (1 - desat) + lum * desat) * dim;
       img[o + 3] = 255;
     }
   }
