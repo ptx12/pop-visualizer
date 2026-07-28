@@ -1,6 +1,7 @@
 import { getTFPath } from './icons.js';
 import { loadBotPose, loadPropModel, loadAttachment } from './botmodels.js';
 import { ambientCubeAt, pickLocalLights, EMIT_SKYLIGHT } from '../../shared/lightmath.js';
+import { stripVmtComments, vmtParam, vmtColor, vmtTexturePath } from '../../shared/vmt.js';
 import { loadSystem, createEmitter } from './particles.js';
 
 const DEG = Math.PI / 180;
@@ -177,9 +178,9 @@ uniform mat4 uMVP;uniform vec2 uTexSize;uniform float uFogStart;uniform float uF
 varying vec2 vUV;varying vec2 vLmUV;varying float vFog;
 void main(){vUV=aUV/uTexSize;vLmUV=aLmUV;vec4 p=uMVP*vec4(aPos,1.0);vFog=clamp((p.w-uFogStart)/(uFogEnd-uFogStart),0.0,1.0);gl_Position=p;}`;
 const WORLD_FS = `precision mediump float;varying vec2 vUV;varying vec2 vLmUV;varying float vFog;
-uniform sampler2D uTex;uniform sampler2D uLightmap;uniform float uHasTex;uniform float uHasLM;uniform vec3 uFogColor;uniform float uLmRange;uniform float uExposure;uniform float uUseTexAlpha;uniform float uMatAlpha;uniform float uBrightPass;uniform vec3 uMinLight;
+uniform sampler2D uTex;uniform sampler2D uLightmap;uniform float uHasTex;uniform float uHasLM;uniform vec3 uFogColor;uniform float uLmRange;uniform float uExposure;uniform float uUseTexAlpha;uniform float uMatAlpha;uniform float uBrightPass;uniform vec3 uMinLight;uniform vec3 uFlatColor;
 void main(){
-vec4 t=uHasTex>0.5?texture2D(uTex,vUV):vec4(0.5,0.52,0.55,1.0);
+vec4 t=uHasTex>0.5?texture2D(uTex,vUV):vec4(uFlatColor,1.0);
 vec3 lm=uHasLM>0.5?pow(texture2D(uLightmap,vLmUV).rgb,vec3(2.2))*uLmRange:vec3(1.0);
 vec3 lin=pow(t.rgb,vec3(2.2))*lm*uExposure;
 if(uBrightPass>0.5){gl_FragColor=vec4(max(vec3(0.0),lin-1.0)*(1.0-vFog),1.0);return;}
@@ -189,11 +190,13 @@ c=mix(c,uFogColor,vFog);
 float a=mix(1.0,t.a,uUseTexAlpha)*uMatAlpha;
 gl_FragColor=vec4(c,a);}`;
 
+const NO_TEX_COLOR = new Float32Array([0.5, 0.52, 0.55]);
 const LUM3 = (r, g, b) => r * 0.2126 + g * 0.7152 + b * 0.0722;
 const ZUP2YUP = [1, 0, 0, 0, 0, 0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1];
 function mTranslate(x, y, z) { return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1]; }
 function mRotY(a) { const c = Math.cos(a), s = Math.sin(a); return [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]; }
 function mScale(s) { return [s, 0, 0, 0, 0, s, 0, 0, 0, 0, s, 0, 0, 0, 0, 1]; }
+function rnd01(a, b) { return a + Math.random() * (b - a); }
 function u8(b) { return b instanceof Uint8Array ? b : new Uint8Array(b); }
 
 function buildTerrain(hg, bounds) {
@@ -264,14 +267,8 @@ export function createMap3D(scene) {
   const fxEmitters = new Map();
   let fxLastT = null;
 
-  // Real TF2 particle systems, attached to what the sim actually reports.
-  // Both of these must be CONTINUOUS systems: a state indicator has to persist. One-shot
-  // burst systems (mvm_pow_crit, crit_text, mvm_loot_floatember) fire once and vanish, so
-  // they are useless here even though they sound right. Measured across the stock files for
-  // sustained particle counts: soldierbuff_blue_spiral is TF2's BLU buff aura (rate 2000,
-  // ~500 alive) and mvm_hatch_destroy_smolderembers is glowing embers on sc_hardglow
-  // (rate 50, ~100 alive) — the live-bomb look on the carrier's back.
-  const FX = { carrier: 'mvm_hatch_destroy_smolderembers', crit: 'soldierbuff_blue_spiral' };
+  const FX = { carrier: 'mvm_hatch_destroy_smolderembers', crit: 'critgun_weaponmodel_blu' };
+  const CRIT_GLOW = (() => { const v = [5, 20, 80]; const m = Math.max(...v); return v.map(c => c / m * 0.62); })();
 
   function fxFor(key) {
     const name = FX[key];
@@ -280,27 +277,27 @@ export function createMap3D(scene) {
       fxCache.set(name, null);
       getTFPath().then(tf => loadSystem(name, tf)).then(rec => {
         if (disposed || !rec || !rec.def) return;
-        let tex = null;
-        if (rec.sheet && rec.sheet.rgba) tex = makeGLTex(rec.sheet);
-        fxCache.set(name, { def: rec.def, tex });
+        const layers = [{ def: rec.def, tex: rec.sheet && rec.sheet.rgba ? makeGLTex(rec.sheet) : null }];
+        for (const c of (rec.children || [])) {
+          layers.push({ def: c.def, tex: c.sheet && c.sheet.rgba ? makeGLTex(c.sheet) : null });
+        }
+        fxCache.set(name, layers);
         schedule();
       }).catch(() => {});
     }
     return fxCache.get(name);
   }
 
-  function fxEmitter(id, key, origin) {
-    const rec = fxFor(key);
-    if (!rec) return null;
-    let e = fxEmitters.get(id);
-    if (!e || e.def !== rec.def) {
-      e = createEmitter(rec.def);
-      // Run the system forward once so a paused view (and the very first frame) shows it at
-      // steady state instead of a cloud of zero-age, zero-alpha particles.
-      if (origin) for (let i = 0; i < 45; i++) e.step(1 / 30, origin);
-      fxEmitters.set(id, e);
+  function fxEmitter(id, key, origin, sampler) {
+    const layers = fxFor(key);
+    if (!layers) return null;
+    let set = fxEmitters.get(id);
+    if (!set || set.layers !== layers) {
+      set = { layers, emitters: layers.map(l => createEmitter(l.def)) };
+      if (origin) for (let i = 0; i < 45; i++) for (const e of set.emitters) e.step(1 / 30, origin, sampler);
+      fxEmitters.set(id, set);
     }
-    return e;
+    return set;
   }
 
   const vigProg = program(gl, VIG_VS, VIG_FS);
@@ -390,7 +387,8 @@ export function createMap3D(scene) {
     useTexAlpha: gl.getUniformLocation(worldProg, 'uUseTexAlpha'),
     matAlpha: gl.getUniformLocation(worldProg, 'uMatAlpha'),
     brightPass: gl.getUniformLocation(worldProg, 'uBrightPass'),
-    minLight: gl.getUniformLocation(worldProg, 'uMinLight')
+    minLight: gl.getUniformLocation(worldProg, 'uMinLight'),
+    flatColor: gl.getUniformLocation(worldProg, 'uFlatColor')
   };
   const blurProg = program(gl, VIG_VS, BLUR_FS);
   const blurA = { pos: gl.getAttribLocation(blurProg, 'aPos'), tex: gl.getUniformLocation(blurProg, 'uTex'), dir: gl.getUniformLocation(blurProg, 'uDir') };
@@ -426,6 +424,7 @@ export function createMap3D(scene) {
   let worldLmRange = 16;
   let worldMinLight = [0.05, 0.05, 0.05];
   let worldUpBright = 0;
+  let worldBloom = 1;
   let sunScale = 0;
   let ambUpRef = 0;
   const BLOOM_SCALE = 0.5;
@@ -435,9 +434,6 @@ export function createMap3D(scene) {
   const AMB_ZERO = new Float32Array(18);
   const EMPTY_LIGHT = { amb: AMB_ZERO, n: 0, pos: new Float32Array(12), int: new Float32Array(12), nrm: new Float32Array(12), att: new Float32Array(16), cone: new Float32Array(12) };
 
-  // The engine's model lighting state at a world point: the leaf ambient cube plus the
-  // strongest local worldlights. Cube faces and light vectors are rebased from TF axes
-  // (x,y,z up) to this renderer's GL axes (x, z, -y).
   function lightingFor(x, y, z) {
     if (!lightData) return EMPTY_LIGHT;
     const key = (x >> 6) + ',' + (y >> 6) + ',' + (z >> 6);
@@ -450,15 +446,6 @@ export function createMap3D(scene) {
       const src = order[f] * 3;
       amb[f * 3] = tf[src]; amb[f * 3 + 1] = tf[src + 1]; amb[f * 3 + 2] = tf[src + 2];
     }
-    // The leaf ambient cube is vrad's baked AMBIENT irradiance, unit-consistent with the
-    // lightmap (measured: 0.37 vs 0.33 mean luminance) — but ambient-only leaves models with
-    // no direct sun, which reads as the sky's flat blue. The one light worth re-adding is the
-    // skylight (the sun); the point/spot lights measured ~0.00 at prop positions anyway.
-    // dworldlight_t.intensity is vrad's PRE-radiosity input, so it cannot be mixed with baked
-    // units directly (raw, it clipped 98% of props to white). Calibrate it instead: sunlit
-    // up-facing world faces sit at lmUpBright, and the ambient cube supplies A_up there, so
-    // the sun must contribute (lmUpBright - A_up) for an up-facing surface. Both sides are
-    // measured vrad output — no guessed constant.
     const sun = lightData.lights.find(w => w.type === EMIT_SKYLIGHT);
     if (sun && !sunScale && worldUpBright > 0) {
       let aSum = 0, aN = 0;
@@ -473,10 +460,6 @@ export function createMap3D(scene) {
       sunScale = sunLum > 0 ? Math.max(0, worldUpBright - aUp) / (sunLum * cos) : 0;
     }
     if (sun && sunScale > 0) {
-      // How much sun actually reaches this spot. vrad already answered that: the leaf ambient
-      // cube's up-face is the baked measure of sky visibility here, so a prop tucked under an
-      // arch or behind a building gets proportionally less sun instead of being lit as if it
-      // stood in the open. Without this every prop reads equally sunlit regardless of cover.
       const localUp = LUM3(amb[6], amb[7], amb[8]);
       const skyVis = ambUpRef > 0 ? Math.max(0, Math.min(1, localUp / ambUpRef)) : 1;
       const pos = new Float32Array(12), int = new Float32Array(12), nrm = new Float32Array(12);
@@ -511,6 +494,7 @@ export function createMap3D(scene) {
     if (world) for (const g of world) { gl.deleteBuffer(g.posBuf); gl.deleteBuffer(g.uvBuf); gl.deleteBuffer(g.lmBuf); if (g.tex) gl.deleteTexture(g.tex); }
     if (lmTex) { gl.deleteTexture(lmTex); lmTex = null; }
     worldExposure = Number.isFinite(faces3d.exposure) ? faces3d.exposure : LM_OVERBRIGHT;
+    worldBloom = faces3d.tonemap && Number.isFinite(faces3d.tonemap.bloomScale) ? Math.max(0, faces3d.tonemap.bloomScale) : 1;
     worldLmRange = (faces3d.lightmap && faces3d.lightmap.range) || 16;
     worldUpBright = Number.isFinite(faces3d.lmUpBright) ? faces3d.lmUpBright : 0;
     sunScale = 0;
@@ -533,9 +517,9 @@ export function createMap3D(scene) {
       const posBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, posBuf); gl.bufferData(gl.ARRAY_BUFFER, f32(m.positions), gl.STATIC_DRAW);
       const uvBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf); gl.bufferData(gl.ARRAY_BUFFER, f32(m.uvs), gl.STATIC_DRAW);
       const lmBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, lmBuf); gl.bufferData(gl.ARRAY_BUFFER, f32(m.lm), gl.STATIC_DRAW);
-      const g = { posBuf, uvBuf, lmBuf, count: m.count, tex: null, texW: 256, texH: 256, translucent: false, alpha: 1 };
+      const g = { posBuf, uvBuf, lmBuf, count: m.count, tex: null, texW: 256, texH: 256, translucent: false, alpha: 1, belowWater: false, flatColor: null };
       world.push(g);
-      resolveMat(m.name, [], tfPath).then(mat => { if (disposed) return; g.tex = mat.tex; g.translucent = mat.translucent; g.alpha = mat.alpha; if (mat.w) { g.texW = mat.w; g.texH = mat.h; } schedule(); });
+      resolveMat(m.name, [], tfPath).then(mat => { if (disposed) return; g.tex = mat.tex; g.translucent = mat.translucent; g.alpha = mat.alpha; g.belowWater = mat.belowWater; g.flatColor = mat.flatColor; if (mat.w) { g.texW = mat.w; g.texH = mat.h; } schedule(); });
     }
   }
 
@@ -563,8 +547,8 @@ export function createMap3D(scene) {
   async function effectiveVmt(rel, tfPath, bsp, seen) {
     const buf = await window.popnative.matRead(rel, tfPath, bsp);
     if (!buf) return null;
-    const text = new TextDecoder('latin1').decode(u8(buf));
-    if (/\$basetexture\b/i.test(text) || seen.size > 4) return text;
+    const text = stripVmtComments(new TextDecoder('latin1').decode(u8(buf)));
+    if (vmtParam(text, 'basetexture') !== null || seen.size > 4) return text;
     const inc = text.match(/["']?include["']?\s+["']?([^"'\r\n]+?)["']?\s*$/im);
     if (!inc) return text;
     const next = inc[1].trim().replace(/\\/g, '/').replace(/^materials\//i, '').replace(/\.vmt$/i, '').toLowerCase();
@@ -578,26 +562,30 @@ export function createMap3D(scene) {
   async function resolveMat(texName, cdtextures, tfPath) {
     const bsp = (scene && scene.bspPath) || null;
     const name = String(texName || '').replace(/\\/g, '/').toLowerCase();
-    const cands = name.includes('/') ? ['materials/' + name + '.vmt'] : cdtextures.map(cd => ('materials/' + cd + name + '.vmt').replace(/\/+/g, '/').toLowerCase());
+    const cands = (!cdtextures || !cdtextures.length || name.includes('/'))
+      ? ['materials/' + name + '.vmt']
+      : cdtextures.map(cd => ('materials/' + cd + name + '.vmt').replace(/\/+/g, '/').toLowerCase());
     for (const rel of cands) {
       const text = await effectiveVmt(rel, tfPath, bsp, new Set([rel]));
       if (!text) continue;
-      const base = text.match(/\$basetexture"?\s*"?([^"\r\n]+?)"?\s*$/im);
+      const base = vmtParam(text, 'basetexture');
       const has = k => new RegExp('"?\\$' + k + '"?\\s*"?\\s*1', 'i').test(text);
       const alphaIsMask = has('basemapalphaphongmask') || has('basealphaenvmapmask') || has('blendtintbybasealpha') || (has('selfillum') && !/\$selfillummask/i.test(text));
       const translucent = has('translucent') && !alphaIsMask;
       const alphaTest = has('alphatest') && !alphaIsMask;
       const am = text.match(/\$alpha"?\s+"?([0-9.]+)/i);
       const alpha = am ? Math.max(0, Math.min(1, parseFloat(am[1]))) : 1;
+      const belowWater = /\$abovewater"?\s*"?\s*0/i.test(text);
+      let flatColor = vmtColor(text, 'fogcolor');
       let tex = null, w = 0, h = 0;
       if (base) {
-        const vtf = 'materials/' + base[1].trim().replace(/\\/g, '/').replace(/\.vtf$/i, '').toLowerCase() + '.vtf';
-        const raw = await window.popnative.matTexture(vtf, tfPath, bsp);
+        const raw = await window.popnative.matTexture(vmtTexturePath(base), tfPath, bsp);
         if (raw) { tex = makeGLTex(raw); w = raw.width; h = raw.height; }
       }
-      return { tex, alphaTest, translucent, alpha, w, h };
+      if (!tex && !flatColor) flatColor = vmtColor(text, 'color') || vmtColor(text, 'color2');
+      return { tex, alphaTest, translucent, alpha, w, h, belowWater, flatColor };
     }
-    return { tex: null, alphaTest: false, translucent: false, alpha: 1, w: 0, h: 0 };
+    return { tex: null, alphaTest: false, translucent: false, alpha: 1, w: 0, h: 0, belowWater: false, flatColor: null };
   }
 
   const props = new Map();
@@ -610,7 +598,7 @@ export function createMap3D(scene) {
     props.set(model, rec);
     (async () => {
       let m = null;
-      try { m = await loadPropModel(model); } catch {}
+      try { m = await loadPropModel(model, (scene && scene.bspPath) || null); } catch {}
       if (disposed) return;
       if (!m) { rec.loading = false; rec.error = true; return; }
       const tfPath = await getTFPath();
@@ -689,13 +677,71 @@ export function createMap3D(scene) {
     }
   }
 
-  function ensureModel(key, base, attachments) {
+  function animFrame(pool, a) {
+    const useStand = !a.moving && pool.standCount > 1;
+    const base = useStand ? pool.runCount : 0;
+    const nf = useStand ? pool.standCount : pool.runCount;
+    const fpos = useStand
+      ? scene.ps.t * pool.standFps + (a.phase || 0)
+      : (pool.moveDist > 1 ? (a.dist || 0) / pool.moveDist : scene.ps.t * pool.fps / nf) * nf + (a.phase || 0);
+    const local0 = ((Math.floor(fpos) % nf) + nf) % nf;
+    return { f0: base + local0, f1: base + (local0 + 1) % nf, blend: fpos - Math.floor(fpos) };
+  }
+
+  function modelSampler(pool, frame, a, gy) {
+    const boneFrames = pool && pool.boneWorldFrames;
+    const boxes = pool && pool.hitboxes;
+    if (!boneFrames || !boneFrames.length || !boxes || !boxes.length) return null;
+    const bones = boneFrames[Math.min(frame, boneFrames.length - 1)];
+    if (!bones) return null;
+    const s = (a.scale || 1) * MODEL_DISPLAY_SCALE;
+    const c = Math.cos(a.heading || 0), sn = Math.sin(a.heading || 0);
+    const place = (bi, lx, ly, lz, out) => {
+      const m = bones[bi];
+      if (!m) return false;
+      const mx = m[0] * lx + m[4] * ly + m[8] * lz + m[12];
+      const my = m[1] * lx + m[5] * ly + m[9] * lz + m[13];
+      const mz = m[2] * lx + m[6] * ly + m[10] * lz + m[14];
+      out[0] = a.x + s * (c * mx + sn * my);
+      out[1] = a.y + s * (c * my - sn * mx);
+      out[2] = gy + s * mz;
+      return true;
+    };
+    const out = new Array(7);
+    const best = new Array(7);
+    return (spec, bi, lx, ly, lz) => {
+      if (!spec) return place(bi, lx, ly, lz, out) ? out : null;
+      const hi = spec.scale, lo = 1 - spec.scale;
+      const bias = spec.bias || [0, 0, 0];
+      const tries = (bias[0] || bias[1] || bias[2]) ? 6 : Math.max(1, spec.tries + 1);
+      let bestScore = -Infinity, got = false;
+      for (let k = 0; k < tries; k++) {
+        const box = boxes[(Math.random() * boxes.length) | 0];
+        const u = rnd01(lo, hi), v = rnd01(lo, hi), w = rnd01(lo, hi);
+        const px = box.min[0] + (box.max[0] - box.min[0]) * u;
+        const py = box.min[1] + (box.max[1] - box.min[1]) * v;
+        const pz = box.min[2] + (box.max[2] - box.min[2]) * w;
+        if (!place(box.bone, px, py, pz, out)) continue;
+        const score = Math.random() * 72
+          + (out[0] - a.x) * bias[0] + (out[1] - a.y) * bias[1] + (out[2] - gy) * bias[2];
+        if (score > bestScore) {
+          bestScore = score;
+          best[0] = out[0]; best[1] = out[1]; best[2] = out[2];
+          best[3] = box.bone; best[4] = px; best[5] = py; best[6] = pz;
+          got = true;
+        }
+      }
+      return got ? best : null;
+    };
+  }
+
+  function ensureModel(key, base, attachments, activity) {
     if (!key || models.has(key)) return;
     const rec = { loading: true, loaded: false };
     models.set(key, rec);
     (async () => {
       let pose = null;
-      try { pose = await loadBotPose(base); } catch {}
+      try { pose = await loadBotPose(base, activity); } catch {}
       if (disposed) return;
       if (!pose) { rec.loading = false; rec.error = true; return; }
       const tfPath = await getTFPath();
@@ -707,7 +753,7 @@ export function createMap3D(scene) {
         if (disposed) return;
         if (ap && ap.frames.length) atts.push(buildRenderable(ap, tfPath));
       }
-      Object.assign(rec, { loading: false, loaded: true, ...body, attachments: atts, numframes: pose.numframes, fps: pose.fps, flagFrames: pose.flagFrames });
+      Object.assign(rec, { loading: false, loaded: true, ...body, attachments: atts, numframes: pose.numframes, fps: pose.fps, moveDist: pose.moveDist || 0, runCount: pose.runCount || pose.numframes, standCount: pose.standCount || 0, standFps: pose.standFps || 30, flagFrames: pose.flagFrames, hitboxes: pose.hitboxes || [], boneWorldFrames: pose.boneWorldFrames });
       schedule();
     })();
   }
@@ -901,10 +947,11 @@ export function createMap3D(scene) {
       gl.activeTexture(gl.TEXTURE1);
       if (lmTex) gl.bindTexture(gl.TEXTURE_2D, lmTex);
       for (const g of world) {
-        if (g.translucent) continue;
+        if (g.translucent || g.belowWater) continue;
         gl.activeTexture(gl.TEXTURE0);
         if (g.tex) gl.bindTexture(gl.TEXTURE_2D, g.tex);
         gl.uniform1f(wA.hasTex, g.tex ? 1 : 0);
+        gl.uniform3fv(wA.flatColor, g.flatColor || NO_TEX_COLOR);
         gl.uniform2f(wA.texSize, g.texW, g.texH);
         gl.bindBuffer(gl.ARRAY_BUFFER, g.posBuf); gl.enableVertexAttribArray(wA.pos); gl.vertexAttribPointer(wA.pos, 3, gl.FLOAT, false, 0, 0);
         gl.bindBuffer(gl.ARRAY_BUFFER, g.uvBuf); gl.enableVertexAttribArray(wA.uv); gl.vertexAttribPointer(wA.uv, 2, gl.FLOAT, false, 0, 0);
@@ -972,7 +1019,7 @@ export function createMap3D(scene) {
     for (const a of actors) {
       if (a.kind === 'bot' && a.modelBase && a.loadoutKey) {
         const pool = models.get(a.loadoutKey);
-        if (!pool) ensureModel(a.loadoutKey, a.modelBase, a.attachments);
+        if (!pool) ensureModel(a.loadoutKey, a.modelBase, a.attachments, a.activity);
         if (pool && pool.loaded) { modelActors.push(a); continue; }
         if (pool && pool.error) { pts.push(a); continue; }
         if (pool && pool.loading) { pts.push(a); continue; }
@@ -994,22 +1041,20 @@ export function createMap3D(scene) {
       const bombPool = carriers ? props.get(BOMB_MODEL) : null;
       for (const a of modelActors) {
         const pool = models.get(a.loadoutKey);
-        if (a.crit) {
-          const pulse = 0.55 + 0.45 * Math.sin(scene.ps.t * 9.0);
-          gl.uniform3f(mA.glow, 0.10 * pulse, 0.30 * pulse, 0.62 * pulse);
-        } else gl.uniform3f(mA.glow, 0, 0, 0);
+        gl.uniform3f(mA.glow, 0, 0, 0);
         const gy = Number.isFinite(a.z) ? a.z : sampleHeight(a.x, a.y);
         applyModelLight(a.x, a.y, gy + 40);
         const M = mul(mul(mul(mTranslate(a.x, gy, -a.y), mRotY(a.heading || 0)), ZUP2YUP), mScale((a.scale || 1) * MODEL_DISPLAY_SCALE));
         gl.uniformMatrix4fv(mA.mvp, false, new Float32Array(mul(mvp, M)));
         gl.uniformMatrix4fv(mA.model, false, new Float32Array(M));
-        const nf = pool.numframes;
-        const fpos = a.moving ? scene.ps.t * pool.fps + (a.phase || 0) : 0;
-        const f0 = ((Math.floor(fpos) % nf) + nf) % nf;
-        const f1 = a.moving ? (f0 + 1) % nf : f0;
-        const blend = a.moving ? fpos - Math.floor(fpos) : 0;
+        const { f0, f1, blend } = animFrame(pool, a);
+        a.frame = f0;
         drawRenderable(pool, f0, f1, blend);
-        if (pool.attachments) for (const att of pool.attachments) drawRenderable(att, f0, f1, blend);
+        if (pool.attachments && pool.attachments.length) {
+          if (a.crit) gl.uniform3f(mA.glow, CRIT_GLOW[0], CRIT_GLOW[1], CRIT_GLOW[2]);
+          for (const att of pool.attachments) drawRenderable(att, f0, f1, blend);
+          if (a.crit) gl.uniform3f(mA.glow, 0, 0, 0);
+        }
         if (a.carrying && pool.flagFrames && bombPool && bombPool.loaded) {
           const bombM = mul(M, pool.flagFrames[f0]);
           gl.uniformMatrix4fv(mA.mvp, false, new Float32Array(mul(mvp, bombM)));
@@ -1063,18 +1108,16 @@ export function createMap3D(scene) {
       if (lmTex) gl.bindTexture(gl.TEXTURE_2D, lmTex);
       gl.enable(gl.DEPTH_TEST);
       gl.depthMask(false);
-      // Glass is single-sided in Source. With culling off every pane blends twice (front and
-      // back face), which saturates it into flat opaque-looking panels instead of a subtle
-      // tint — that is what produced the periwinkle slabs over mannhattan's storefronts.
       gl.enable(gl.CULL_FACE);
       gl.cullFace(gl.BACK);
       gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
       for (const g of world) {
-        if (!g.translucent) continue;
+        if (!g.translucent || g.belowWater) continue;
         gl.uniform1f(wA.matAlpha, g.alpha != null ? g.alpha : 1);
         gl.activeTexture(gl.TEXTURE0);
         if (g.tex) gl.bindTexture(gl.TEXTURE_2D, g.tex);
         gl.uniform1f(wA.hasTex, g.tex ? 1 : 0);
+        gl.uniform3fv(wA.flatColor, g.flatColor || NO_TEX_COLOR);
         gl.uniform2f(wA.texSize, g.texW, g.texH);
         gl.bindBuffer(gl.ARRAY_BUFFER, g.posBuf); gl.enableVertexAttribArray(wA.pos); gl.vertexAttribPointer(wA.pos, 3, gl.FLOAT, false, 0, 0);
         gl.bindBuffer(gl.ARRAY_BUFFER, g.uvBuf); gl.enableVertexAttribArray(wA.uv); gl.vertexAttribPointer(wA.uv, 2, gl.FLOAT, false, 0, 0);
@@ -1085,12 +1128,7 @@ export function createMap3D(scene) {
       gl.disable(gl.BLEND);
     }
 
-    // Particle effects: step TF2's own particle systems and draw them as additive sprites.
-    // Emitters follow whatever the sim says they are attached to — the bomb on the carrier's
-    // back (its real "flag" attachment point) and crit-boosted robots.
     {
-      // Particles are real-time effects in TF2 — they keep animating when the sim is paused,
-      // so drive them off the wall clock rather than sim time (which is frozen while paused).
       const tNow = performance.now() / 1000;
       const dt = fxLastT === null ? 1 / 60 : Math.max(0, Math.min(0.1, tNow - fxLastT));
       fxLastT = tNow;
@@ -1100,13 +1138,15 @@ export function createMap3D(scene) {
         const gy = Number.isFinite(a.z) ? a.z : sampleHeight(a.x, a.y);
         if (a.carrying) {
           const o = [a.x, a.y, gy + 52];
-          const e = fxEmitter('carrier', 'carrier', o);
-          if (e) { e.step(dt, o); live.push(['carrier', e]); }
+          const set = fxEmitter('carrier', 'carrier', o);
+          if (set) for (let i = 0; i < set.emitters.length; i++) { set.emitters[i].step(dt, o); live.push([set.layers[i].tex, set.emitters[i]]); }
         }
         if (a.crit) {
-          const o = [a.x, a.y, gy + 40];
-          const e = fxEmitter('crit:' + (a.key || a.id || Math.round(a.x) + ',' + Math.round(a.y)), 'crit', o);
-          if (e) { e.step(dt, o); live.push(['crit', e]); }
+          const o = [a.x, a.y, gy];
+          const pool = a.loadoutKey ? models.get(a.loadoutKey) : null;
+          const sampler = pool && pool.loaded ? modelSampler(pool, a.frame || 0, a, gy) : null;
+          const set = fxEmitter('crit:' + (a.key || a.id || Math.round(a.x) + ',' + Math.round(a.y)), 'crit', o, sampler);
+          if (set) for (let i = 0; i < set.emitters.length; i++) { set.emitters[i].step(dt, o, sampler); live.push([set.layers[i].tex, set.emitters[i]]); }
         }
       }
       if (live.length) {
@@ -1120,15 +1160,14 @@ export function createMap3D(scene) {
         gl.depthMask(false);
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.ONE, gl.ONE);
-        for (const [key, e] of live) {
+        for (const [layerTex, e] of live) {
           const need = 9 * Math.max(1, e.particles.length);
           if (partScratch.length < need) partScratch = new Float32Array(need * 2);
           const n = e.fill(partScratch);
           if (!n) continue;
-          const rec = fxFor(key);
           gl.activeTexture(gl.TEXTURE0);
-          if (rec && rec.tex) gl.bindTexture(gl.TEXTURE_2D, rec.tex);
-          gl.uniform1f(paA.hasTex, rec && rec.tex ? 1 : 0);
+          if (layerTex) gl.bindTexture(gl.TEXTURE_2D, layerTex);
+          gl.uniform1f(paA.hasTex, layerTex ? 1 : 0);
           gl.bindBuffer(gl.ARRAY_BUFFER, partBuf);
           gl.bufferData(gl.ARRAY_BUFFER, partScratch.subarray(0, n * 9), gl.DYNAMIC_DRAW);
           const stride = 36;
@@ -1150,9 +1189,7 @@ export function createMap3D(scene) {
 
     drawZones(mvp);
 
-    // Bloom: TF2's HDR glow. Capture the real >1.0 overflow of lit world surfaces into a
-    // half-res buffer, gaussian-blur it, and add it back scaled by the map's SetBloomScale.
-    if (world && world.length && lmTex) {
+    if (world && world.length && lmTex && worldBloom > 0) {
       ensureBloomFBs(canvas.width, canvas.height);
       gl.disable(gl.DEPTH_TEST); gl.depthMask(false); gl.disable(gl.BLEND); gl.disable(gl.CULL_FACE);
       gl.bindFramebuffer(gl.FRAMEBUFFER, bloomFBs[0].fb);
@@ -1191,7 +1228,7 @@ export function createMap3D(scene) {
       gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
       gl.enableVertexAttribArray(bloomA.pos); gl.vertexAttribPointer(bloomA.pos, 2, gl.FLOAT, false, 0, 0);
       gl.uniform1i(bloomA.tex, 0); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, bloomFBs[0].tex);
-      gl.uniform1f(bloomA.scale, BLOOM_SCALE);
+      gl.uniform1f(bloomA.scale, BLOOM_SCALE * worldBloom);
       gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       gl.disable(gl.BLEND); gl.depthMask(true);

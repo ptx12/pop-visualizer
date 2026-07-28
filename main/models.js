@@ -3,38 +3,17 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { parseMDL, parseVVD, parseVTX, buildMeshes, sampleAnim } from '../shared/mdl.js';
+import { resolveActivities, includeBases } from '../shared/modelanims.js';
 import { detectTFPath } from './tfpath.js';
 import { httpGet, potatoUrl } from './potato.js';
-import { indexVPK, readVPKEntry } from '../shared/vpk.js';
-
-const modelVpkIndexes = new Map();
-function modelVpkIndex(tfPath, ext) {
-  const key = tfPath + ':' + ext;
-  if (modelVpkIndexes.has(key)) return modelVpkIndexes.get(key);
-  const map = new Map();
-  try {
-    for (const [k, e] of indexVPK(path.join(tfPath, 'tf2_misc_dir.vpk'), (x, dir) => x === ext && dir.startsWith('models'))) map.set(k, e);
-  } catch {}
-  modelVpkIndexes.set(key, map);
-  return map;
-}
+import { readGameFile } from '../shared/gamefs.js';
 
 async function readModelSet(src, tfPath) {
   const need = async rel => {
     if (src.kind === 'file') {
       try { return await fs.readFile(src.base + rel); } catch { return null; }
     }
-    if (src.kind === 'vpk') {
-      const ext = rel.endsWith('.vtx') ? 'vtx' : rel.slice(1);
-      const full = (src.base + rel).toLowerCase().replace(/\\/g, '/');
-      if (full.includes('..')) return null;
-      const e = modelVpkIndex(tfPath, ext).get(full);
-      if (e) { try { return readVPKEntry(path.join(tfPath, 'tf2_misc_dir.vpk'), e); } catch {} }
-      for (const root of [path.join(tfPath, 'download'), tfPath]) {
-        try { return await fs.readFile(path.join(root, full.replace(/\//g, path.sep))); } catch {}
-      }
-      return null;
-    }
+    if (src.kind === 'vpk') return await readGameFile(src.base + rel, tfPath, src.bsp || null);
     try { return await httpGet(potatoUrl(src.base + rel), 128 * 1024 * 1024); } catch { return null; }
   };
   const mdl = await need('.mdl');
@@ -45,11 +24,13 @@ async function readModelSet(src, tfPath) {
   return { mdl, vvd, vtx };
 }
 
-function animFramesFor(mdl, targetBones, boneMap, match) {
+function animFramesFor(mdl, targetBones, boneMap, match, pick) {
   const out = [];
+  const wanted = pick && pick.length ? new Set(pick.map(n => n.toLowerCase())) : null;
   for (const a of mdl.anims) {
     if (a.animblock !== 0 || a.numframes < 1 || a.numframes > 1000) continue;
-    if (match && !a.name.toLowerCase().includes(match)) continue;
+    if (wanted && !wanted.has(a.name.toLowerCase())) continue;
+    if (!wanted && match && !match.some(m => a.name.toLowerCase().includes(m))) continue;
     const frames = new Float32Array(a.numframes * targetBones.length * 7);
     let ok = true;
     for (let f = 0; f < a.numframes; f++) {
@@ -67,7 +48,7 @@ function animFramesFor(mdl, targetBones, boneMap, match) {
       }
     }
     if (!ok) continue;
-    out.push({ name: a.name, fps: a.fps || 30, numframes: a.numframes, frames: Buffer.from(frames.buffer) });
+    out.push({ name: a.name, fps: a.fps || 30, numframes: a.numframes, moveDist: a.moveDist || 0, frames: Buffer.from(frames.buffer) });
   }
   return out;
 }
@@ -134,17 +115,46 @@ export function register() {
         result.meshes = meshes;
         result.bbox = bbox;
       }
-      const match = src.animMatch ? String(src.animMatch).toLowerCase() : null;
-      result.anims = animFramesFor(mdl, mdl.bones, null, match);
-      try {
-        const compSet = await readModelSet({ kind: src.kind, base: src.base + '_animations' }, tfPath);
-        if (compSet && compSet.mdl) {
+      const match = src.animMatch
+        ? (Array.isArray(src.animMatch) ? src.animMatch : [src.animMatch]).map(m => String(m).toLowerCase())
+        : null;
+      const activities = Array.isArray(src.activities) ? src.activities.map(String) : null;
+      result.hitboxes = mdl.hitboxes || [];
+      result.activities = {};
+
+      const sources = [{ mdl, boneMap: null }];
+      const seen = new Set([String(src.base).toLowerCase()]);
+      const queue = includeBases(mdl, src.base);
+      let guard = 0;
+      while (queue.length && guard++ < 12) {
+        const base = queue.shift();
+        if (!base || seen.has(base)) continue;
+        seen.add(base);
+        try {
+          const compSet = await readModelSet({ kind: src.kind, base, bsp: src.bsp }, tfPath);
+          if (!compSet || !compSet.mdl) continue;
           const comp = parseMDL(compSet.mdl);
+          for (const nested of (comp.includemodels || [])) queue.push(nested.replace(/\.mdl$/i, '').toLowerCase());
+          if (!comp.sequences.length && !comp.anims.length) continue;
           const nameToIdx = new Map(comp.bones.map((b, i) => [b.name.toLowerCase(), i]));
-          const boneMap = mdl.bones.map(b => nameToIdx.get(b.name.toLowerCase()) ?? -1);
-          result.anims.push(...animFramesFor(comp, mdl.bones, boneMap, match));
+          sources.push({ mdl: comp, boneMap: mdl.bones.map(b => nameToIdx.get(b.name.toLowerCase()) ?? -1) });
+        } catch {}
+      }
+
+      const picked = sources.map(() => []);
+      if (activities) {
+        for (let i = 0; i < sources.length; i++) {
+          const found = resolveActivities(sources[i].mdl, activities.filter(a => !result.activities[a]));
+          for (const [act, name] of found) { result.activities[act] = name; picked[i].push(name); }
         }
-      } catch {}
+      }
+      const anyPicked = picked.some(p => p.length);
+      result.anims = [];
+      for (let i = 0; i < sources.length; i++) {
+        const s = sources[i];
+        if (anyPicked && !picked[i].length) continue;
+        result.anims.push(...animFramesFor(s.mdl, mdl.bones, s.boneMap, anyPicked ? null : match, anyPicked ? picked[i] : null));
+      }
       return result;
     } catch (err) {
       return { error: err.message };

@@ -83,7 +83,6 @@ check('"health from healers reduced" scales the heal rate', raf.healRateMult ===
 check('negative "health regen" is kept as a drain', raf.healthRegen === -1, String(raf.healthRegen));
 check('a mobber modifier is distinct from push', botOf('Class Soldier BehaviorModifiers mobber').mobber === true);
 
-// A real HellOnEarth VIP Giant Engineer — the whole feature surface in one bot.
 const VIP = `Class Engineer Name "Giant Engineer" ClassIcon vip_blu Health 5000 Skill Expert
 	Item "The Death Ranger" Item "Scrap Sentinel"
 	Attributes MiniBoss Attributes UseBossHealthBar Scale 1.7
@@ -112,10 +111,6 @@ check('VIP: the OnDoneChangeAttributes chain is captured', finalNode.onDoneChang
 check('VIP: the interrupt point is parsed', JSON.stringify(finalNode.interrupts[0].point) === '[2289,-2440,250]');
 check('VIP: every relay the bot fires is surfaced', vip.firedTargets.join() === 'engie_hint_node_final,node_final_reached,!activator', JSON.stringify(vip.firedTargets));
 
-// Regression guard: every top-level TFBot key the SigMod/RafMod source parses
-// (CTFBotSpawner::Parse in tfbot_extensions.cpp) must be recognized here, so we
-// stop discovering unhandled keys one bot at a time. Refresh the fixture from
-// the mod source if SigMod adds keys.
 import { readFileSync as rfs } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -128,8 +123,6 @@ const unrec = sigKeys.filter(k => { const lk = k.toLowerCase(); return !knownK.h
 check('every SigMod/RafMod top-level TFBot key is recognized (' + sigKeys.length + ' keys)',
   unrec.length === 0, 'unrecognized: ' + unrec.join(', '));
 
-// Items with a baked-in move-speed attribute apply automatically (as in-game),
-// stacking with explicit CharacterAttributes. Values from the TF2 wiki.
 check('GRU grants +30% move speed from the item alone',
   Math.abs(botOf('Class Heavyweapons Item "Gloves of Running Urgently MvM"').moveSpeedMult - 1.3) < 1e-9,
   String(botOf('Class Heavyweapons Item "Gloves of Running Urgently MvM"').moveSpeedMult));

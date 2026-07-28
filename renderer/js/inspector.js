@@ -1,5 +1,5 @@
 import { el, clear, field, numInput, textInput, selectInput, ensureDatalist, botVisual, tankVisual, sentryChip, modal, closeModal, toast, fmtNum, fmtTime, compositionChips } from './ui.js';
-import { state, activeFile, beginEdit, commitEdit, emit, invalidateSims, saveSimOpts, tankTimeFor, setTankTime, defaultTankTime, rawTankOverride, deathModel, setDeathModel, simFor, gatingFor, wsTriggerTime, setWsTriggerTime } from './state.js';
+import { state, activeFile, beginEdit, commitEdit, emit, invalidateSims, saveSimOpts, tankTimeFor, setTankTime, rawTankOverride, deathModel, setDeathModel, simFor, gatingFor, wsTriggerTime, setWsTriggerTime } from './state.js';
 import { scrollToTime } from './timeline.js';
 import { isGated } from './gating.js';
 import { setValue, getValue, findFirst, findAll, makeBlock, makeKV, removeNode, cloneNode, parse, serialize } from './kv.js';

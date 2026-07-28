@@ -165,8 +165,6 @@ const COMBAT_KEYS = [
   'desiredattackrange', 'movebehindenemy', 'followcrosshair', 'aimtime', 'mindotproduct'
 ];
 
-// Recognized SigMod/RafMod sub-blocks — captured verbatim into info.blocks[key]
-// so they are never "unknown", visible in the model, but not simulated (combat/cosmetic).
 const RECOGNIZED_BLOCKS = [
   'damageappliescond', 'fireweapon', 'homingrockets', 'itemcolor', 'itemmodel', 'message',
   'customweaponmodel', 'shoottemplate', 'spell', 'taunt', 'voicecommand', 'weaponresist',

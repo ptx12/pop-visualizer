@@ -1,10 +1,5 @@
 import { cap, LIMITS } from './limits.js';
 
-// Valve DMX "binary 2 / format pcf 1" reader — the encoding every stock TF2 particles/*.pcf
-// uses. Layout: null-terminated header string, uint16 string-table count + null-terminated
-// strings, int32 element count, then ALL element headers (uint16 type-name index,
-// null-terminated element name, 16-byte GUID), then one attribute block per element in the
-// same order (int32 attribute count, then uint16 name index + uint8 type + value).
 const AT_ELEMENT = 1, AT_FIRST_ARRAY = 15;
 
 export function parsePCF(buf) {

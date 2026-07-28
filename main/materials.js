@@ -1,142 +1,78 @@
 import { ipcMain } from 'electron';
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { decodeVTF } from '../shared/vtf.js';
-import { indexVPK, readVPKEntry } from '../shared/vpk.js';
-import { pakEntries, readPakEntry } from '../shared/bsp.js';
+import { readMaterialFile, makeMaterialLoader, pakFor } from '../shared/materials.js';
 import { detectTFPath } from './tfpath.js';
 
-const matVpkIndexes = new Map();
-const pakCache = new Map();
+export { readMaterialFile, makeMaterialLoader };
 
-function pakIndexFor(bspPath) {
-  const index = new Map();
-  try {
-    for (const e of pakEntries(bspPath)) {
-      if (/^materials\/.*\.(vmt|vtf)$/.test(e.name)) index.set(e.name, e);
-    }
-  } catch {}
-  return index;
-}
-
-function pakFor(bspPath) {
-  if (!bspPath) return null;
-  const key = String(bspPath);
-  if (pakCache.has(key)) return pakCache.get(key);
-  const pak = { path: key, index: pakIndexFor(key) };
-  pakCache.set(key, pak);
-  return pak;
-}
-
-function matVpkIndex(vpkPath, ext) {
-  const key = vpkPath + ':' + ext;
-  if (matVpkIndexes.has(key)) return matVpkIndexes.get(key);
-  let map = new Map();
-  try {
-    map = indexVPK(vpkPath, (x, dir) => x === ext && dir.startsWith('materials'));
-  } catch {}
-  matVpkIndexes.set(key, map);
-  return map;
-}
-
-export async function readMaterialFile(rel, tfPath, pak) {
-  rel = rel.replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
-  const ext = rel.split('.').pop();
-  for (const root of [path.join(tfPath, 'download'), tfPath]) {
-    try { return await fs.readFile(path.join(root, rel)); } catch {}
-  }
-  try {
-    const customs = await fs.readdir(path.join(tfPath, 'custom'), { withFileTypes: true });
-    for (const c of customs) {
-      if (!c.isDirectory() || /workshop/i.test(c.name)) continue;
-      try { return await fs.readFile(path.join(tfPath, 'custom', c.name, rel)); } catch {}
-    }
-  } catch {}
-  if (pak) {
-    const entry = pak.index.get(rel);
-    if (entry) { try { return readPakEntry(pak.path, entry); } catch {} }
-  }
-  for (const vpk of searchVPKs(tfPath, ext)) {
-    const entry = matVpkIndex(vpk, ext).get(rel);
-    if (entry) { try { return readVPKEntry(vpk, entry); } catch {} }
-  }
-  return null;
-}
-
-function searchVPKs(tfPath, ext) {
-  const hl2 = path.join(path.dirname(tfPath), 'hl2');
-  const tf = ext === 'vtf' ? ['tf2_textures_dir.vpk', 'tf2_misc_dir.vpk'] : ['tf2_misc_dir.vpk'];
-  const base = ext === 'vtf' ? ['hl2_textures_dir.vpk', 'hl2_misc_dir.vpk'] : ['hl2_misc_dir.vpk', 'hl2_textures_dir.vpk'];
-  return [...tf.map(n => path.join(tfPath, n)), ...base.map(n => path.join(hl2, n))];
-}
-
-const BASE_RE = /["']?\$basetexture["']?\s+["']?([^"'\r\n]+?)["']?\s*$/im;
-const BASE2_RE = /["']?\$basetexture2["']?\s+["']?([^"'\r\n]+?)["']?\s*$/im;
-const INCLUDE_RE = /include"?\s*"?([^"\r\n]+?)"?\s*$/im;
-
-async function baseTextureOf(name, tfPath, pak, seen, depth = 0) {
-  const buf = await readMaterialFile('materials/' + name + '.vmt', tfPath, pak);
-  if (!buf) return null;
-  const text = buf.toString('latin1');
-  const m = text.match(BASE_RE) || text.match(BASE2_RE);
-  if (m) return m[1].trim().replace(/\\/g, '/').toLowerCase();
-  if (depth >= 4) return null;
-  const inc = text.match(INCLUDE_RE);
-  if (!inc) return null;
-  const next = inc[1].trim().replace(/\\/g, '/').toLowerCase()
-    .replace(/^materials\//, '').replace(/\.vmt$/, '');
-  if (!next || seen.has(next)) return null;
-  seen.add(next);
-  return baseTextureOf(next, tfPath, pak, seen, depth + 1);
-}
-
-export function makeMaterialLoader(tfPath, bspPath) {
-  const vmtCache = new Map();
-  const decCache = new Map();
-  const pak = bspPath ? { path: bspPath, index: pakIndexFor(bspPath) } : null;
-  return async name => {
-    if (decCache.has(name)) return decCache.get(name);
-    let base = vmtCache.get(name);
-    if (base === undefined) {
-      base = await baseTextureOf(name, tfPath, pak, new Set([name]));
-      vmtCache.set(name, base);
-    }
-    let out = null;
-    if (base) {
-      const key = 'materials/' + base + '.vtf';
-      if (decCache.has(key)) out = decCache.get(key);
-      else {
-        const vtfBuf = await readMaterialFile(key, tfPath, pak);
-        if (vtfBuf) { try { const d = decodeVTF(vtfBuf); if (d) out = { rgba: d.rgba, width: d.width, height: d.height }; } catch {} }
-        decCache.set(key, out);
+function byteCache(maxBytes) {
+  const map = new Map();
+  let bytes = 0;
+  return {
+    has: k => map.has(k),
+    get(k) {
+      if (!map.has(k)) return undefined;
+      const e = map.get(k);
+      map.delete(k);
+      map.set(k, e);
+      return e.value;
+    },
+    set(k, value, size) {
+      if (map.has(k)) { bytes -= map.get(k).size; map.delete(k); }
+      map.set(k, { value, size });
+      bytes += size;
+      while (bytes > maxBytes && map.size > 1) {
+        const oldest = map.keys().next().value;
+        bytes -= map.get(oldest).size;
+        map.delete(oldest);
       }
-    }
-    decCache.set(name, out);
-    return out;
+      return value;
+    },
+    clear() { map.clear(); bytes = 0; }
   };
+}
+
+const vmtCache = byteCache(16 * 1024 * 1024);
+const texCache = byteCache(192 * 1024 * 1024);
+
+export function flushMaterialCaches() {
+  vmtCache.clear();
+  texCache.clear();
+}
+
+function cleanRel(relPath) {
+  const rel = String(relPath).replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
+  return rel.includes('..') ? null : rel;
 }
 
 export function register() {
   ipcMain.handle('mat:read', async (e, relPath, tfPathOverride, bspPath) => {
     const tfPath = tfPathOverride || await detectTFPath();
     if (!tfPath) return null;
-    const rel = String(relPath).replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
-    if (rel.includes('..')) return null;
-    return await readMaterialFile(rel, tfPath, pakFor(bspPath));
+    const rel = cleanRel(relPath);
+    if (!rel) return null;
+    const key = tfPath + '|' + (bspPath || '') + '|' + rel;
+    if (vmtCache.has(key)) return vmtCache.get(key);
+    const buf = await readMaterialFile(rel, tfPath, pakFor(bspPath));
+    return vmtCache.set(key, buf, buf ? buf.length : 0);
   });
 
   ipcMain.handle('mat:texture', async (e, relPath, tfPathOverride, bspPath) => {
     const tfPath = tfPathOverride || await detectTFPath();
     if (!tfPath) return null;
-    const rel = String(relPath).replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
-    if (rel.includes('..')) return null;
+    const rel = cleanRel(relPath);
+    if (!rel) return null;
+    const key = tfPath + '|' + (bspPath || '') + '|' + rel;
+    if (texCache.has(key)) return texCache.get(key);
     const buf = await readMaterialFile(rel, tfPath, pakFor(bspPath));
-    if (!buf) return null;
+    if (!buf) return texCache.set(key, null, 0);
+    let out = null;
     try {
       const { width, height, rgba } = decodeVTF(buf);
-      return { width, height, rgba: Buffer.from(rgba.buffer, rgba.byteOffset, rgba.byteLength) };
+      out = { width, height, rgba: Buffer.from(rgba.buffer, rgba.byteOffset, rgba.byteLength) };
     } catch {
-      return null;
+      out = null;
     }
+    return texCache.set(key, out, out ? out.rgba.length : 0);
   });
 }

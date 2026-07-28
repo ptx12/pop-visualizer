@@ -13,7 +13,6 @@ import {
 export { CLASS_BASE_SPEED, TF_MAX_SPEED, STEP, botScale, hasDemoShield, botMaxSpeed, mulberry32, dpsProfile };
 
 const MAX_STEPS = 6000;
-// PathFollower::m_goalTolerance default (NextBotPathFollow.cpp)
 const GOAL_TOLERANCE = 25;
 export const ACTOR_CAP = 2500;
 export const RNG_SEED_BASE = 0x7f4a7c15;
@@ -469,9 +468,6 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     let pool = [];
     for (const n of names) pool.push(...(spawnsByName.get(n) || []));
     let usable = enabledOf(pool);
-    // An explicitly-named Where honours its spawn even when start-disabled: the
-    // popfile directs bots there and a relay pulse-enables it at spawn time
-    // (common RafMod pattern), which the static sim doesn't fire.
     if (!usable.length && explicit && pool.length) usable = pool;
     if (!usable.length) for (const [k, list] of spawnsByName) if (k.startsWith('spawnbot')) usable.push(...enabledOf(list));
     if (!usable.length) usable = pool;
@@ -581,9 +577,8 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
   const clsOf = a => a.bot ? a.bot.cls : null;
   const interruptControls = a => {
-    const s = a.ia;
-    if (!s) return false;
-    return s.active || !(s.spec.repeats > 0 && s.count >= s.spec.repeats);
+    if (!a.ias) return false;
+    return a.ias.some(s => s.active || !(s.spec.repeats > 0 && s.count >= s.spec.repeats));
   };
   const eligible = a => a.kind === 'bot' && !a.bot.ignoreFlag && a.squadRole !== 'member' &&
     clsOf(a) !== 'spy' && clsOf(a) !== 'medic' && clsOf(a) !== 'engineer' && !interruptControls(a);
@@ -617,8 +612,15 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     }
   }
 
-  function stepInterrupt(a, t, dt, speed) {
-    const s = a.ia;
+  function stepInterrupts(a, t, dt, speed) {
+    if (!a.ias) return false;
+    for (const s of a.ias) {
+      if (stepInterrupt(a, s, t, dt, speed)) return true;
+    }
+    return false;
+  }
+
+  function stepInterrupt(a, s, t, dt, speed) {
     if (!s) return false;
     const spec = s.spec;
     if (!s.active) {
@@ -681,10 +683,14 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     a.zs = [];
     if (a.kind === 'tank') { a.state = 'tank'; return; }
     pipeline.spawn(a, t);
-    const ia = (a.bot.interrupts || [])[0] || null;
-    if (ia) {
-      const dest = resolvePoint(ia.point ? { point: ia.point } : { target: ia.target });
-      a.ia = { spec: ia, dest, next: t + Math.max(0, ia.delay), count: 0, active: false, until: 0, arrived: false };
+    const ias = a.bot.interrupts || [];
+    if (ias.length) {
+      a.ias = ias.map(ia => ({
+        spec: ia,
+        dest: resolvePoint(ia.point ? { point: ia.point } : { target: ia.target }),
+        next: t + Math.max(0, ia.delay),
+        count: 0, active: false, until: 0, arrived: false
+      }));
     }
     const tps = a.bot.teleports || [];
     if (tps.length) a.tp = tps.map(x => ({ spec: x, at: t + Math.max(0, x.delay || 0), done: false }));
@@ -749,14 +755,6 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     const next = g.nextToward(field, a.areaId);
     if (next == null) return moveAlong(a, targetPt, dt, speed);
     const p = g.portal(a.areaId, next) || g.center(next);
-    // Waypoint advance follows PathFollower::IsAtGoal (NextBotPathFollow.cpp): the goal is
-    // reached either within m_goalTolerance (25) OR once the bot crosses the dividing plane
-    // perpendicular to the path — DotProduct2D(toGoal, dividingPlane) < 0.0001f — and the bot
-    // then steers at the FOLLOWING goal. Driving all the way into each portal and only then
-    // turning toward the next area's centre is what made the movement read blocky; crossing
-    // the plane early is what lets a corner get cut. (TF2's Path::Optimize() string-pulling is
-    // disabled in shipped code — `void Path::Optimize(){ return; }` — so this is the real
-    // source of smoothing, not path simplification.)
     const next2 = g.nextToward(field, next);
     const p2 = next2 != null ? (g.portal(next, next2) || g.center(next2)) : (g.center(next) || targetPt);
     let dx = p[0] - a.pos[0], dy = p[1] - a.pos[1];
@@ -1017,7 +1015,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
         }
       }
 
-      if (a.ia && stepInterrupt(a, t, dt, speed)) {
+      if (stepInterrupts(a, t, dt, speed)) {
         if (hasFlag) bomb.pos = a.pos.slice();
         continue;
       }
@@ -1160,8 +1158,27 @@ export function simulateBotAI(wave, sim, mapData, opts = {}) {
 export function actorZAt(a, t) {
   const z = a.ztrack;
   if (!z || !z.length) return a.z ?? 0;
-  const idx = Math.round((t - a.sampleStart) / STEP);
-  return z[Math.max(0, Math.min(z.length - 1, idx))];
+  const idx = (t - a.sampleStart) / STEP;
+  if (idx <= 0) return z[0];
+  if (idx >= z.length - 1) return z[z.length - 1];
+  const i0 = Math.floor(idx), f = idx - i0;
+  return z[i0] + (z[i0 + 1] - z[i0]) * f;
+}
+
+function catmull(p0, p1, p2, p3, f) {
+  const d = (a, b) => Math.sqrt(Math.hypot(b[0] - a[0], b[1] - a[1])) || 1e-4;
+  const t0 = 0, t1 = t0 + d(p0, p1), t2 = t1 + d(p1, p2), t3 = t2 + d(p2, p3);
+  const t = t1 + (t2 - t1) * f;
+  const out = [0, 0];
+  for (let k = 0; k < 2; k++) {
+    const a1 = ((t1 - t) * p0[k] + (t - t0) * p1[k]) / (t1 - t0);
+    const a2 = ((t2 - t) * p1[k] + (t - t1) * p2[k]) / (t2 - t1);
+    const a3 = ((t3 - t) * p2[k] + (t - t2) * p3[k]) / (t3 - t2);
+    const b1 = ((t2 - t) * a1 + (t - t0) * a2) / (t2 - t0);
+    const b2 = ((t3 - t) * a2 + (t - t1) * a3) / (t3 - t1);
+    out[k] = ((t2 - t) * b1 + (t - t1) * b2) / (t2 - t1);
+  }
+  return out;
 }
 
 export function actorPosAt(a, t) {
@@ -1172,8 +1189,92 @@ export function actorPosAt(a, t) {
   if (idx >= n - 1) return t > a.dieT ? null : [a.track[(n - 1) * 2], a.track[(n - 1) * 2 + 1]];
   const i0 = Math.floor(idx);
   const f = idx - i0;
-  return [
-    a.track[i0 * 2] + (a.track[i0 * 2 + 2] - a.track[i0 * 2]) * f,
-    a.track[i0 * 2 + 1] + (a.track[i0 * 2 + 3] - a.track[i0 * 2 + 1]) * f
-  ];
+  if (n < 4) {
+    return [
+      a.track[i0 * 2] + (a.track[i0 * 2 + 2] - a.track[i0 * 2]) * f,
+      a.track[i0 * 2 + 1] + (a.track[i0 * 2 + 3] - a.track[i0 * 2 + 1]) * f
+    ];
+  }
+  const raw = i => [a.track[i * 2], a.track[i * 2 + 1]];
+  const at = i => {
+    if (i < 0) { const p1 = raw(0), p2 = raw(1); return [2 * p1[0] - p2[0], 2 * p1[1] - p2[1]]; }
+    if (i > n - 1) { const p1 = raw(n - 1), p2 = raw(n - 2); return [2 * p1[0] - p2[0], 2 * p1[1] - p2[1]]; }
+    return raw(i);
+  };
+  return catmull(at(i0 - 1), at(i0), at(i0 + 1), at(i0 + 2), f);
+}
+
+const YAW_STEP = 1 / 30;
+const YAW_RATE = 720;
+const FADE_TURN_DEGREES = 60;
+
+function angNorm(d) {
+  d %= 360;
+  if (d > 180) d -= 360;
+  if (d < -180) d += 360;
+  return d;
+}
+
+function convergeYaw(goalYaw, currentYaw, dt) {
+  let deltaYaw = goalYaw - currentYaw;
+  const deltaYawAbs = Math.abs(deltaYaw);
+  deltaYaw = angNorm(deltaYaw);
+  const scale = Math.max(0.01, Math.min(1, deltaYawAbs / FADE_TURN_DEGREES));
+  const step = YAW_RATE * dt * scale;
+  if (deltaYawAbs < step) return angNorm(goalYaw);
+  return angNorm(currentYaw + step * (deltaYaw < 0 ? -1 : 1));
+}
+
+function buildYawTrack(a) {
+  const n = a.track ? a.track.length / 2 : 0;
+  if (n < 2) { a.yawTrack = new Float32Array(0); return; }
+  const end = a.sampleStart + (n - 1) * STEP;
+  const count = Math.max(2, Math.ceil((end - a.spawnT) / YAW_STEP) + 1);
+  const out = new Float32Array(count);
+  const H = 0.12;
+  let cur = null;
+  for (let i = 0; i < count; i++) {
+    const t = a.spawnT + i * YAW_STEP;
+    const b = actorPosAt(a, Math.max(a.spawnT, t - H));
+    const c = actorPosAt(a, Math.min(end, t + H));
+    let goal = cur;
+    if (b && c) {
+      const dx = c[0] - b[0], dy = c[1] - b[1];
+      if (Math.hypot(dx, dy) > 0.5 * (2 * H)) goal = Math.atan2(dy, dx) * 180 / Math.PI;
+    }
+    if (goal === null) goal = 0;
+    cur = cur === null ? goal : convergeYaw(goal, cur, YAW_STEP);
+    out[i] = cur;
+  }
+  a.yawTrack = out;
+}
+
+export function actorYawAt(a, t) {
+  if (!a.yawTrack) buildYawTrack(a);
+  const y = a.yawTrack;
+  if (!y.length) return 0;
+  const idx = (t - a.spawnT) / YAW_STEP;
+  if (idx <= 0) return y[0] * Math.PI / 180;
+  if (idx >= y.length - 1) return y[y.length - 1] * Math.PI / 180;
+  const i0 = Math.floor(idx), f = idx - i0;
+  const d = angNorm(y[i0 + 1] - y[i0]);
+  return angNorm(y[i0] + d * f) * Math.PI / 180;
+}
+
+export function actorDistAt(a, t) {
+  if (!a.track || a.track.length < 4) return 0;
+  const n = a.track.length / 2;
+  if (!a.distTrack) {
+    const d = new Float32Array(n);
+    for (let i = 1; i < n; i++) {
+      d[i] = d[i - 1] + Math.hypot(a.track[i * 2] - a.track[i * 2 - 2], a.track[i * 2 + 1] - a.track[i * 2 - 1]);
+    }
+    a.distTrack = d;
+  }
+  const d = a.distTrack;
+  const idx = (t - a.sampleStart) / STEP;
+  if (idx <= 0) return d[0];
+  if (idx >= n - 1) return d[n - 1];
+  const i0 = Math.floor(idx), f = idx - i0;
+  return d[i0] + (d[i0 + 1] - d[i0]) * f;
 }

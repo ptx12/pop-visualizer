@@ -17,6 +17,8 @@ export function parseMDL(buf) {
     flags: buf.readInt32LE(152),
     numbones: buf.readInt32LE(156),
     boneindex: buf.readInt32LE(160),
+    numhitboxsets: buf.readInt32LE(172),
+    hitboxsetindex: buf.readInt32LE(176),
     numlocalanim: buf.readInt32LE(180),
     localanimindex: buf.readInt32LE(184),
     numlocalseq: buf.readInt32LE(188),
@@ -31,7 +33,9 @@ export function parseMDL(buf) {
     numbodyparts: buf.readInt32LE(232),
     bodypartindex: buf.readInt32LE(236),
     numlocalattachments: buf.readInt32LE(240),
-    localattachmentindex: buf.readInt32LE(244)
+    localattachmentindex: buf.readInt32LE(244),
+    numincludemodels: buf.length >= 344 ? buf.readInt32LE(336) : 0,
+    includemodelindex: buf.length >= 344 ? buf.readInt32LE(340) : 0
   };
 
   cap(h.numtextures, LIMITS.mdlTextures, 'mdl textures');
@@ -121,16 +125,38 @@ export function parseMDL(buf) {
   for (let i = 0; i < h.numlocalseq; i++) {
     const base = h.localseqindex + i * 212;
     if (base + 212 > buf.length) break;
+    const animindexindex = buf.readInt32LE(base + 60);
+    const gw = buf.readInt32LE(base + 68);
+    const gh = buf.readInt32LE(base + 72);
+    const blends = [];
+    const n = gw > 0 && gh > 0 && gw * gh <= 256 ? gw * gh : 0;
+    for (let k = 0; k < n; k++) {
+      const ao = base + animindexindex + k * 2;
+      if (animindexindex <= 0 || ao < 0 || ao + 2 > buf.length) break;
+      blends.push(buf.readInt16LE(ao));
+    }
     sequences.push({
       label: cstr(buf, base + buf.readInt32LE(base + 4)),
       activity: cstr(buf, base + buf.readInt32LE(base + 8)),
-      anim0: buf.readInt16LE(base + buf.readInt32LE(base + 100))
+      actweight: buf.readInt32LE(base + 20),
+      groupsize: [gw, gh],
+      blends
     });
   }
   const anims = [];
   for (let i = 0; i < h.numlocalanim; i++) {
     const base = h.localanimindex + i * 100;
     if (base + 100 > buf.length) break;
+    const nummovements = buf.readInt32LE(base + 20);
+    const movementindex = buf.readInt32LE(base + 24);
+    let moveDist = 0;
+    if (nummovements > 0 && movementindex > 0) {
+      const mb = base + movementindex + (nummovements - 1) * 44;
+      if (mb + 44 <= buf.length) {
+        moveDist = Math.hypot(buf.readFloatLE(mb + 32), buf.readFloatLE(mb + 36), buf.readFloatLE(mb + 40));
+        if (!Number.isFinite(moveDist)) moveDist = 0;
+      }
+    }
     anims.push({
       index: i,
       base,
@@ -138,6 +164,7 @@ export function parseMDL(buf) {
       fps: buf.readFloatLE(base + 8),
       flags: buf.readInt32LE(base + 12),
       numframes: buf.readInt32LE(base + 16),
+      moveDist,
       animblock: buf.readInt32LE(base + 52),
       animindex: buf.readInt32LE(base + 56)
     });
@@ -157,7 +184,38 @@ export function parseMDL(buf) {
     }
   }
 
-  return { header: h, textures, cdtextures, skins, bones, bodyparts, sequences, anims, attachments, buf };
+  const includemodels = [];
+  if (h.numincludemodels > 0 && h.numincludemodels < 64 && h.includemodelindex > 0) {
+    for (let i = 0; i < h.numincludemodels; i++) {
+      const base = h.includemodelindex + i * 8;
+      if (base + 8 > buf.length) break;
+      const name = cstr(buf, base + buf.readInt32LE(base + 4)).replace(/\\/g, '/').trim();
+      if (name) includemodels.push(name);
+    }
+  }
+
+  const hitboxes = [];
+  if (h.numhitboxsets > 0 && h.numhitboxsets < 64 && h.hitboxsetindex > 0) {
+    const sb = h.hitboxsetindex;
+    if (sb + 12 <= buf.length) {
+      const numhitboxes = buf.readInt32LE(sb + 4);
+      const hitboxindex = buf.readInt32LE(sb + 8);
+      if (numhitboxes > 0 && numhitboxes < 1024) {
+        for (let i = 0; i < numhitboxes; i++) {
+          const base = sb + hitboxindex + i * 68;
+          if (base + 68 > buf.length) break;
+          hitboxes.push({
+            bone: buf.readInt32LE(base),
+            group: buf.readInt32LE(base + 4),
+            min: [buf.readFloatLE(base + 8), buf.readFloatLE(base + 12), buf.readFloatLE(base + 16)],
+            max: [buf.readFloatLE(base + 20), buf.readFloatLE(base + 24), buf.readFloatLE(base + 28)]
+          });
+        }
+      }
+    }
+  }
+
+  return { header: h, textures, cdtextures, skins, bones, bodyparts, sequences, anims, attachments, hitboxes, includemodels, buf };
 }
 
 const STUDIO_ANIM_RAWPOS = 0x01;

@@ -31,16 +31,10 @@ export const state = {
   view: { mode: 'welcome', wave: 0 },
   search: '',
   simOpts: loadSimOpts(),
-  showLint: false,
   diffOtherId: null,
   dock: null,
   zen: false,
   listeners: new Set()
-};
-
-const TANK_PATH_TIMES = {
-  bigrock: 75, coaltown: 60, decoy: 62, mannworks: 62,
-  rottenburg: 48, mannhattan: 68, ghost: 60, ghosttown: 60
 };
 
 export function mapKeyOf(file) {
@@ -53,8 +47,17 @@ export function mapQueryName(file) {
 }
 
 export function defaultTankTime(file) {
-  const k = mapKeyOf(file);
-  return k && TANK_PATH_TIMES[k] ? TANK_PATH_TIMES[k] : null;
+  if (!file.tankPaths || !file.tankPaths.results || !file.model) return null;
+  const times = [];
+  for (const wave of file.model.waves || []) {
+    for (const ws of wave.wavespawns || []) {
+      const t = measuredTankTime(file, ws);
+      if (t && Number.isFinite(t)) times.push(t);
+    }
+  }
+  if (!times.length) return null;
+  times.sort((a, b) => a - b);
+  return times[Math.floor(times.length / 2)];
 }
 
 export function rawTankOverride(file) {

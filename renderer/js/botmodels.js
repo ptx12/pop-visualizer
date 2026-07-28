@@ -1,4 +1,5 @@
 import { getTFPath } from './icons.js';
+import { activityForRole } from '../../shared/weaponrole.js';
 
 export const BOT_MODEL = {
   scout: 'models/bots/scout/bot_scout',
@@ -19,28 +20,27 @@ const HUMAN_MODEL = {
 };
 
 const DEFAULT_WEAPON = {
-  scout: 'models/weapons/c_models/c_scattergun',
-  soldier: 'models/weapons/c_models/c_rocketlauncher/c_rocketlauncher',
-  pyro: 'models/weapons/c_models/c_flamethrower/c_flamethrower',
-  demoman: 'models/weapons/c_models/c_grenadelauncher/c_grenadelauncher',
-  heavyweapons: 'models/weapons/c_models/c_minigun/c_minigun',
-  engineer: 'models/weapons/c_models/c_shotgun/c_shotgun',
-  medic: 'models/weapons/c_models/c_medigun/c_medigun',
-  sniper: 'models/weapons/c_models/c_sniperrifle/c_sniperrifle',
-  spy: 'models/weapons/c_models/c_revolver/c_revolver'
+  scout: { model: 'models/weapons/c_models/c_scattergun', itemClass: 'tf_weapon_scattergun' },
+  soldier: { model: 'models/weapons/c_models/c_rocketlauncher/c_rocketlauncher', itemClass: 'tf_weapon_rocketlauncher' },
+  pyro: { model: 'models/weapons/c_models/c_flamethrower/c_flamethrower', itemClass: 'tf_weapon_flamethrower' },
+  demoman: { model: 'models/weapons/c_models/c_grenadelauncher/c_grenadelauncher', itemClass: 'tf_weapon_grenadelauncher' },
+  heavyweapons: { model: 'models/weapons/c_models/c_minigun/c_minigun', itemClass: 'tf_weapon_minigun' },
+  engineer: { model: 'models/weapons/c_models/c_shotgun/c_shotgun', itemClass: 'tf_weapon_shotgun_primary' },
+  medic: { model: 'models/weapons/c_models/c_medigun/c_medigun', itemClass: 'tf_weapon_medigun' },
+  sniper: { model: 'models/weapons/c_models/c_sniperrifle/c_sniperrifle', itemClass: 'tf_weapon_sniperrifle' },
+  spy: { model: 'models/weapons/c_models/c_revolver/c_revolver', itemClass: 'tf_weapon_revolver' }
 };
 
-// Stock melee world models, for bots restricted to MeleeOnly with no explicit Item.
-// Heavy is deliberately absent: his stock fists have no world model (bare hands).
 const DEFAULT_MELEE = {
-  scout: 'models/weapons/c_models/c_bat',
-  soldier: 'models/weapons/c_models/c_shovel/c_shovel',
-  pyro: 'models/weapons/c_models/c_fireaxe_pyro/c_fireaxe_pyro',
-  demoman: 'models/weapons/c_models/c_bottle/c_bottle',
-  engineer: 'models/weapons/c_models/c_wrench/c_wrench',
-  medic: 'models/weapons/c_models/c_bonesaw/c_bonesaw',
-  sniper: 'models/weapons/c_models/c_machete/c_machete',
-  spy: 'models/weapons/c_models/c_knife/c_knife'
+  scout: { model: 'models/weapons/c_models/c_bat', itemClass: 'tf_weapon_bat' },
+  soldier: { model: 'models/weapons/c_models/c_shovel/c_shovel', itemClass: 'tf_weapon_shovel' },
+  pyro: { model: 'models/weapons/c_models/c_fireaxe_pyro/c_fireaxe_pyro', itemClass: 'tf_weapon_fireaxe' },
+  demoman: { model: 'models/weapons/c_models/c_bottle/c_bottle', itemClass: 'tf_weapon_bottle' },
+  heavyweapons: { model: 'models/weapons/c_models/c_fists', itemClass: 'tf_weapon_fists' },
+  engineer: { model: 'models/weapons/c_models/c_wrench/c_wrench', itemClass: 'tf_weapon_wrench' },
+  medic: { model: 'models/weapons/c_models/c_bonesaw/c_bonesaw', itemClass: 'tf_weapon_bonesaw' },
+  sniper: { model: 'models/weapons/c_models/c_machete/c_machete', itemClass: 'tf_weapon_club' },
+  spy: { model: 'models/weapons/c_models/c_knife/c_knife', itemClass: 'tf_weapon_knife' }
 };
 
 const SLOT_FOR_RESTRICTION = { meleeonly: 'melee', primaryonly: 'primary', secondaryonly: 'secondary' };
@@ -84,11 +84,38 @@ function matInvertRigid(m) {
   return r;
 }
 
-function pickRunAnim(anims) {
+function byName(anims, name) {
+  if (!name) return null;
+  const want = String(name).toLowerCase();
+  return (anims || []).find(a => a.numframes > 1 && a.name.toLowerCase() === want) || null;
+}
+
+function byActivity(anims, activities, prefix, activity) {
+  if (!activities) return null;
+  for (const act of [activity, 'PRIMARY', 'MELEE']) {
+    const hit = byName(anims, activities[prefix + act]);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function pickStandAnim(anims, activities, activity) {
+  const hit = byActivity(anims, activities, 'ACT_MP_STAND_', activity);
+  if (hit) return hit;
+  if (!anims || !anims.length) return null;
+  const stand = anims.filter(a => a.numframes > 1 && /^@stand_/i.test(a.name));
+  const pri = ['@stand_primary', '@stand_secondary', '@stand_melee'];
+  for (const p of pri) { const h = stand.find(a => a.name.toLowerCase() === p); if (h) return h; }
+  return stand[0] || null;
+}
+
+function pickRunAnim(anims, activities, activity) {
+  const hit = byActivity(anims, activities, 'ACT_MP_RUN_', activity);
+  if (hit) return hit;
   if (!anims || !anims.length) return null;
   const runN = anims.filter(a => a.numframes > 1 && /runn$/i.test(a.name));
   const pri = ['a_primary_runn', 'a_secondary_runn', 'a_melee_runn', 'a_building_runn', 'a_pda_runn'];
-  for (const p of pri) { const hit = runN.find(a => a.name.toLowerCase() === p); if (hit) return hit; }
+  for (const p of pri) { const h = runN.find(a => a.name.toLowerCase() === p); if (h) return h; }
   if (runN.length) return runN[0];
   const any = anims.filter(a => a.numframes > 1 && /_runn/i.test(a.name));
   if (any.length) return any[0];
@@ -122,17 +149,12 @@ function skinPose(pos, nrm, bw, bi, skinMats) {
   return { pos: sp, nrm: sn };
 }
 
-export async function loadPropModel(base) {
+export async function loadPropModel(base, bsp = null) {
   if (!base) return null;
   const tfPath = await getTFPath();
-  const payload = await window.popnative.modelLoad({ kind: 'vpk', base, tfPath, animMatch: null });
+  const payload = await window.popnative.modelLoad({ kind: 'vpk', base, tfPath, bsp, animMatch: null });
   if (!payload || payload.error || !payload.positions) return null;
   let pos = f32(payload.positions), nrm = f32(payload.normals);
-  // A prop_dynamic is an animated entity: with no defaultanim it rests in sequence 0, so that
-  // is the pose the game shows. Static props never animate, which is why only the dynamic ones
-  // looked wrong (e.g. rottenburg's barricade_pikes, 21 bones + 2 sequences, sat rotated and
-  // did not span the tank path it is placed to block). Skin by the first animation's frame 0,
-  // world x invBind exactly as the bot path does; models with no animation are untouched.
   const bones = payload.bones;
   const anim = (payload.anims && payload.anims.length) ? payload.anims[0] : null;
   if (bones && bones.length && anim && anim.numframes > 0 && payload.boneWeights && payload.boneIds) {
@@ -188,7 +210,9 @@ function botItemRecs(bot) {
   const out = [];
   for (const it of (bot.items || [])) {
     const rec = itemCache.get(String(it).toLowerCase());
-    if (rec && rec.model && !EMPTY_RE.test(rec.model)) out.push(rec);
+    if (!rec) continue;
+    const model = (rec.modelPerClass && rec.modelPerClass[bot.cls]) || rec.model;
+    if (model && !EMPTY_RE.test(model)) out.push({ ...rec, model });
   }
   return out;
 }
@@ -200,21 +224,21 @@ export function botCosmeticModels(bot) {
 
 const SLOT_INDEX = { primary: 0, secondary: 1, melee: 2 };
 
-// Every model a bot visibly carries: its ACTIVE weapon (which slot that is comes from the
-// popfile's WeaponRestrictions — MeleeOnly demoknights hold the sword, not the launcher)
-// plus any wearables, which TF2 draws on the body permanently (demo shields, banners).
-export function botWeaponModels(bot) {
-  if (!bot) return [];
+export function botLoadout(bot) {
+  if (!bot) return { models: [], role: null, itemClass: null };
   const stripped = new Set(bot.stripSlots || []);
   const restriction = String(bot.restriction || '').toLowerCase().replace(/[^a-z]/g, '');
   const activeSlot = SLOT_FOR_RESTRICTION[restriction] || 'primary';
   const out = [];
+  let role = null, itemClass = null;
 
   const custom = (bot.customWeapons || []).filter(w => w.model && !EMPTY_RE.test(cleanModelPath(w.model)));
   if (custom.length) {
     const want = SLOT_INDEX[activeSlot];
     const pick = custom.find(w => w.slot === want) || custom.find(w => w.slot === 0) || custom[0];
     out.push(cleanModelPath(pick.model));
+    itemClass = pick.itemClass || null;
+    role = pick.slot === SLOT_INDEX.melee ? 'melee' : pick.slot === SLOT_INDEX.secondary ? 'secondary' : 'primary';
   }
 
   const recs = botItemRecs(bot);
@@ -222,14 +246,42 @@ export function botWeaponModels(bot) {
   if (!out.length) {
     const active = recs.find(r => r.isWeapon && !r.wearable && r.slot === activeSlot)
       || recs.find(r => r.isWeapon && !r.wearable);
-    if (active) out.push(active.model);
+    if (active) { out.push(active.model); role = active.role || null; }
     else if (!stripped.has(SLOT_INDEX[activeSlot])) {
       const fallback = activeSlot === 'melee' ? DEFAULT_MELEE[bot.cls] : DEFAULT_WEAPON[bot.cls];
-      if (fallback) out.push(fallback);
+      if (fallback) { out.push(fallback.model); itemClass = fallback.itemClass; }
     }
   }
   for (const w of wearables) out.push(w.model);
-  return [...new Set(out.filter(Boolean))];
+  return { models: [...new Set(out.filter(Boolean))], role, itemClass };
+}
+
+export function botWeaponModels(bot) {
+  return botLoadout(bot).models;
+}
+
+const roleCache = new Map();
+
+export async function resolveWeaponRoles(classes) {
+  const need = [...new Set(classes.filter(c => c && !roleCache.has(String(c).toLowerCase())))];
+  if (!need.length) return false;
+  const tfPath = await getTFPath();
+  for (const c of need) {
+    let r = null;
+    try { r = await window.popnative.itemsWeaponRole(c, tfPath); } catch {}
+    roleCache.set(String(c).toLowerCase(), r || null);
+  }
+  return true;
+}
+
+export function botActivity(bot) {
+  const lo = botLoadout(bot);
+  const role = lo.role || (lo.itemClass ? roleCache.get(lo.itemClass.toLowerCase()) : null);
+  return activityForRole(role);
+}
+
+export function botWeaponClass(bot) {
+  return botLoadout(bot).itemClass || null;
 }
 
 export function botWeaponModel(bot) {
@@ -237,10 +289,17 @@ export function botWeaponModel(bot) {
   return list.length ? list[0] : null;
 }
 
-export async function loadBotPose(base) {
+export async function loadBotPose(base, activity) {
   if (!base) return null;
+  const act = activity || 'PRIMARY';
   const tfPath = await getTFPath();
-  const payload = await window.popnative.modelLoad({ kind: 'vpk', base, tfPath, animMatch: 'runn' });
+  const wanted = [];
+  for (const a of [...new Set([act, 'PRIMARY', 'MELEE'])]) wanted.push('ACT_MP_RUN_' + a, 'ACT_MP_STAND_' + a);
+  const payload = await window.popnative.modelLoad({
+    kind: 'vpk', base, tfPath,
+    animMatch: ['runn', '@stand_'],
+    activities: wanted
+  });
   if (!payload || payload.error || !payload.positions) return null;
 
   const pos = f32(payload.positions), nrm = f32(payload.normals), uv = f32(payload.uvs);
@@ -257,12 +316,13 @@ export async function loadBotPose(base) {
     invBind.push(matInvertRigid(world));
   }
 
-  const anim = pickRunAnim(payload.anims);
+  const anim = pickRunAnim(payload.anims, payload.activities, act);
+  const stand = pickStandAnim(payload.anims, payload.activities, act);
   const frames = [];
   const boneWorldFrames = [];
-  if (anim) {
-    const af = f32(anim.frames);
-    for (let f = 0; f < anim.numframes; f++) {
+  const bake = a => {
+    const af = f32(a.frames);
+    for (let f = 0; f < a.numframes; f++) {
       const world = [];
       const skin = [];
       for (let b = 0; b < nb; b++) {
@@ -276,10 +336,11 @@ export async function loadBotPose(base) {
       boneWorldFrames.push(world);
       frames.push(skinPose(pos, nrm, bw, bi, skin));
     }
-  } else {
-    boneWorldFrames.push(bindWorld);
-    frames.push({ pos, nrm });
-  }
+  };
+  if (anim) bake(anim);
+  else { boneWorldFrames.push(bindWorld); frames.push({ pos, nrm }); }
+  const runCount = frames.length;
+  if (stand && stand !== anim) bake(stand);
 
   const flagAtt = (payload.attachments || []).find(a => /^flag$/i.test(a.name));
   const flagFrames = [];
@@ -292,8 +353,11 @@ export async function loadBotPose(base) {
     meshes: payload.meshes || [],
     textures: payload.textures || [], cdtextures: payload.cdtextures || [], skins: payload.skins || [],
     numframes: frames.length, fps: anim ? (anim.fps || 30) : 30,
+    runCount, standCount: frames.length - runCount, standFps: stand ? (stand.fps || 30) : 30,
+    moveDist: anim ? (anim.moveDist || 0) : 0,
     boneWorldFrames, boneNames: bones.map(b => String(b.name || '').toLowerCase()),
     flagFrames: flagFrames.length ? flagFrames : null,
+    hitboxes: payload.hitboxes || [],
     bbox: payload.bbox
   };
 }

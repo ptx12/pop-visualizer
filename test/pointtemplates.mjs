@@ -60,7 +60,6 @@ check('the objective comes from the popfile capturezone',
   Math.abs(ai.objective[0] - 2200) < 1, ai.objective.slice(0, 2).map(Math.round).join(','));
 check('the bot walks the popfile geometry to the objective', ai.bomb.deliveredAt !== null);
 
-// BSP geometry must take priority; popfile geometry is a fallback only.
 const withBsp = { ...emptyMap, spawns: [{ name: 'spawnbot_custom', origin: [3000, 100, 0] }], capzones: [[100, 100, 0]] };
 const ai2 = simulateBotAI(model.waves[0], simulateWave(model.waves[0], { robotLimit: 22 }), withBsp, { deathModel: 'hatch', robotLimit: 22, templateEntities: te });
 check('a BSP spawn of the same name still works (both are candidates)',
@@ -68,7 +67,6 @@ check('a BSP spawn of the same name still works (both are candidates)',
 check('a BSP capturezone takes priority over a popfile one',
   Math.abs(ai2.objective[0] - 100) < 1, ai2.objective.slice(0, 2).map(Math.round).join(','));
 
-// func_nav_avoid / func_nav_prefer with origin-relative bounds.
 const NAV = `WaveSchedule { PointTemplates { G {
   func_nav_avoid { "targetname" "blockmid" "origin" "1050 450 0" "mins" "-300 -150 -100" "maxs" "300 150 100" "team" "3" }
   func_nav_prefer { "targetname" "flank" "origin" "500 500 0" "mins" "-100 -100 -50" "maxs" "100 100 50" }
@@ -81,8 +79,6 @@ check('nav volume bounds are converted to world space (origin + mins/maxs)',
 check('nav volume keeps its name and team so relays can toggle it',
   nav[0].name === 'blockmid' && nav[0].team === '3');
 
-// A start-disabled spawn that a WaveSpawn explicitly targets is still honoured
-// (RafMod relay pulse-enables it at spawn time, which the static sim can't fire).
 const DIS = `WaveSchedule
 {
   PointTemplates { G { info_player_teamspawn { "targetname" "spawnbot_pulse" "startdisabled" "1" "origin" "1500 700 0" } } }
@@ -101,16 +97,15 @@ check('an explicit Where honours a start-disabled spawn instead of falling back 
 check('no PointTemplates yields empty extraction',
   (() => { const t = extractTemplateEntities(parse('WaveSchedule { Wave { } }')); return !t.spawns.length && !t.capzones.length && !t.flags.length && !t.tracks.length && !t.navVolumes.length; })());
 
-// Adversarial input must never throw — popfiles are untrusted-ish and messy.
 const ADVERSARIAL = [
-  'WaveSchedule { PointTemplates { T { info_player_teamspawn { "targetname" "s" } } } }',      // no origin
-  'WaveSchedule { PointTemplates { T { func_capturezone { "origin" "foo bar baz" } } } }',     // non-numeric
-  'WaveSchedule { PointTemplates { T { item_teamflag { "origin" "1, 2, 3" } } } }',            // comma origin
-  'WaveSchedule { PointTemplates { T { func_nav_avoid { "origin" "1 2 3" } } } }',             // no bounds
-  'WaveSchedule { PointTemplates { A { B { C { info_player_teamspawn { "targetname" "d" "origin" "1 2 3" } } } } } }', // nested
-  'WaveSchedule { PointTemplates { } }',                                                       // empty
-  'WaveSchedule { PointTemplates { T { func_capturezone { "origin" "5" } } } }',               // short origin
-  'WaveSchedule { PointTemplates { T { info_player_teamspawn { } } } }'                         // no keys
+  'WaveSchedule { PointTemplates { T { info_player_teamspawn { "targetname" "s" } } } }',
+  'WaveSchedule { PointTemplates { T { func_capturezone { "origin" "foo bar baz" } } } }',
+  'WaveSchedule { PointTemplates { T { item_teamflag { "origin" "1, 2, 3" } } } }',
+  'WaveSchedule { PointTemplates { T { func_nav_avoid { "origin" "1 2 3" } } } }',
+  'WaveSchedule { PointTemplates { A { B { C { info_player_teamspawn { "targetname" "d" "origin" "1 2 3" } } } } } }',
+  'WaveSchedule { PointTemplates { } }',
+  'WaveSchedule { PointTemplates { T { func_capturezone { "origin" "5" } } } }',
+  'WaveSchedule { PointTemplates { T { info_player_teamspawn { } } } }'
 ];
 let robust = true;
 for (const pop of ADVERSARIAL) { try { extractTemplateEntities(parse(pop)); } catch { robust = false; } }
@@ -122,6 +117,53 @@ check('duplicate track names are de-duplicated',
   extractTemplateEntities(parse('WaveSchedule { PointTemplates { T { path_track { "targetname" "p" "origin" "1 2 3" } path_track { "targetname" "p" "origin" "4 5 6" } } } }')).tracks.length === 1);
 check('nested templates are walked to any depth',
   extractTemplateEntities(parse('WaveSchedule { PointTemplates { A { B { C { info_player_teamspawn { "targetname" "d" "origin" "1 2 3" } } } } } }')).spawns.length === 1);
+
+const TPL = 'PointTemplates { T { info_player_teamspawn { "targetname" "s" "origin" "100 200 0" } } }';
+
+const offset = extractTemplateEntities(parse(
+  'WaveSchedule { ' + TPL + ' SpawnTemplate { Name "T" Origin "1000 500 25" } }'));
+check('SpawnTemplate Origin translates the template entities',
+  offset.spawns.length === 1 && offset.spawns[0].origin.join(',') === '1100,700,25',
+  JSON.stringify(offset.spawns));
+
+const plain = extractTemplateEntities(parse('WaveSchedule { ' + TPL + ' SpawnTemplate "T" }'));
+check('the string form of SpawnTemplate spawns the template unmoved',
+  plain.spawns.length === 1 && plain.spawns[0].origin.join(',') === '100,200,0',
+  JSON.stringify(plain.spawns));
+
+const twice = extractTemplateEntities(parse(
+  'WaveSchedule { ' + TPL + ' SpawnTemplate { Name "T" Origin "1000 0 0" } SpawnTemplate { Name "T" Origin "0 1000 0" } }'));
+check('a template spawned twice yields two instances',
+  twice.spawns.length === 2 && twice.spawns.map(s => s.origin[0]).sort((a, b) => a - b).join(',') === '100,1100',
+  JSON.stringify(twice.spawns));
+
+const declaredOnly = extractTemplateEntities(parse('WaveSchedule { ' + TPL + ' }'));
+check('a declared but never spawned template still contributes its Where candidate',
+  declaredOnly.spawns.length === 1 && declaredOnly.spawns[0].origin.join(',') === '100,200,0');
+
+for (const [where, pop] of [
+  ['a Wave', 'WaveSchedule { ' + TPL + ' Wave { SpawnTemplate { Name "T" Origin "300 0 0" } } }'],
+  ['a WaveSpawn', 'WaveSchedule { ' + TPL + ' Wave { WaveSpawn { SpawnTemplate { Name "T" Origin "300 0 0" } } } }'],
+  ['a TFBot', 'WaveSchedule { ' + TPL + ' Wave { WaveSpawn { TFBot { SpawnTemplate { Name "T" Origin "300 0 0" } } } } }'],
+  ['a Tank', 'WaveSchedule { ' + TPL + ' Wave { WaveSpawn { Tank { SpawnTemplate { Name "T" Origin "300 0 0" } } } } }']
+]) {
+  const r = extractTemplateEntities(parse(pop));
+  check('SpawnTemplate inside ' + where + ' is honoured', r.spawns.length === 1 && r.spawns[0].origin[0] === 400,
+    JSON.stringify(r.spawns));
+}
+
+const unknownRef = extractTemplateEntities(parse('WaveSchedule { ' + TPL + ' SpawnTemplate { Name "Missing" Origin "9 9 9" } }'));
+check('a SpawnTemplate naming an undeclared template is ignored',
+  unknownRef.spawns.length === 1 && unknownRef.spawns[0].origin.join(',') === '100,200,0');
+
+const caseRef = extractTemplateEntities(parse('WaveSchedule { ' + TPL + ' SpawnTemplate { Name "t" Origin "10 0 0" } }'));
+check('template names match case-insensitively', caseRef.spawns.length === 1 && caseRef.spawns[0].origin[0] === 110);
+
+const navOff = extractTemplateEntities(parse(
+  'WaveSchedule { PointTemplates { T { func_nav_avoid { "targetname" "v" "origin" "0 0 0" "mins" "-10 -10 -10" "maxs" "10 10 10" } } } SpawnTemplate { Name "T" Origin "500 0 0" } }'));
+check('a translated nav volume keeps its extent and moves with the instance',
+  navOff.navVolumes.length === 1 && navOff.navVolumes[0].mins[0] === 490 && navOff.navVolumes[0].maxs[0] === 510,
+  JSON.stringify(navOff.navVolumes));
 
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');

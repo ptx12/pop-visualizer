@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { readEntityLump, parseEntities, pathTracks, chainLength, readModels, pakEntries, readPakEntry, readStaticProps, readDynamicProps } from '../shared/bsp.js';
+import { readEntityLump, parseEntities, pathTracks, chainLength, readModels, pakEntries, readPakEntry, readStaticProps, readDynamicProps, flushLumpCache } from '../shared/bsp.js';
 import { parseNav } from '../shared/nav.js';
 import { indexVPK, readVPKEntry } from '../shared/vpk.js';
 import { extractGeometry } from '../shared/bspgeo.js';
@@ -9,8 +9,11 @@ import { bakeTopDown, extractWorldFaces } from '../shared/bsprender.js';
 import { extractLighting } from '../shared/lighting.js';
 import { lru } from './context.js';
 import { detectTFPath, flushTFPath } from './tfpath.js';
-import { makeMaterialLoader } from './materials.js';
+import { makeMaterialLoader, flushMaterialCaches } from './materials.js';
 import { extractMapEntities } from './mapentities.js';
+import { rankNavCandidates, nearNavNames } from '../shared/navpick.js';
+import { flushGameFS, setExtraAssetRoots, getExtraAssetRoots } from '../shared/gamefs.js';
+import { readTonemapSettings, tonemapWithDefaults } from '../shared/tonemap.js';
 
 const bspTrackCache = lru(24);
 const mapDataCache = lru(12);
@@ -23,6 +26,9 @@ export function flushMapCaches() {
   mapDataCache.clear();
   mapTexCache.clear();
   mapFaces3dCache.clear();
+  flushLumpCache();
+  flushGameFS();
+  flushMaterialCaches();
 }
 
 export async function mapDirs(tfPath, popDir) {
@@ -31,6 +37,11 @@ export async function mapDirs(tfPath, popDir) {
     dirs.push(popDir);
     dirs.push(path.join(popDir, 'maps'));
     dirs.push(path.join(path.dirname(popDir), 'maps'));
+  }
+  for (const r of getExtraAssetRoots()) {
+    dirs.push(r);
+    dirs.push(path.join(r, 'maps'));
+    dirs.push(path.join(r, 'download', 'maps'));
   }
   dirs.push(path.join(tfPath, 'maps'), path.join(tfPath, 'download', 'maps'));
   try {
@@ -58,9 +69,6 @@ async function listBSPs(tfPath, popDir) {
 
 const ambientCache = new Map();
 
-// The map's own ambient light colour, straight from light_environment (_ambientHDR wins,
-// "-1 -1 -1 -1" means "fall back to the LDR key"). Returned normalised to unit luminance —
-// the hue is what's wanted; magnitude comes from the measured lightmap.
 function skyAmbientOf(bspPath) {
   if (ambientCache.has(bspPath)) return ambientCache.get(bspPath);
   let out = null;
@@ -135,40 +143,44 @@ export function sharedPrefixLen(a, b) {
   return i;
 }
 
+async function readNavCandidate(c) {
+  if (c.kind === 'file') return await fs.readFile(c.where);
+  if (c.kind === 'vpk') return readVPKEntry(c.where, c.entry);
+  return readPakEntry(c.where, c.entry);
+}
+
 async function loadNavFor(bsp, tfPath, popDir) {
   const searched = await mapDirs(tfPath, popDir);
   const candidates = [...await looseNavs(tfPath, popDir), ...vpkNavs(tfPath)];
   try {
     for (const p of pakEntries(bsp.full)) {
-      if (p.name.endsWith('.nav')) candidates.push({ name: p.name.split('/').pop().replace(/\.nav$/, ''), kind: 'pak', where: bsp.full, entry: p });
+      if (p.name.endsWith('.nav')) candidates.push({ name: p.name.split('/').pop().replace(/\.nav$/, ''), kind: 'pak', where: bsp.full, entry: p, size: p.uncompSize });
     }
   } catch {}
-  const near = [...new Set(candidates
-    .filter(c => sharedPrefixLen(c.name, bsp.name) >= 5)
-    .map(c => c.name))].slice(0, 8);
-  let pick = candidates.find(c => c.name === bsp.name);
-  let approx = false;
-  if (!pick) {
-    let bestLen = 0;
-    for (const c of candidates) {
-      const l = sharedPrefixLen(c.name, bsp.name);
-      if (l >= 8 && l >= c.name.length - 6 && l > bestLen) { bestLen = l; pick = c; }
+  const ordered = rankNavCandidates(candidates, bsp.name);
+  const near = nearNavNames(candidates, bsp.name);
+  if (!ordered.length) return { nav: null, searched, near, reason: 'missing' };
+
+  let lastReason = 'missing';
+  for (const pick of ordered) {
+    let nav = null;
+    try {
+      const buf = await readNavCandidate(pick);
+      if (!buf) { lastReason = 'unreadable'; continue; }
+      nav = parseNav(buf);
+    } catch (err) {
+      lastReason = 'error: ' + err.message;
+      continue;
     }
-    approx = !!pick;
-  }
-  if (!pick) return { nav: null, searched, near, reason: 'missing' };
-  try {
-    let buf = null;
-    if (pick.kind === 'file') buf = await fs.readFile(pick.where);
-    else if (pick.kind === 'vpk') buf = readVPKEntry(pick.where, pick.entry);
-    else buf = readPakEntry(pick.where, pick.entry);
-    if (!buf) return { nav: null, searched, near, reason: 'unreadable' };
-    const nav = parseNav(buf);
-    if (!nav.areas.length) return { nav: null, searched, near, reason: 'empty:' + pick.name };
+    if (!nav.areas.length) { lastReason = 'empty:' + pick.name; continue; }
     return {
       searched, near,
       nav: {
-        source: pick.kind, name: pick.name, approx, where: pick.kind === 'file' ? pick.where : pick.kind,
+        source: pick.kind,
+        name: pick.kind === 'pak' ? bsp.name : pick.name,
+        packedAs: pick.kind === 'pak' && pick.name !== bsp.name ? pick.name : null,
+        approx: pick.rank === 1,
+        where: pick.kind === 'file' ? pick.where : pick.kind,
         areas: nav.areas.map(a => {
           const out = { id: a.id, nw: a.nw, se: a.se, neZ: a.neZ, swZ: a.swZ, connect: a.connect };
           if (a.hide) out.hide = a.hide;
@@ -177,9 +189,8 @@ async function loadNavFor(bsp, tfPath, popDir) {
         })
       }
     };
-  } catch (err) {
-    return { nav: null, searched, near, reason: 'error: ' + err.message };
   }
+  return { nav: null, searched, near, reason: lastReason };
 }
 
 async function mapDataFor(best, tfPath, popDir) {
@@ -195,6 +206,7 @@ async function mapDataFor(best, tfPath, popDir) {
     result = {
       map: best.name,
       ...ent,
+      tonemap: readTonemapSettings(ents),
       nav: navLookup.nav,
       navSearch: { searched: navLookup.searched, near: navLookup.near, reason: navLookup.reason || null }
     };
@@ -283,10 +295,12 @@ export function register() {
     let result = null;
     try {
       const data = await mapDataFor(best, tfPath, popDir);
+      const tonemap = data ? data.tonemap : null;
       const w = extractWorldFaces(best.full, {
         nav: data ? data.nav : (await loadNavFor(best, tfPath, popDir)).nav,
         spawns: data ? data.spawns : [],
-        tracks: data ? data.tracks : []
+        tracks: data ? data.tracks : [],
+        tonemap
       });
       if (w) {
         const buf = a => Buffer.from(a.buffer, a.byteOffset, a.byteLength);
@@ -297,6 +311,7 @@ export function register() {
           minLight: w.minLight,
           lmUpBright: w.lmUpBright,
           ambient: skyAmbientOf(best.full),
+          tonemap: tonemapWithDefaults(tonemap),
           materials: w.materials.map(m => ({ name: m.name, count: m.count, positions: buf(m.positions), uvs: buf(m.uvs), normals: buf(m.normals), lm: buf(m.lm) })),
           lightmap: w.lightmap ? { width: w.lightmap.width, height: w.lightmap.height, range: w.lightmap.range, rgba: buf(w.lightmap.rgba) } : null
         };
@@ -382,6 +397,24 @@ export function register() {
     mapGeoCache.clear();
     mapTexCache.clear();
     bspTrackCache.clear();
+    flushMaterialCaches();
     flushTFPath();
+  });
+
+  ipcMain.handle('assets:roots', async (e, roots) => {
+    if (Array.isArray(roots)) {
+      setExtraAssetRoots(roots);
+      flushMapCaches();
+      mapGeoCache.clear();
+      mapLightCache.clear();
+      bspTrackCache.clear();
+    }
+    const out = [];
+    for (const r of getExtraAssetRoots()) {
+      let ok = false;
+      try { ok = (await fs.stat(r)).isDirectory(); } catch {}
+      out.push({ path: r, exists: ok });
+    }
+    return out;
   });
 }

@@ -41,14 +41,16 @@ contextBridge.exposeInMainWorld('popnative', {
   matTexture: (rel, tfPath, bspPath) => ipcRenderer.invoke('mat:texture', rel, tfPath, bspPath),
   modelLoad: (src) => ipcRenderer.invoke('model:load', src),
   itemsResolve: (names, tfPath) => ipcRenderer.invoke('items:resolve', names, tfPath),
+  itemsWeaponRole: (itemClass, tfPath) => ipcRenderer.invoke('items:weaponrole', itemClass, tfPath),
   hlmvFind: (tfPath, override) => ipcRenderer.invoke('hlmv:find', tfPath, override),
   hlmvOpen: (exe, tfPath, mdlPath) => ipcRenderer.invoke('hlmv:open', exe, tfPath, mdlPath),
   potatoList: (rel) => ipcRenderer.invoke('potato:list', rel),
   potatoModel: (rel, tfPath) => ipcRenderer.invoke('potato:model', rel, tfPath),
   potatoMap: (name, tfPath) => ipcRenderer.invoke('potato:map', name, tfPath),
-  potatoNavs: (name) => ipcRenderer.invoke('potato:navs', name),
+  potatoNavIndex: (force) => ipcRenderer.invoke('potato:navindex', force),
   potatoNav: (name, source, tfPath) => ipcRenderer.invoke('potato:nav', name, source, tfPath),
   navUse: (popName, source, tfPath, popDir) => ipcRenderer.invoke('nav:use', popName, source, tfPath, popDir),
+  assetRoots: (roots) => ipcRenderer.invoke('assets:roots', roots),
   mapFlush: () => ipcRenderer.invoke('map:flush'),
   reveal: (p) => ipcRenderer.invoke('file:reveal', p)
 });

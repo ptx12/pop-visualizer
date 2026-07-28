@@ -8,3 +8,4 @@ samples_sigdemo.pop
 NOTICE
 rust/target/
 rust/*/target/
+docs/*.md

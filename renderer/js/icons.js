@@ -11,6 +11,20 @@ export function setIconDirs(dirs) {
   localStorage.setItem('popvis.icondirs', JSON.stringify(dirs));
 }
 
+export function getAssetDirs() {
+  try { return JSON.parse(localStorage.getItem('popvis.assetdirs') || '[]'); } catch { return []; }
+}
+
+export function setAssetDirs(dirs) {
+  localStorage.setItem('popvis.assetdirs', JSON.stringify(dirs));
+  return pushAssetDirs();
+}
+
+export async function pushAssetDirs() {
+  if (!native.isElectron) return [];
+  try { return await window.popnative.assetRoots(getAssetDirs()); } catch { return []; }
+}
+
 export function getTFOverride() {
   return localStorage.getItem('popvis.tfpath') || null;
 }

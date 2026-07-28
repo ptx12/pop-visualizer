@@ -16,8 +16,6 @@ createServer(async (req, res) => {
   try {
     let url = decodeURIComponent(req.url.split('?')[0]);
     if (url === '/') {
-      // index.html loads js/app.js relative to its own URL; redirect so the base
-      // becomes /renderer/ (serving index.html at / would 404 every relative import).
       const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
       res.writeHead(302, { Location: '/renderer/index.html' + query });
       res.end();

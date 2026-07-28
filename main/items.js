@@ -2,44 +2,20 @@ import { ipcMain } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { detectTFPath } from './tfpath.js';
+import { parseVDF as parseKV, vdfGet } from '../shared/vdf.js';
+import { weaponRole } from '../shared/weaponscripts.js';
+import { normalizeRole } from '../shared/weaponrole.js';
 
 const WEAPON_SLOTS = new Set(['primary', 'secondary', 'melee', 'pda', 'pda2', 'building', 'sapper']);
 
-function parseKV(text) {
-  let i = 0; const n = text.length;
-  const skip = () => {
-    while (i < n) {
-      const c = text[i];
-      if (c === ' ' || c === '\t' || c === '\r' || c === '\n') { i++; continue; }
-      if (c === '/' && text[i + 1] === '/') { while (i < n && text[i] !== '\n') i++; continue; }
-      break;
-    }
-  };
-  const tok = () => {
-    skip();
-    if (i >= n) return null;
-    const c = text[i];
-    if (c === '"') { i++; const s = i; while (i < n && text[i] !== '"') i++; const t = text.slice(s, i); i++; return t; }
-    if (c === '{' || c === '}') { i++; return c; }
-    if (c === '[') { while (i < n && text[i] !== ']') i++; i++; return tok(); }
-    const s = i; while (i < n && ' \t\r\n"{}'.indexOf(text[i]) < 0) i++;
-    return text.slice(s, i);
-  };
-  const block = () => {
-    const obj = {};
-    for (;;) {
-      const key = tok();
-      if (key === null || key === '}') return obj;
-      let val = tok();
-      if (val === '[') val = tok();
-      if (val === '{') val = block();
-      if (obj[key] === undefined) obj[key] = val;
-      else if (Array.isArray(obj[key])) obj[key].push(val);
-      else obj[key] = [obj[key], val];
-    }
-  };
-  return block();
-}
+const CLASS_KEYS = {
+  scout: 'Scout', sniper: 'Sniper', soldier: 'Soldier', demoman: 'Demoman', medic: 'Medic',
+  heavyweapons: 'Heavy', pyro: 'Pyro', spy: 'Spy', engineer: 'Engineer'
+};
+
+const BASENAME_KEYS = { ...CLASS_KEYS, demoman: 'demo' };
+
+const cleanModel = m => String(m).replace(/\\/g, '/').replace(/\.mdl$/i, '').toLowerCase();
 
 let schemaCache = null;
 async function loadSchema(tfPath) {
@@ -53,27 +29,42 @@ async function loadSchema(tfPath) {
     const prefabs = ig.prefabs || {};
     const field = (node, key, depth = 0) => {
       if (!node || depth > 8) return null;
-      if (node[key]) return node[key];
+      if (Object.prototype.hasOwnProperty.call(node, key)) return node[key];
       const pf = node.prefab;
       if (!pf) return null;
       for (const name of String(pf).split(/\s+/)) {
         const v = field(prefabs[name], key, depth + 1);
-        if (v) return v;
+        if (v !== null && v !== undefined) return v;
       }
       return null;
+    };
+    const perClassModels = node => {
+      const block = field(node, 'model_player_per_class');
+      if (!block || typeof block !== 'object' || Array.isArray(block)) return null;
+      const baseName = vdfGet(block, 'basename');
+      const out = {};
+      for (const [cls, key] of Object.entries(CLASS_KEYS)) {
+        const explicit = vdfGet(block, key);
+        if (typeof explicit === 'string' && explicit) { out[cls] = cleanModel(explicit); continue; }
+        if (typeof baseName === 'string' && baseName) out[cls] = cleanModel(baseName.replace(/%s/g, BASENAME_KEYS[cls]));
+      }
+      return Object.keys(out).length ? out : null;
     };
     for (const [defidx, it] of Object.entries(items)) {
       if (defidx === 'default' || typeof it !== 'object') continue;
       const model = field(it, 'model_player');
-      if (!model || typeof model !== 'string') continue;
+      const modelPerClass = perClassModels(it);
+      const hasBase = model && typeof model === 'string';
+      if (!hasBase && !modelPerClass) continue;
       const slot = String(field(it, 'item_slot') || 'misc').toLowerCase();
       const itemClass = String(field(it, 'item_class') || '').toLowerCase();
       const rec = {
-        model: model.replace(/\\/g, '/').replace(/\.mdl$/i, '').toLowerCase(),
+        model: hasBase ? cleanModel(model) : Object.values(modelPerClass)[0],
+        modelPerClass,
         slot, isWeapon: WEAPON_SLOTS.has(slot),
-        // Wearables (demo shields, soldier banners, parachutes) are drawn on the body at all
-        // times alongside the active weapon, so they must not compete for the weapon slot.
-        wearable: /wearable/.test(itemClass)
+        wearable: /wearable/.test(itemClass),
+        itemClass,
+        animSlot: normalizeRole(field(it, 'anim_slot'))
       };
       const name = it.name;
       if (name && typeof name === 'string') out.byName.set(name.toLowerCase().trim(), rec);
@@ -103,6 +94,12 @@ function lookup(schema, name) {
   return schema.byName.get(key) || schema.byName.get(key.replace(/^the\s+/, '')) || null;
 }
 
+async function roleOf(rec, tfPath) {
+  if (!rec || rec.wearable) return null;
+  if (rec.animSlot) return rec.animSlot;
+  return await weaponRole(rec.itemClass, tfPath);
+}
+
 export function register() {
   ipcMain.handle('items:resolve', async (e, names, tfPathOverride) => {
     const tfPath = tfPathOverride || await detectTFPath();
@@ -111,8 +108,14 @@ export function register() {
     const out = {};
     for (const name of names) {
       const rec = lookup(schema, name);
-      out[name] = rec ? { model: rec.model, slot: rec.slot, isWeapon: rec.isWeapon } : null;
+      out[name] = rec ? { model: rec.model, modelPerClass: rec.modelPerClass, slot: rec.slot, isWeapon: rec.isWeapon, wearable: rec.wearable, role: await roleOf(rec, tfPath) } : null;
     }
     return out;
+  });
+
+  ipcMain.handle('items:weaponrole', async (e, itemClass, tfPathOverride) => {
+    const tfPath = tfPathOverride || await detectTFPath();
+    if (!tfPath) return null;
+    return await weaponRole(itemClass, tfPath);
   });
 }

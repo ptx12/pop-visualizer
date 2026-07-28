@@ -3,11 +3,11 @@ import { simFor, emit, onChange, deathModel, navTogglesFor, bombPathRerollsFor, 
 import { CLASS_INFO, botDisplayName } from './popmodel.js';
 import { getTFPath, iconURL, iconNameFor, classIconName, tankIconName } from './icons.js';
 import { native } from './native.js';
-import { createBotSim, actorPosAt, actorZAt, botMaxSpeed, buildTrackChains, dpsProfile, objectiveCandidates, bombPathGroups, STEP, RNG_SEED_BASE } from './botai.js';
+import { createBotSim, actorPosAt, actorZAt, actorDistAt, actorYawAt, botMaxSpeed, buildTrackChains, dpsProfile, objectiveCandidates, bombPathGroups, STEP, RNG_SEED_BASE } from './botai.js';
 import { setStatus, clearStatus, clearStatusPrefix } from './statusbar.js';
 import { startTask } from './tasks.js';
 import { createMap3D } from './map3d.js';
-import { botModelBase, botWeaponModels, botCosmeticModels, resolveBotItems } from './botmodels.js';
+import { botModelBase, botWeaponModels, botCosmeticModels, resolveBotItems, resolveWeaponRoles, botWeaponClass, botActivity } from './botmodels.js';
 import { initNavWasm } from './navwasm.js';
 import { primaryColor } from './timeline.js';
 import { simOptsPanel } from './inspector.js';
@@ -19,6 +19,8 @@ let active3D = null;
 const cam3dCache = new Map();
 const itemsRequested = new Set();
 let itemsPending = false;
+const rolesRequested = new Set();
+let rolesPending = false;
 const aiRuns = new WeakMap();
 const lastAi = new Map();
 const worldCache = new Map();
@@ -37,6 +39,8 @@ const TANK_PATH = '#cfa35a';
 const CLUSTER_GAP = 0.92;
 const SPREAD_LIMIT = 0.9;
 const SPREAD_PASSES = 3;
+const CLUSTER_HYST = 1.3;
+const DECLUTTER_EASE = 0.25;
 const LIFT_SHADOW = 0.5;
 const LIFT_SCALE = 0.14;
 const PLATE_REF_SCALE = 20 / 48;
@@ -394,13 +398,15 @@ export function renderMapInspector(container, file, waveIndex) {
   waPanel = { canvas, head, headLabel, graph, timeEl, activeEl, wave, sim, waveEnd, view: null, lastH: -1, lastW: -1 };
   updateWavePanel(ps ? ps.t : 0, undefined);
 
+  let dragView = null;
   const timeAt = ev => {
     const p = waPanel;
     if (!p || !p.view) return 0;
-    const L = wtLayout(canvas, p.view.cols.length);
+    const v = dragView || p.view;
+    const L = wtLayout(canvas, v.cols.length);
     const r = graph.getBoundingClientRect();
     const frac = Math.max(0, Math.min(1, (ev.clientY - r.top - WT_PAD - L.headH) / Math.max(1, L.gh)));
-    return p.view.a + frac * Math.max(1, p.view.b - p.view.a);
+    return v.a + frac * Math.max(1, v.b - v.a);
   };
 
   graph.addEventListener('mousemove', ev => {
@@ -432,9 +438,10 @@ export function renderMapInspector(container, file, waveIndex) {
   graph.addEventListener('mousedown', e => {
     if (e.button !== 0) return;
     e.preventDefault();
+    if (waPanel && waPanel.view) dragView = { a: waPanel.view.a, b: waPanel.view.b, cols: waPanel.view.cols };
     scrub(e);
     const move = e2 => scrub(e2);
-    const up = () => { removeEventListener('mousemove', move); removeEventListener('mouseup', up); };
+    const up = () => { dragView = null; removeEventListener('mousemove', move); removeEventListener('mouseup', up); };
     addEventListener('mousemove', move);
     addEventListener('mouseup', up);
   });
@@ -477,10 +484,6 @@ function bombPathFor(mapName, groups, waveIndex, perWave) {
 
 function objectiveIdxFor(mapName) {
   return parseInt(localStorage.getItem('popvis.objidx.' + mapName) || '0', 10) || 0;
-}
-
-export function presetMapLog(file, waveIndex) {
-  playStateFor(file, waveIndex).logOpen = true;
 }
 
 export function presetMapSelect(file, waveIndex) {
@@ -550,41 +553,124 @@ function navReasonText(reason) {
   return 'A matching nav file was found but could not be parsed — ' + String(reason).replace(/^error: /, '') + '.';
 }
 
-function navFinder(file, mapName, status, list, btn) {
-  return async () => {
-    if (!native.isElectron) { status.textContent = 'Desktop app only.'; return; }
-    btn.disabled = true;
-    status.textContent = 'Searching the index…';
-    clear(list);
+function navScore(name, query) {
+  if (!query) return 1;
+  if (name === query) return 1000;
+  const stem = s => s.replace(/^mvm_/, '');
+  const n = stem(name), q = stem(query);
+  if (n === q) return 900;
+  if (n.startsWith(q)) return 800 - (n.length - q.length);
+  const at = n.indexOf(q);
+  if (at >= 0) return 600 - at - (n.length - q.length) * 0.1;
+  let i = 0, runs = 0, last = -2;
+  for (let k = 0; k < n.length && i < q.length; k++) {
+    if (n[k] !== q[i]) continue;
+    if (k !== last + 1) runs++;
+    last = k;
+    i++;
+  }
+  if (i < q.length) return 0;
+  const pre = sharedPrefix(n, q);
+  return 300 - runs * 8 - (n.length - q.length) * 0.1 + pre * 4;
+}
+
+function sharedPrefix(a, b) {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return i;
+}
+
+function pickRow(opts) {
+  return el('button', {
+    class: 'pick-row' + (opts.best ? ' best' : ''),
+    'aria-label': opts.action + ' ' + opts.name + opts.ext,
+    onclick: opts.onclick
+  },
+    el('span', { class: 'pick-name' },
+      el('span', { text: opts.name }),
+      el('span', { class: 'pick-ext', text: opts.ext })),
+    opts.tag ? el('span', { class: 'pick-tag', text: opts.tag }) : null,
+    el('span', { class: 'pick-go', text: opts.action }));
+}
+
+function navBrowser(file, mapName, status) {
+  const wrap = el('div', { class: 'nav-browse' });
+  const query = el('input', { class: 'inp', value: mapName, placeholder: 'Search the potato.tf nav index', spellcheck: 'false' });
+  const meta = el('div', { class: 'nav-gate-sub muted' });
+  const list = el('div', { class: 'pick-list scroll' });
+  let names = null;
+  let busy = false;
+
+  const download = async name => {
+    if (busy) return;
+    busy = true;
+    status.textContent = 'Downloading ' + name + '.nav…';
     try {
-      const res = await window.popnative.potatoNavs(mapName);
-      if (!res || res.error) { status.textContent = res && res.error ? res.error : 'Search failed.'; return; }
-      if (!res.candidates.length) { status.textContent = 'No nav for this map on the index.'; return; }
-      const exact = res.candidates.filter(c => c.exact);
-      status.textContent = exact.length
-        ? 'Found ' + exact[0].name + '.nav.'
-        : 'No exact match — pick the closest of ' + res.candidates.length + ':';
-      for (const c of res.candidates) {
-        list.append(el('button', {
-          class: 'btn nav-cand' + (c.exact ? ' primary' : ''),
-          text: c.name + '.nav' + (c.exact ? '  (exact)' : ''),
-          onclick: async () => {
-            status.textContent = 'Downloading ' + c.name + '.nav…';
-            const tfPath = await getTFPath();
-            const dl = await window.popnative.potatoNav(mapName, c.name, tfPath);
-            if (!dl || dl.error) { status.textContent = dl && dl.error ? dl.error : 'Download failed.'; return; }
-            status.textContent = 'Saved as ' + mapName + '.nav' + (dl.renamed ? ' (from ' + dl.source + ')' : '');
-            await window.popnative.mapFlush();
-            reloadMapData(file);
-          }
-        }));
-      }
-    } catch (err) {
-      status.textContent = 'Search failed: ' + err.message;
+      const tfPath = await getTFPath();
+      const dl = await window.popnative.potatoNav(mapName, name, tfPath);
+      if (!dl || dl.error) { status.textContent = dl && dl.error ? dl.error : 'Download failed.'; return; }
+      status.textContent = 'Saved as ' + mapName + '.nav' + (dl.renamed ? ' (from ' + dl.source + ')' : '');
+      await window.popnative.mapFlush();
+      reloadMapData(file);
     } finally {
-      btn.disabled = false;
+      busy = false;
     }
   };
+
+  const render = () => {
+    clear(list);
+    if (!names) return;
+    const q = query.value.trim().toLowerCase();
+    const hits = names
+      .map(n => ({ name: n, score: navScore(n, q) }))
+      .filter(h => h.score > 0)
+      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+      .slice(0, 40);
+    meta.textContent = q
+      ? hits.length + ' of ' + names.length + ' navs match "' + q + '"'
+      : names.length + ' navs on the potato.tf index';
+    if (!hits.length) { list.append(el('div', { class: 'pick-more', text: 'Nothing matches. Try a shorter query.' })); return; }
+    for (const h of hits) {
+      const exact = h.name === mapName;
+      list.append(pickRow({
+        name: h.name, ext: '.nav',
+        tag: exact ? 'Exact match' : null, best: exact,
+        action: 'Download', onclick: () => download(h.name)
+      }));
+    }
+  };
+
+  const load = async force => {
+    if (!native.isElectron) { meta.textContent = 'Desktop app only.'; return; }
+    meta.textContent = force ? 'Refreshing the index…' : 'Loading the index…';
+    try {
+      const res = await window.popnative.potatoNavIndex(!!force);
+      if (!res || res.error) { meta.textContent = res && res.error ? res.error : 'Could not reach the index.'; return; }
+      names = res.names || [];
+      render();
+      if (res.stale) meta.textContent += ' (offline — showing the last index)';
+    } catch (err) {
+      meta.textContent = 'Index lookup failed: ' + err.message;
+    }
+  };
+
+  let timer = null;
+  query.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(render, 90);
+  });
+  query.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const first = list.querySelector('button');
+    if (first) first.click();
+  });
+
+  wrap.append(
+    el('div', { class: 'nav-browse-row' }, query,
+      el('button', { class: 'btn sm', text: 'Refresh', title: 'Re-fetch the potato.tf index', onclick: () => load(true) })),
+    meta, list);
+  load(false);
+  return wrap;
 }
 
 function navSearchNote(search) {
@@ -593,7 +679,7 @@ function navSearchNote(search) {
     out.push(el('div', { class: 'nav-gate-sub' },
       el('span', { text: 'Searched: ' }),
       el('span', { class: 'nav-gate-mono', text: search.searched.join('  ') }),
-      el('span', { text: '  plus tf2_misc_dir.vpk and the map pakfile.' })));
+      el('span', { text: '  plus tf2_misc_dir.vpk and the map pakfile. Add your own folder under Settings & blocks.' })));
   }
   return out;
 }
@@ -603,10 +689,10 @@ function nearNavButtons(file, mapData, status) {
   const bad = search.reason && search.reason.startsWith('empty:') ? search.reason.slice(6) : null;
   const names = (search.near || []).filter(n => n !== bad);
   if (!names.length) return null;
-  const row = el('div', { class: 'nav-gate-list' });
+  const row = el('div', { class: 'pick-list' });
   for (const n of names) {
-    row.append(el('button', {
-      class: 'btn nav-cand', text: n + '.nav  (local)',
+    row.append(pickRow({
+      name: n, ext: '.nav', tag: 'On disk', action: 'Use',
       onclick: async () => {
         status.textContent = 'Using ' + n + '.nav…';
         const dl = await window.popnative.navUse(mapQueryName(file), n, await getTFPath(), popDirOf(file));
@@ -631,26 +717,13 @@ function renderNavGate(container, file, mapData) {
   for (const n of navSearchNote(search)) panel.append(n);
 
   const status = el('div', { class: 'nav-gate-status' });
-  const list = el('div', { class: 'nav-gate-list' });
   const nearRow = nearNavButtons(file, mapData, status);
   if (nearRow) {
     panel.append(el('div', { class: 'nav-gate-sub', text: 'Nearby nav files — pick one to use for this map:' }), nearRow);
   }
 
-  const refreshBtn = el('button', {
-    class: 'btn', text: 'Check again',
-    title: 'Re-scan the map folders for a nav mesh',
-    onclick: async () => {
-      status.textContent = 'Rescanning…';
-      if (native.isElectron) await window.popnative.mapFlush();
-      reloadMapData(file);
-    }
-  });
-
-  const findBtn = el('button', { class: 'btn primary', text: 'Find on potato.tf' });
-  findBtn.addEventListener('click', navFinder(file, mapData.map, status, list, findBtn));
-
-  panel.append(el('div', { class: 'btn-row' }, refreshBtn, findBtn), status, list);
+  panel.append(el('div', { class: 'nav-gate-sub', text: 'Browse the potato.tf nav index:' }));
+  panel.append(navBrowser(file, mapData.map, status), status);
   container.append(panel);
 }
 
@@ -678,11 +751,12 @@ function renderMapPicker(container, file) {
   const isPfx = n => mission === n || mission.startsWith(n + '_');
   const panel = el('div', { class: 'nav-gate' });
   panel.append(el('div', { class: 'panel-title', text: 'NO MATCHING MAP' }));
-  panel.append(el('div', { class: 'nav-gate-msg', text: 'No local BSP matches "' + file.name + '". Pick its map from the potato.tf index — it downloads to tf/download/maps.' }));
+  panel.append(el('div', { class: 'nav-gate-msg', text: 'No installed map matches "' + file.name + '". Pick one from the potato.tf index to download it.' }));
+  panel.append(el('div', { class: 'nav-gate-sub', text: 'Downloads go to tf/download/maps.' }));
 
-  const filter = el('input', { class: 'inp', value: mapPickFilter.get(file.id) ?? missionStem(file.name), placeholder: 'Filter the map index' });
+  const filter = el('input', { class: 'inp', value: mapPickFilter.get(file.id) ?? missionStem(file.name), placeholder: 'Search the potato.tf map index', spellcheck: 'false' });
   const status = el('div', { class: 'nav-gate-status' });
-  const list = el('div', { class: 'nav-gate-list' });
+  const list = el('div', { class: 'pick-list scroll' });
 
   const download = async name => {
     if (mapDlActive.has(file.id)) return;
@@ -709,25 +783,31 @@ function renderMapPicker(container, file) {
     const q = filter.value.trim().toLowerCase();
     const hits = names.filter(n => !q || n.includes(q));
     hits.sort((a, b) => (isPfx(b) - isPfx(a)) || (isPfx(a) && isPfx(b) ? b.length - a.length : 0) || a.localeCompare(b));
-    status.textContent = hits.length
-      ? hits.length + ' of ' + names.length + ' maps on the index'
-      : 'Nothing on the index matches "' + q + '".';
+    if (!hits.length) status.textContent = 'Nothing on the index matches "' + q + '".';
+    else status.textContent = q
+      ? hits.length + ' of ' + names.length + ' maps match "' + q + '"'
+      : names.length + ' maps on the potato.tf index';
     for (const n of hits.slice(0, 40)) {
-      list.append(el('button', {
-        class: 'btn nav-cand' + (isPfx(n) ? ' primary' : ''),
-        text: n + '.bsp' + (isPfx(n) ? '  (matches the mission name)' : ''),
-        onclick: () => download(n)
+      list.append(pickRow({
+        name: n, ext: '.bsp',
+        tag: isPfx(n) ? 'Mission match' : null, best: isPfx(n),
+        action: 'Download', onclick: () => download(n)
       }));
     }
-    if (hits.length > 40) list.append(el('div', { class: 'nav-gate-sub', text: '+' + (hits.length - 40) + ' more — narrow the filter' }));
+    if (hits.length > 40) list.append(el('div', { class: 'pick-more', text: (hits.length - 40) + ' more — narrow the search' }));
   };
 
   filter.addEventListener('input', () => {
     mapPickFilter.set(file.id, filter.value);
     if (mapIndexCache.names) refresh(mapIndexCache.names);
   });
+  filter.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const first = list.querySelector('button');
+    if (first) first.click();
+  });
 
-  panel.append(el('div', { class: 'btn-row' }, filter), status, list);
+  panel.append(el('div', { class: 'nav-browse-row' }, filter), status, list);
   container.append(panel);
 
   if (mapDlActive.has(file.id)) {
@@ -746,9 +826,12 @@ function buildApproxBanner(file, mapData) {
   const nav = mapData.nav;
   const bar = el('div', { class: 'nav-approx' });
   const status = el('div', { class: 'nav-gate-status' });
-  const list = el('div', { class: 'nav-gate-list' });
+  const holder = el('div', {});
   const findBtn = el('button', { class: 'btn sm', text: 'Find the right one' });
-  findBtn.addEventListener('click', navFinder(file, mapData.map, status, list, findBtn));
+  findBtn.addEventListener('click', () => {
+    if (holder.firstChild) { clear(holder); return; }
+    holder.append(navBrowser(file, mapData.map, status));
+  });
   bar.append(
     el('span', { class: 'nav-approx-tag', text: 'APPROXIMATE NAV' }),
     el('span', {
@@ -760,7 +843,7 @@ function buildApproxBanner(file, mapData) {
       class: 'btn sm', text: 'Dismiss',
       onclick: () => { approxDismissed.add(mapData.map); emit('map'); }
     }));
-  return el('div', {}, bar, status, list);
+  return el('div', {}, bar, holder, status);
 }
 
 function playStateFor(file, waveIndex) {
@@ -1127,7 +1210,6 @@ export function renderMapView(container, file, waveIndex) {
   const paint = paintFor(mapData.map);
   const paintV = paintVersions.get(mapData.map) || 0;
   const ps = playStateFor(file, waveIndex);
-  if (ps.logOpen === undefined) ps.logOpen = localStorage.getItem('popvis.maplog') === '1';
 
   const killPts = killPointsFor(mapData.map);
   const objIdx = objectiveIdxFor(mapData.map);
@@ -1205,13 +1287,26 @@ export function renderMapView(container, file, waveIndex) {
     ? 'nav: ' + mapData.nav.name + (mapData.nav.approx ? ' (approximate)' : '')
     : 'no nav mesh';
 
-  const playBtn = el('button', { class: 'btn sm', text: ps.playing ? 'Pause' : 'Play' });
+  const playBtn = el('button', { class: 'btn sm ctl-play' });
+  const setPlayLabel = playing => {
+    if (playBtn.dataset.state === (playing ? 'pause' : 'play')) return;
+    playBtn.dataset.state = playing ? 'pause' : 'play';
+    clear(playBtn);
+    playBtn.append(icon(playing ? 'pause' : 'play', 15), el('span', { text: playing ? 'Pause' : 'Play' }));
+    playBtn.title = (playing ? 'Pause playback' : 'Play the wave') + ' (Space)';
+    playBtn.setAttribute('aria-label', playing ? 'Pause playback' : 'Play the wave');
+    playBtn.setAttribute('aria-pressed', playing ? 'true' : 'false');
+  };
+  setPlayLabel(ps.playing);
   const timeLbl = el('span', { class: 'map-time' });
   const mini = el('canvas', { class: 'map-mini', title: 'Wave activity — click or drag to scrub' });
   const nextLbl = el('span', { class: 'map-next' });
-  const speedSel = el('select', { class: 'inp sm' },
+  const speedSel = el('select', {
+    class: 'inp sm map-speed', title: 'Playback speed', 'aria-label': 'Playback speed'
+  },
     ...[0.5, 1, 2, 4].map(s => el('option', { value: s, text: s + 'x', selected: ps.speed === s })));
-  const fitBtn = el('button', { class: 'btn sm', text: 'Fit' });
+  const fitBtn = el('button', { class: 'btn sm', title: 'Fit the whole map in view' },
+    icon('maximize', 15), el('span', { text: 'Fit' }));
 
   const upcoming = [];
   for (const ws of wave.wavespawns) {
@@ -1225,9 +1320,10 @@ export function renderMapView(container, file, waveIndex) {
     for (const u of upcoming) if (u.t > t + 0.001) return u;
     return null;
   };
-  const modeSeg = el('span', { class: 'map-modes' },
+  const modeSeg = el('span', { class: 'map-modes', role: 'group', 'aria-label': 'View mode' },
     ...[['full', 'Full'], ['layout', 'Nav'], ['3d', '3D']].map(([m, label]) => el('button', {
       class: 'seg-btn' + (ps.mode === m ? ' on' : ''), text: label,
+      'aria-pressed': ps.mode === m ? 'true' : 'false',
       title: m === '3d' ? 'Orbit a 3D height-mesh of the map (drag to rotate, wheel to zoom)' : null,
       onclick: () => {
         ps.mode = m;
@@ -1239,8 +1335,9 @@ export function renderMapView(container, file, waveIndex) {
   const objCands = objectiveCandidates(mapData, buildTrackChains(mapData, file.model.extraTankPaths));
 
   const displayBtn = el('button', {
-    class: 'btn sm' + (ps.optionsOpen ? ' on' : ''),
-    text: 'Simulation',
+    class: 'btn sm map-simbtn' + (ps.optionsOpen ? ' on' : ''),
+    'aria-pressed': ps.optionsOpen ? 'true' : 'false',
+    'aria-expanded': ps.optionsOpen ? 'true' : 'false',
     title: 'Death model, damage zones, kill points, objective',
     onclick: () => {
       ps.optionsOpen = !ps.optionsOpen;
@@ -1248,6 +1345,7 @@ export function renderMapView(container, file, waveIndex) {
       emit('map');
     }
   });
+  displayBtn.append(icon('sliders', 15), el('span', { text: 'Simulation' }));
 
   const truncParts = [];
   if (ai.truncation) {
@@ -1266,50 +1364,53 @@ export function renderMapView(container, file, waveIndex) {
   });
   if (truncParts.length) setStatus('map:trunc', { view: 'map', kind: 'warn', text: 'sim truncated', title: truncParts.join('; ') });
   else clearStatus('map:trunc');
-  const logBtn = el('button', {
-    class: 'btn sm' + (ps.logOpen ? ' on' : ''), text: 'Log',
-    title: 'Simulation event log — spawns, deaths, deliveries; click an event to jump there',
-    onclick: () => { ps.logOpen = !ps.logOpen; localStorage.setItem('popvis.maplog', ps.logOpen ? '1' : '0'); emit('map'); }
-  });
-  const tbtn = (glyph, label, action) => el('button', {
-    class: 'icon-btn sm', text: glyph, title: label, 'aria-label': label,
-    onclick: () => mapTransport(file, waveIndex, action)
-  });
-  const transport = el('span', { class: 'map-group map-transport' },
-    tbtn('↺', 'Restart (Home)', 'restart'),
-    tbtn('«', 'Previous event ([)', 'prev-event'),
-    tbtn('‹', 'Step back one tick (←)', 'step-back'),
+  const tbtn = (iconName, label, action) => {
+    const b = el('button', {
+      class: 'icon-btn sm', title: label, 'aria-label': label,
+      onclick: () => mapTransport(file, waveIndex, action)
+    });
+    b.append(icon(iconName, 15));
+    return b;
+  };
+  const transport = el('span', { class: 'map-transport', role: 'group', 'aria-label': 'Playback' },
+    tbtn('rotate-ccw', 'Restart (Home)', 'restart'),
+    el('span', { class: 'ctl-div' }),
+    tbtn('skip-back', 'Previous event ([)', 'prev-event'),
+    tbtn('chevron-left', 'Step back one tick (←)', 'step-back'),
     playBtn,
-    tbtn('›', 'Step forward one tick (→)', 'step-fwd'),
-    tbtn('»', 'Next event (])', 'next-event'),
+    tbtn('chevron-right', 'Step forward one tick (→)', 'step-fwd'),
+    tbtn('skip-forward', 'Next event (])', 'next-event'),
+    el('span', { class: 'ctl-div' }),
     speedSel);
   const zoomLbl = el('button', { class: 'btn sm map-zoom', title: 'Zoom — click to fit the map', onclick: () => { fit(); drawFrame(); } });
   const bar = el('div', { class: 'map-toolbar' },
-    transport,
-    mini, timeLbl, nextLbl,
-    el('span', { class: 'map-group' }, fitBtn, zoomLbl, modeSeg),
-    displayBtn, logBtn,
-    el('span', { class: 'map-note', text: mapData.map + ' — ' + navNote }),
-    truncParts.length ? el('span', {
-      class: 'map-trunc',
-      title: 'The movement simulation hit an internal limit, so late activity is missing from this playback. The timeline schedule is not affected.',
-      text: 'truncated — ' + truncParts.join('; ')
-    }) : null,
-    file.mapTexReq ? el('span', { class: 'map-baking', title: 'Reading the map textures — surfaces stay flat until this finishes', text: 'baking textures…' }) : null);
+    el('div', { class: 'map-row map-row-play' },
+      transport, mini, timeLbl, nextLbl),
+    el('div', { class: 'map-row map-row-view' },
+      el('span', { class: 'map-group', role: 'group', 'aria-label': 'Viewport' }, fitBtn, zoomLbl, modeSeg),
+      el('span', { class: 'map-info' },
+        el('span', { class: 'map-note', text: mapData.map + ' — ' + navNote }),
+        truncParts.length ? el('span', {
+          class: 'map-trunc',
+          title: 'The movement simulation hit an internal limit, so late activity is missing from this playback. The timeline schedule is not affected.',
+          text: 'truncated — ' + truncParts.join('; ')
+        }) : null,
+        file.mapTexReq ? el('span', { class: 'map-baking', title: 'Reading the map textures — surfaces stay flat until this finishes', text: 'baking textures…' }) : null),
+      displayBtn));
 
   function buildOptionsPanel() {
     const panel = el('div', { class: 'map-opts map-tools' });
-    panel.append(el('div', { class: 'pop-title' },
-      el('span', { text: 'SIMULATION' }),
-      el('button', {
-        class: 'icon-btn sm', text: '×', title: 'Close',
-        onclick: () => { ps.optionsOpen = false; localStorage.setItem('popvis.simpanel', '0'); emit('map'); }
-      })));
+    const closeBtn = el('button', {
+      class: 'icon-btn sm', title: 'Close', 'aria-label': 'Close the simulation panel',
+      onclick: () => { ps.optionsOpen = false; localStorage.setItem('popvis.simpanel', '0'); emit('map'); }
+    });
+    closeBtn.append(icon('x', 15));
+    panel.append(el('div', { class: 'pop-title' }, el('span', { text: 'SIMULATION' }), closeBtn));
 
     const tool = (id, iconName, label, hint) => {
       const b = el('button', {
         class: 'btn sm tool-btn' + (ps.tool === id ? ' on' : ''), title: hint,
-        'aria-label': label,
+        'aria-label': label, 'aria-pressed': ps.tool === id ? 'true' : 'false',
         onclick: () => { ps.tool = ps.tool === id ? null : id; emit('map'); }
       });
       b.append(icon(iconName, 15), el('span', { text: label }));
@@ -1324,9 +1425,10 @@ export function renderMapView(container, file, waveIndex) {
     }));
 
     if (model === 'damage') {
-      const zoneSeg = el('span', { class: 'map-modes' },
+      const zoneSeg = el('span', { class: 'map-modes', role: 'group', 'aria-label': 'Damage zones' },
         ...[['auto', 'Auto'], ['custom', 'Custom'], ['off', 'Off']].map(([m, label]) => el('button', {
           class: 'seg-btn' + (zMode === m ? ' on' : ''), text: label,
+          'aria-pressed': zMode === m ? 'true' : 'false',
           onclick: () => { localStorage.setItem('popvis.zonesmode', m); emit('map'); }
         })));
       panel.append(el('div', { class: 'opt-row' }, el('span', { class: 'opt-label', text: 'Damage zones' }), zoneSeg));
@@ -1346,9 +1448,11 @@ export function renderMapView(container, file, waveIndex) {
       }
     }
 
+    const routeOn = ps.showRoute !== false;
     const routeBtn = el('button', {
-      class: 'btn sm' + (ps.showRoute === false ? '' : ' on'), text: ps.showRoute === false ? 'Off' : 'On',
+      class: 'btn sm ctl-toggle' + (routeOn ? ' on' : ''), text: routeOn ? 'On' : 'Off',
       title: 'Draw the route the bots take to the hatch',
+      'aria-label': 'Draw the bomb route', 'aria-pressed': routeOn ? 'true' : 'false',
       onclick: () => { ps.showRoute = ps.showRoute === false; emit('map'); }
     });
     if (pathGroups.length) {
@@ -1359,7 +1463,7 @@ export function renderMapView(container, file, waveIndex) {
         ? 'this wave: ' + String(bombPath || '').replace(/_/g, ' ')
         : (fromMap ? 'random (map picks)' : 'default (map)');
       const pathSel = el('select', {
-        class: 'inp sm',
+        class: 'inp sm', 'aria-label': 'Nav path',
         title: perWavePath
           ? 'The map re-rolls the bomb path after every wave, so each wave gets its own. This is one of the possibilities — pick a specific one to pin it.'
           : (fromMap
@@ -1431,18 +1535,18 @@ export function renderMapView(container, file, waveIndex) {
 
   const dpr = window.devicePixelRatio || 1;
 
-  // Playback controls must work in every mode. 3D repaints through the WebGL view's own
-  // scheduler (its draw loop advances ps.t while playing); 2D repaints via drawFrame().
   function repaintNow() {
-    if (ps.mode === '3d') { if (active3D) active3D.redraw(); drawMini(); }
-    else drawFrame();
+    if (ps.mode !== '3d') { drawFrame(); return; }
+    if (active3D) active3D.redraw();
+    drawMini();
+    updateWavePanel(ps.t, countActiveAt(ps.t), waveEnd);
   }
 
   function wirePlayback() {
     playBtn.addEventListener('click', () => {
       if (!ps.playing && ps.t >= waveEnd) ps.t = 0;
       ps.playing = !ps.playing;
-      playBtn.textContent = ps.playing ? 'Pause' : 'Play';
+      setPlayLabel(ps.playing);
       if (ps.mode === '3d') { if (active3D) active3D.redraw(); }
       else if (ps.playing && !ps.raf) ps.raf = requestAnimationFrame(() => loop(0));
     });
@@ -1467,7 +1571,7 @@ export function renderMapView(container, file, waveIndex) {
       e.preventDefault();
       const step = (e.shiftKey ? 5 : 1) * (e.deltaY > 0 ? 1 : -1);
       ps.playing = false;
-      playBtn.textContent = 'Play';
+      setPlayLabel(false);
       ps.t = Math.max(0, Math.min(waveEnd, ps.t + step));
       repaintNow();
     }, { passive: false });
@@ -1475,6 +1579,7 @@ export function renderMapView(container, file, waveIndex) {
 
   if (ps.mode === '3d') {
     wirePlayback();
+    mapRedraw = repaintNow;
     render3DMode();
     drawMini();
     return;
@@ -1504,34 +1609,47 @@ export function renderMapView(container, file, waveIndex) {
       itemsPending = true;
       resolveBotItems([...itemsRequested]).then(c => { itemsPending = false; if (c) emit('map'); }).catch(() => { itemsPending = false; });
     }
+    let freshRoles = false;
+    for (const a of ai.actors) {
+      if (a.kind !== 'bot') continue;
+      const wc = botWeaponClass(a.bot);
+      if (wc && !rolesRequested.has(wc)) { rolesRequested.add(wc); freshRoles = true; }
+    }
+    if (freshRoles && !rolesPending) {
+      rolesPending = true;
+      resolveWeaponRoles([...rolesRequested]).then(c => { rolesPending = false; if (c) emit('map'); }).catch(() => { rolesPending = false; });
+    }
     for (const a of ai.actors) {
       if (t < a.spawnT || t > a.dieT) continue;
       const p = actorPosAt(a, t);
       if (!p) continue;
       const cs = actorColorSize(a);
-      let heading = a.__h3d || 0;
-      let moving = false;
-      const prev = actorPosAt(a, Math.max(a.spawnT, t - 0.28));
-      if (prev) {
-        const dx = p[0] - prev[0], dy = p[1] - prev[1];
-        const d2 = dx * dx + dy * dy;
-        if (d2 > 4) { heading = Math.atan2(dy, dx); a.__h3d = heading; }
-        moving = d2 > 2.25;
+      const H = 0.12;
+      const before = actorPosAt(a, Math.max(a.spawnT, t - H));
+      const after = actorPosAt(a, Math.min(a.dieT, t + H)) || p;
+      const heading = actorYawAt(a, t);
+      let moving = false, speed = 0;
+      if (before) {
+        const span = Math.min(a.dieT, t + H) - Math.max(a.spawnT, t - H);
+        const d = Math.hypot(after[0] - before[0], after[1] - before[1]);
+        speed = span > 0 ? d / span : 0;
+        moving = speed > 0.5;
       }
-      let scale = 1, modelBase = null, attachments = null, loadoutKey = null;
+      let scale = 1, modelBase = null, attachments = null, loadoutKey = null, activity = null;
       if (a.kind === 'bot') {
         scale = a.bot.scale != null ? a.bot.scale : (a.bot.isGiant ? 1.75 : 1);
         modelBase = botModelBase(a.bot);
         const weps = botWeaponModels(a.bot);
         const cos = botCosmeticModels(a.bot);
+        activity = botActivity(a.bot);
         attachments = [...weps, ...cos];
-        loadoutKey = modelBase + '|' + attachments.join('|');
+        loadoutKey = modelBase + '|' + activity + '|' + attachments.join('|');
       }
       out.push({
         x: p[0], y: p[1], z: actorZAt(a, t), size: cs.s, r: cs.c[0], g: cs.c[1], b: cs.c[2],
         kind: a.kind, cls: a.kind === 'bot' ? a.bot.cls : null,
         crit: a.kind === 'bot' && !!a.bot.alwaysCrit,
-        modelBase, attachments, loadoutKey, moving, carrying: false,
+        modelBase, attachments, loadoutKey, activity, moving, carrying: false, speed, dist: actorDistAt(a, t),
         heading, scale, phase: (Math.floor(a.spawnT * 13) + (a.memberIdx || 0) * 5) % 128
       });
     }
@@ -1560,11 +1678,9 @@ export function renderMapView(container, file, waveIndex) {
   function render3DMode() {
     const wrap3d = el('div', { class: 'map-canvaswrap' });
     container.append(el('div', { class: 'mapview' }, approx, bar, wrap3d));
-    playBtn.addEventListener('click', () => mapTransport(file, waveIndex, 'toggle'));
     fitBtn.title = 'Reset the 3D camera';
     fitBtn.addEventListener('click', () => active3D && active3D.resetCamera());
     if (ps.optionsOpen) wrap3d.append(buildOptionsPanel());
-    if (ps.logOpen) wrap3d.append(buildEventLog());
     if (!tex || !tex.heightGrid) {
       wrap3d.append(el('div', { class: 'empty-note', text: tex ? 'This map has no baked geometry to build a 3D mesh — use Full or Nav.' : 'Baking the map… 3D appears once the textures finish.' }));
       return;
@@ -1587,9 +1703,11 @@ export function renderMapView(container, file, waveIndex) {
         emit('map');
       },
       onTime: tt => {
-        timeLbl.textContent = fmtTime(tt) + ' / ' + fmtTime(waveEnd) + ' — ' + countActiveAt(tt) + ' active';
-        if (!ps.playing && playBtn.textContent !== 'Play') playBtn.textContent = 'Play';
+        const alive = countActiveAt(tt);
+        timeLbl.textContent = fmtTime(tt) + ' / ' + fmtTime(waveEnd) + ' — ' + alive + ' active';
+        if (!ps.playing) setPlayLabel(false);
         drawMini();
+        updateWavePanel(tt, alive, waveEnd);
       },
       onPlayEnd: () => emit('map')
     };
@@ -1606,48 +1724,15 @@ export function renderMapView(container, file, waveIndex) {
     timeLbl.textContent = fmtTime(ps.t) + ' / ' + fmtTime(waveEnd) + ' — ' + countActiveAt(ps.t) + ' active';
   }
 
-  function buildEventLog() {
-    const wrap = el('div', { class: 'map-eventlog map-tools' });
-    wrap.append(el('div', { class: 'pop-title' },
-      el('span', { text: 'EVENT LOG' }),
-      el('button', {
-        class: 'icon-btn sm', text: '×', title: 'Close', 'aria-label': 'Close event log',
-        onclick: () => { ps.logOpen = false; localStorage.setItem('popvis.maplog', '0'); emit('map'); }
-      })));
-    let log = eventLogFor(ai);
-    if (log.length > 400) {
-      let idx = 0;
-      while (idx < log.length && log[idx].t < ps.t) idx++;
-      const from = Math.max(0, idx - 200);
-      const slice = log.slice(from, from + 400);
-      wrap.append(el('div', { class: 'evlog-note', text: 'showing ' + slice.length + ' of ' + log.length + ' events around the playhead' }));
-      log = slice;
-    }
-    const list = el('div', { class: 'evlog-list', role: 'list' });
-    if (!log.length) list.append(el('div', { class: 'evlog-note', text: 'No events' }));
-    for (const ev of log) {
-      list.append(el('div', {
-        class: 'evlog-row ' + ev.kind + (ev.t <= ps.t ? ' past' : ''),
-        role: 'listitem', tabindex: 0, 'data-kbd': true,
-        title: 'Jump playback to ' + fmtTime(ev.t),
-        onclick: () => { ps.t = Math.max(0, Math.min(ev.t, waveEnd)); ps.playing = false; emit('map'); }
-      },
-        el('span', { class: 'evlog-t', text: fmtTime(ev.t) }),
-        el('span', { class: 'evlog-x', text: ev.text })));
-    }
-    wrap.append(list);
-    return wrap;
-  }
-
   function buildActorCard(sel) {
     const isBot = sel.kind === 'bot';
     const wrap = el('div', { class: 'map-actorcard map-tools' });
-    wrap.append(el('div', { class: 'pop-title' },
-      el('span', { text: 'ACTOR' }),
-      el('button', {
-        class: 'icon-btn sm', text: '×', title: 'Deselect (Esc)', 'aria-label': 'Deselect',
-        onclick: () => { ps.selKey = null; ps.follow = false; emit('map'); }
-      })));
+    const acClose = el('button', {
+      class: 'icon-btn sm', title: 'Deselect (Esc)', 'aria-label': 'Deselect',
+      onclick: () => { ps.selKey = null; ps.follow = false; emit('map'); }
+    });
+    acClose.append(icon('x', 15));
+    wrap.append(el('div', { class: 'pop-title' }, el('span', { text: 'ACTOR' }), acClose));
     const head = el('div', { class: 'ac-head' });
     if (isBot) head.append(botVisual(sel.bot));
     else if (sel.kind === 'tank') head.append(tankVisual(sel.tank));
@@ -1689,7 +1774,6 @@ export function renderMapView(container, file, waveIndex) {
 
   container.append(el('div', { class: 'mapview' }, approx, bar, canvasWrap));
   if (ps.optionsOpen) canvasWrap.append(buildOptionsPanel());
-  if (ps.logOpen) canvasWrap.append(buildEventLog());
   const selNow = selectedActor();
   if (selNow) canvasWrap.append(buildActorCard(selNow));
 
@@ -2056,8 +2140,15 @@ export function renderMapView(container, file, waveIndex) {
 
   function declutter(shown) {
     const n = shown.length;
-    for (const q of shown) { q.dx = 0; q.dy = 0; q.n = 1; }
-    if (n < 2) return shown;
+    const mem = ps.declutter || (ps.declutter = new Map());
+    for (const q of shown) {
+      q.key = actorKey(q.a);
+      const prev = mem.get(q.key);
+      q.dx = prev ? prev.dx : 0;
+      q.dy = prev ? prev.dy : 0;
+      q.n = 1;
+    }
+    if (n < 2) { persistDeclutter(shown, mem); return shown; }
     const order = shown.map((q, i) => i).sort((i, j) =>
       shown[j].plate - shown[i].plate || shown[i].a.spawnT - shown[j].a.spawnT || i - j);
     const taken = new Array(n).fill(false);
@@ -2067,13 +2158,18 @@ export function renderMapView(container, file, waveIndex) {
       taken[i] = true;
       const members = [shown[i]];
       const reach = shown[i].plate * CLUSTER_GAP;
+      const leadKey = shown[i].key;
       for (const j of order) {
         if (taken[j]) continue;
         const dx = shown[i].sx - shown[j].sx, dy = shown[i].sy - shown[j].sy;
-        if (dx * dx + dy * dy >= reach * reach) continue;
+        const prev = mem.get(shown[j].key);
+        const r = prev && prev.lead === leadKey ? reach * CLUSTER_HYST : reach;
+        if (dx * dx + dy * dy >= r * r) continue;
         taken[j] = true;
+        shown[j].lead = leadKey;
         members.push(shown[j]);
       }
+      shown[i].lead = leadKey;
       groups.push(members);
     }
     const out = [];
@@ -2095,8 +2191,23 @@ export function renderMapView(container, file, waveIndex) {
       for (const q of members) out.push(q);
     }
     spread(out);
+    persistDeclutter(out, mem);
     out.sort((p, q) => p.zf - q.zf);
     return out;
+  }
+
+  function persistDeclutter(list, mem) {
+    const seen = new Set();
+    for (const q of list) {
+      const prev = mem.get(q.key);
+      if (prev) {
+        q.dx = prev.dx + (q.dx - prev.dx) * DECLUTTER_EASE;
+        q.dy = prev.dy + (q.dy - prev.dy) * DECLUTTER_EASE;
+      }
+      mem.set(q.key, { dx: q.dx, dy: q.dy, lead: q.lead || q.key });
+      seen.add(q.key);
+    }
+    if (mem.size > seen.size) for (const k of [...mem.keys()]) if (!seen.has(k)) mem.delete(k);
   }
 
   function spread(list) {
@@ -2301,7 +2412,7 @@ export function renderMapView(container, file, waveIndex) {
     const now = performance.now();
     const dt = prev ? (now - prev) / 1000 : 0;
     ps.t += dt * ps.speed;
-    if (ps.t >= waveEnd) { ps.t = waveEnd; ps.playing = false; playBtn.textContent = 'Play'; }
+    if (ps.t >= waveEnd) { ps.t = waveEnd; ps.playing = false; setPlayLabel(false); }
     drawFrame();
     if (ps.playing) ps.raf = requestAnimationFrame(() => loop(now));
     else schedulePulse();

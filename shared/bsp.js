@@ -1,4 +1,4 @@
-import { openSync, readSync, closeSync } from 'fs';
+import { openSync, readSync, closeSync, statSync } from 'fs';
 import { inflateRawSync } from 'zlib';
 import { decodeValveLZMA, lzmaDecode } from './lzma.js';
 import { LIMITS, cap } from './limits.js';
@@ -10,44 +10,127 @@ function lumpInfo(fd, index) {
   return { fileofs: head.readInt32LE(8 + index * 16), filelen: head.readInt32LE(8 + index * 16 + 4) };
 }
 
-export function readLump(bspPath, index, maxLen = 64 * 1024 * 1024) {
-  const fd = openSync(bspPath, 'r');
+const LUMP_CACHE_MAX = 320 * 1024 * 1024;
+const lumpCache = new Map();
+let lumpCacheBytes = 0;
+
+export function flushLumpCache() {
+  lumpCache.clear();
+  lumpCacheBytes = 0;
+}
+
+function fileStamp(bspPath) {
   try {
-    const info = lumpInfo(fd, index);
-    if (!info || info.filelen <= 0 || info.filelen > maxLen || info.fileofs < 0) return null;
-    let lump = Buffer.alloc(info.filelen);
-    readSync(fd, lump, 0, info.filelen, info.fileofs);
-    if (lump.toString('ascii', 0, 4) === 'LZMA') {
-      try { lump = decodeValveLZMA(lump); } catch { return null; }
-      if (!lump) return null;
-    }
-    return lump;
-  } finally {
-    closeSync(fd);
+    const s = statSync(bspPath);
+    return s.size + ':' + s.mtimeMs;
+  } catch {
+    return null;
   }
 }
 
-export function readStaticProps(bspPath) {
+function cacheGet(key) {
+  if (!lumpCache.has(key)) return undefined;
+  const v = lumpCache.get(key);
+  lumpCache.delete(key);
+  lumpCache.set(key, v);
+  return v;
+}
+
+function cacheSet(key, buf) {
+  const size = buf ? buf.length : 0;
+  if (size > LUMP_CACHE_MAX) return buf;
+  lumpCache.set(key, buf);
+  lumpCacheBytes += size;
+  while (lumpCacheBytes > LUMP_CACHE_MAX && lumpCache.size > 1) {
+    const oldest = lumpCache.keys().next().value;
+    const dropped = lumpCache.get(oldest);
+    lumpCache.delete(oldest);
+    lumpCacheBytes -= dropped ? dropped.length : 0;
+  }
+  return buf;
+}
+
+export function readLump(bspPath, index, maxLen = 64 * 1024 * 1024) {
+  const stamp = fileStamp(bspPath);
+  const key = stamp === null ? null : bspPath + '|' + stamp + '|' + index + '|' + maxLen;
+  if (key !== null) {
+    const hit = cacheGet(key);
+    if (hit !== undefined) return hit;
+  }
   const fd = openSync(bspPath, 'r');
+  let out = null;
+  try {
+    const info = lumpInfo(fd, index);
+    if (!info || info.filelen <= 0 || info.filelen > maxLen || info.fileofs < 0) return key === null ? null : cacheSet(key, null);
+    let lump = Buffer.alloc(info.filelen);
+    readSync(fd, lump, 0, info.filelen, info.fileofs);
+    if (lump.toString('ascii', 0, 4) === 'LZMA') {
+      try { lump = decodeValveLZMA(lump); } catch { lump = null; }
+    }
+    out = lump || null;
+  } finally {
+    closeSync(fd);
+  }
+  return key === null ? out : cacheSet(key, out);
+}
+
+const GAMELUMPFLAG_COMPRESSED = 0x0001;
+
+export function gameLump(bspPath, wantIds) {
+  const fd = openSync(bspPath, 'r');
+  let raw = null, base = 0;
   try {
     const info = lumpInfo(fd, 35);
-    if (!info || info.filelen <= 0 || info.filelen > 64 * 1024 * 1024) return [];
-    let buf = Buffer.alloc(info.filelen);
-    readSync(fd, buf, 0, info.filelen, info.fileofs);
-    if (buf.toString('ascii', 0, 4) === 'LZMA') { try { buf = decodeValveLZMA(buf); } catch { return []; } if (!buf) return []; }
-    const lumpCount = buf.readInt32LE(0);
-    if (lumpCount < 0 || lumpCount > 64) return [];
-    let sprp = null;
-    for (let i = 0; i < lumpCount; i++) {
-      const b = 4 + i * 16;
-      if (b + 16 > buf.length) break;
-      const id = buf.toString('ascii', b, b + 4);
-      if (id === 'sprp' || id === 'prps') { sprp = { version: buf.readUInt16LE(b + 6), fileofs: buf.readInt32LE(b + 8), filelen: buf.readInt32LE(b + 12) }; break; }
-    }
-    if (!sprp) return [];
-    let ofs = sprp.fileofs - info.fileofs;
-    const end = ofs + sprp.filelen;
-    if (ofs < 4 || end > buf.length) return [];
+    if (!info || info.filelen <= 0 || info.filelen > 64 * 1024 * 1024) return null;
+    raw = Buffer.alloc(info.filelen);
+    readSync(fd, raw, 0, info.filelen, info.fileofs);
+    base = info.fileofs;
+  } finally {
+    closeSync(fd);
+  }
+  if (raw.toString('ascii', 0, 4) === 'LZMA') {
+    try { raw = decodeValveLZMA(raw); } catch { return null; }
+    if (!raw) return null;
+  }
+  const lumpCount = raw.readInt32LE(0);
+  if (lumpCount < 0 || lumpCount > 64) return null;
+  const dir = [];
+  for (let i = 0; i < lumpCount; i++) {
+    const b = 4 + i * 16;
+    if (b + 16 > raw.length) break;
+    dir.push({
+      id: raw.toString('ascii', b, b + 4),
+      flags: raw.readUInt16LE(b + 4),
+      version: raw.readUInt16LE(b + 6),
+      fileofs: raw.readInt32LE(b + 8),
+      filelen: raw.readInt32LE(b + 12)
+    });
+  }
+  const idx = dir.findIndex(d => wantIds.includes(d.id));
+  if (idx < 0) return null;
+  const g = dir[idx];
+  const start = g.fileofs - base;
+  if (start < 0 || start >= raw.length) return null;
+  if (!(g.flags & GAMELUMPFLAG_COMPRESSED)) {
+    const end = Math.min(raw.length, start + g.filelen);
+    return { version: g.version, buf: raw.subarray(start, end) };
+  }
+  let limit = raw.length;
+  for (const d of dir) if (d.fileofs - base > start && d.fileofs - base < limit) limit = d.fileofs - base;
+  let buf = null;
+  try { buf = decodeValveLZMA(raw.subarray(start, limit)); } catch { return null; }
+  return buf ? { version: g.version, buf } : null;
+}
+
+export function readStaticProps(bspPath) {
+  try {
+    const g = gameLump(bspPath, ['sprp', 'prps']);
+    if (!g) return [];
+    const buf = g.buf;
+    const sprp = { version: g.version };
+    let ofs = 0;
+    const end = buf.length;
+    if (ofs + 4 > buf.length) return [];
     const dictCount = buf.readInt32LE(ofs); ofs += 4;
     if (dictCount < 0 || dictCount > 20000) return [];
     const dict = [];
@@ -81,7 +164,7 @@ export function readStaticProps(bspPath) {
       props.push({ model: model.replace(/\.mdl$/i, ''), origin, angles, scale });
     }
     return skyPropFilter(bspPath, props);
-  } catch { return []; } finally { closeSync(fd); }
+  } catch { return []; }
 }
 
 const DYN_PROP_CLASSES = new Set(['prop_dynamic', 'prop_dynamic_override', 'prop_physics', 'prop_physics_override', 'prop_physics_multiplayer']);
@@ -96,12 +179,7 @@ export function readDynamicProps(bspPath) {
       let model = e.model;
       if (!model || model[0] === '*' || DYN_PROP_SKIP.test(model)) continue;
       model = model.replace(/\\/g, '/').replace(/\.mdl$/i, '').toLowerCase();
-      // Entities flagged StartDisabled are not in the world at round start — that is how maps
-      // hold back destroyed-state props (e.g. rottenburg's cap_hatch_destroy_animated_prop,
-      // the blown-open bomb hole) and the bomb-path holograms. This is the real, per-entity
-      // marker, so it works on every map without matching model names.
       if (String(e.startdisabled || '').trim() === '1') continue;
-      // Likewise rendermode 10 / renderamt 0 mean "present but not drawn".
       if (String(e.rendermode || '').trim() === '10') continue;
       if (String(e.renderamt || '').trim() === '0') continue;
       const origin = (e.origin || '0 0 0').split(/\s+/).map(parseFloat);
@@ -118,15 +196,6 @@ export function readDynamicProps(bspPath) {
 
 const LEAF_SZ = 32;
 
-// The 3D skybox is built as a sealed miniature room off in a corner of the map. The engine
-// never draws it as world geometry: CSkyCamera::Activate() records
-// m_skyboxData.area = engine->GetArea( m_skyboxData.origin ) and CSkyboxView renders that area
-// separately, scaled down and re-centred on the viewer. vbsp's area flood fill gives the sealed
-// skybox room its own area number, so the area of the sky_camera identifies it exactly -- real
-// portable BSP data, no geometry heuristics. Returns a per-face mask, 1 = 3D skybox only.
-// Verified across 260 maps: on all 238 with both a sky_camera and spawns, the sky area is
-// distinct from every spawn area. The one map where they coincide (background01, the main-menu
-// backdrop, which has no sealed skybox) is caught by the play-area check below.
 export function skyAreaIndex(bspPath) {
   const planesBuf = readLump(bspPath, 1);
   const nodesBuf = readLump(bspPath, 5);
@@ -163,8 +232,6 @@ export function skyAreaIndex(bspPath) {
   if (skyLeaf < 0) return null;
   const skyArea = areaOf(skyLeaf);
 
-  // Self-check: if the playable space shares the sky_camera's area then this map has no sealed
-  // skybox room and the area tells us nothing, so leave everything alone.
   const playAreas = new Set();
   for (const e of ents) {
     if (!/^info_player_(teamspawn|start)$/.test(e.classname)) continue;
@@ -178,9 +245,6 @@ export function skyAreaIndex(bspPath) {
   return { leafsBuf, nLeafs, leafAt, areaOf, skyArea, inSkyArea: p => { const li = leafAt(p); return li >= 0 && areaOf(li) === skyArea; } };
 }
 
-// Props built inside the skybox room are miniatures too (mannhattan's cargo_ship_skybox,
-// chimney_skybox008, ...). Same area test, so they go with the geometry instead of hanging in
-// the void at full size beside the map.
 function skyPropFilter(bspPath, props) {
   if (!props.length) return props;
   try {
@@ -205,8 +269,6 @@ export function skyboxFaceMask(bspPath) {
   for (let li = 0; li < nLeafs; li++) {
     const isSky = areaOf(li) === skyArea;
     const box = isSky ? skyBox : playBox;
-    // Solid leaves (area 0) are the void between rooms and would smear the play box over the
-    // whole map, so only real, reachable leaves define these extents.
     if (isSky || areaOf(li) !== 0) {
       for (let k = 0; k < 3; k++) {
         box[k] = Math.min(box[k], leafsBuf.readInt16LE(li * LEAF_SZ + 8 + k * 2));
@@ -224,17 +286,10 @@ export function skyboxFaceMask(bspPath) {
     }
   }
   if (!isFinite(skyBox[0]) || !isFinite(playBox[0])) return null;
-  // Second self-check: the two regions must be disjoint in space, or this is not a map with a
-  // skybox room off to one side and we must not touch anything. Boxes are disjoint when a
-  // separating axis exists, so one clear axis is enough.
   let separated = false;
   for (let k = 0; k < 3 && !separated; k++) separated = skyBox[3 + k] < playBox[k] || playBox[3 + k] < skyBox[k];
   if (!separated) return null;
 
-  // Displacement and water faces are not reliably listed in a leaf's leafface array, so the
-  // leaf lists alone miss part of the skybox miniature. The sky area's own leaf bounds close
-  // that gap: it is a sealed room far from the play space, so anything wholly inside it is part
-  // of it. Both tests come from the same area data; neither invents a distance or a size.
   const vb = readLump(bspPath, 3), eb = readLump(bspPath, 12), sb = readLump(bspPath, 13);
   if (vb && eb && sb) {
     const PAD = 1;
@@ -258,7 +313,6 @@ export function skyboxFaceMask(bspPath) {
       if (all) inSky[fi] = 1;
     }
   }
-  // A face shared with any non-skybox leaf stays: only geometry exclusive to the skybox room goes.
   for (let fi = 0; fi < numFaces; fi++) if (inPlay[fi]) inSky[fi] = 0;
   return inSky;
 }
@@ -286,19 +340,6 @@ export function readModels(bspPath) {
   return out;
 }
 
-// Brush model 0 is worldspawn; models 1+ belong to brush entities, and most of them are
-// invisible gameplay volumes the game never draws. Nothing in the BSP marks them: their brushes
-// carry CONTENTS_SOLID like any wall, their texinfo flags are 0, and vrad even builds lightmaps
-// for them whenever the mapper textured the volume with a real material instead of a tools one
-// (mannhattan's two map-spanning func_nav_prerequisite brushes are cp_manor/wallpaper02 and are
-// fully lit). Source decides this in C++ at spawn time instead:
-//   CBaseTrigger::InitTrigger()  -> AddEffects( EF_NODRAW ) unless the showtriggers cheat is set
-//   CFuncNavCost/CFuncNavBlocker/CFuncNavObstruction::Spawn() -> AddEffects( EF_NODRAW )
-// so the rule is per entity class, and this mirrors it. Every trigger_* class derives from
-// CBaseTrigger; NODRAW_CLASS lists the rest, covering all 78 brush-entity classes present in a
-// 260-map corpus. Unknown classes default to drawn, matching the engine: an entity is visible
-// unless its own Spawn() hides it, so a class this list has not seen can never lose real
-// geometry.
 const NODRAW_CLASS = new Set([
   'dispenser_touch_trigger',
   'func_achievement', 'func_areaportal', 'func_areaportalwindow', 'func_bomb_reset',
@@ -313,12 +354,9 @@ const NODRAW_CLASS = new Set([
   'func_upgradestation', 'func_useableladder', 'func_viscluster', 'func_water',
   'env_bubbles'
 ]);
-// Blending render modes; renderamt is the entity's alpha in these, and ignored in kRenderNormal.
 const BLEND_RENDERMODE = new Set(['1', '2', '3', '4', '5', '9']);
 
 const DEG = Math.PI / 180;
-// Source AngleMatrix() from mathlib, as the three rows of a matrix3x4_t, so that
-// VectorTransform is out[i] = dot(in, row[i]). QAngle order is (pitch, yaw, roll).
 function angleRotation(pitch, yaw, roll) {
   if (!pitch && !yaw && !roll) return null;
   const p = pitch * DEG, y = yaw * DEG, r = roll * DEG;
@@ -359,18 +397,11 @@ export function brushModelDrawn(bspPath) {
     if (!Number.isInteger(mi) || mi <= 0 || mi >= models.length) continue;
     const cls = String(e.classname || '').toLowerCase();
     if (cls.startsWith('trigger_') || NODRAW_CLASS.has(cls)) continue;
-    // Per-entity render state the engine honours at spawn: CFuncBrush::Spawn() calls TurnOff()
-    // -> AddEffects( EF_NODRAW ) when StartDisabled is set, and kRenderNone never draws.
     const rm = String(e.rendermode ?? '').trim();
     if (String(e.startdisabled || '').trim() === '1') continue;
     if (rm === '10') continue;
     if (String(e.renderamt ?? '').trim() === '0' && BLEND_RENDERMODE.has(rm)) continue;
     drawn[mi] = 1;
-    // When a brush entity has an origin brush, vbsp recentres its geometry on that origin and
-    // writes the world position into the entity's "origin" key -- dmodel_t.origin stays zero
-    // (measured: zero on all 13215 drawn brush entities across 242 maps, while 11669 of them
-    // carry a nonzero entity origin). So the vertices in the lump are model space, and the
-    // entity's origin/angles are the only thing that puts them back where the game draws them.
     const o = vec3(e.origin);
     const a = vec3(e.angles);
     const m = angleRotation(a[0], a[1], a[2]);

@@ -1,6 +1,5 @@
 import { el, clear, toast } from './ui.js';
 import { state, activeFile, onChange } from './state.js';
-import { toggleProblems } from './problems.js';
 import { diagnosticCounts, diagnosticsText } from './diagnostics.js';
 
 const segments = new Map();
@@ -65,11 +64,10 @@ function render() {
     const lint = file.lint || [];
     const errs = lint.filter(l => l.severity === 'error').length;
     const warns = lint.filter(l => l.severity === 'warn').length;
-    seg(el('button', {
-      class: 'sb-seg sb-btn' + (errs ? ' sb-err' : warns ? ' sb-warn' : ''),
-      title: 'Problems in this mission — click to open the panel (Ctrl+Shift+M)',
-      'aria-label': 'Problems: ' + errs + ' errors, ' + warns + ' warnings',
-      onclick: toggleProblems,
+    seg(el('span', {
+      class: 'sb-seg' + (errs ? ' sb-err' : warns ? ' sb-warn' : ' sb-dim'),
+      title: 'Errors and warnings found in this mission — per-wave counts are on the wave rows',
+      'aria-label': errs + ' errors, ' + warns + ' warnings',
       text: errs + ' errors · ' + warns + ' warnings'
     }));
   } else {

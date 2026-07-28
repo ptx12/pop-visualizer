@@ -5,9 +5,12 @@ import { request as httpsRequest } from 'node:https';
 import { parseMDL } from '../shared/mdl.js';
 import { sendCmd } from './context.js';
 import { detectTFPath } from './tfpath.js';
-import { flushMapCaches, sharedPrefixLen } from './maps.js';
+import { flushMapCaches } from './maps.js';
+import { readGameFile } from '../shared/gamefs.js';
 
 const POTATO_BASE = 'https://testing.potato.tf/tf/';
+const NAV_INDEX_TTL = 10 * 60 * 1000;
+let navIndexCache = null;
 
 export function httpGet(url, maxBytes = 512 * 1024 * 1024, redirects = 3, onProgress = null) {
   return new Promise((resolve, reject) => {
@@ -74,12 +77,10 @@ async function saveUnder(tfPath, rel, buf) {
 async function fetchToDownload(tfPath, rel, results, optional = false) {
   const clean = String(rel).replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
   if (clean.includes('..')) return null;
-  for (const root of [path.join(tfPath, 'download'), tfPath]) {
-    try {
-      await fs.access(path.join(root, clean));
-      results.push({ path: clean, status: 'exists' });
-      return await fs.readFile(path.join(root, clean));
-    } catch {}
+  const already = await readGameFile(clean, tfPath);
+  if (already) {
+    results.push({ path: clean, status: 'exists' });
+    return already;
   }
   const dlLabel = 'Downloading ' + clean;
   dlProgress(dlLabel);
@@ -181,28 +182,24 @@ export function register() {
     return { results };
   });
 
-  ipcMain.handle('potato:navs', async (e, mapName) => {
-    const name = String(mapName).toLowerCase().replace(/\.bsp$/, '');
-    if (!/^[a-z0-9_\-.]+$/.test(name)) return { error: 'bad map name' };
+  ipcMain.handle('potato:navindex', async (e, force) => {
+    if (navIndexCache && !force && Date.now() - navIndexCache.at < NAV_INDEX_TTL) {
+      return { names: navIndexCache.names, cached: true, at: navIndexCache.at };
+    }
     let body;
-    try { body = await httpGet(potatoUrl('maps/'), 16 * 1024 * 1024); } catch { body = null; }
-    if (!body) return { error: 'could not reach the potato.tf index' };
-    const navs = [];
+    try { body = await httpGet(potatoUrl('maps/'), 32 * 1024 * 1024); } catch { body = null; }
+    if (!body) {
+      if (navIndexCache) return { names: navIndexCache.names, cached: true, stale: true, at: navIndexCache.at };
+      return { error: 'could not reach the potato.tf index' };
+    }
+    const seen = new Set();
     for (const m of body.toString('utf8').matchAll(/<a\s+href="([^"]+\.nav)"/gi)) {
       let href = m[1];
       try { href = decodeURIComponent(href); } catch {}
-      navs.push(href.toLowerCase().replace(/\.nav$/, ''));
+      seen.add(href.toLowerCase().replace(/\.nav$/, ''));
     }
-    const stem = s => s.replace(/^mvm_/, '');
-    const wanted = stem(name);
-    const scored = [];
-    for (const n of [...new Set(navs)]) {
-      if (n === name) { scored.push({ name: n, exact: true, score: 999 }); continue; }
-      const l = sharedPrefixLen(stem(n), wanted);
-      if (l >= 5) scored.push({ name: n, exact: false, score: l });
-    }
-    scored.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
-    return { candidates: scored.slice(0, 12).map(({ name: n, exact }) => ({ name: n, exact })) };
+    navIndexCache = { names: [...seen].sort(), at: Date.now() };
+    return { names: navIndexCache.names, cached: false, at: navIndexCache.at };
   });
 
   ipcMain.handle('potato:nav', async (e, mapName, sourceName, tfPathOverride) => {

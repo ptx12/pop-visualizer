@@ -5,15 +5,11 @@ const NODE_SZ = 32, LEAF_SZ = 32, WL_SZ = 88, AMB_SZ = 28, AMBIDX_SZ = 4, PLANE_
 export { EMIT_SURFACE, EMIT_POINT, EMIT_SPOTLIGHT, EMIT_SKYLIGHT, EMIT_QUAKELIGHT, EMIT_SKYAMBIENT,
   pointLeaf, ambientCubeAt, lightStrengthAt, pickLocalLights } from './lightmath.js';
 
-// Valve's TexLightToLinear / ColorRGBExp32ToVector: linear = mantissa * 2^exponent.
-// (No /255 — that scaling belongs to the lightmap's own storage path, not to RGBE.)
 function rgbe(buf, o) {
   const s = Math.pow(2, buf.readInt8(o + 3));
   return [buf[o] * s, buf[o + 1] * s, buf[o + 2] * s];
 }
 
-// The map's compiled lights (dworldlight_t) — the same lights the engine feeds to models.
-// HDR set (lump 54) preferred, LDR (15) as fallback, matching the lightmap choice.
 export function readWorldLights(bspPath) {
   const buf = readLump(bspPath, 54) || readLump(bspPath, 15);
   if (!buf || buf.length % WL_SZ) return [];
@@ -38,9 +34,6 @@ export function readWorldLights(bspPath) {
   return out;
 }
 
-// Per-leaf ambient cubes (LUMP_LEAF_AMBIENT_LIGHTING 55/56 + INDEX 51/52) plus the BSP
-// node/plane/leaf-bounds data needed to find which leaf a world point falls in. This is
-// exactly the data the engine's light cache uses to light models.
 export function extractLighting(bspPath) {
   const planesBuf = readLump(bspPath, 1);
   const nodesBuf = readLump(bspPath, 5);

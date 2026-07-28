@@ -2,6 +2,8 @@
 
 ![Timeline view](docs/timeline.png)
 
+![3D wave simulation on mvm_mannworks](docs/map3d.webp)
+
 ## What is this
 
 pop visualizer is a desktop visualizer, editor, and wave simulator for Team Fortress 2 Mann vs. Machine popfiles. It supports Valve missions and RafMod extensions.

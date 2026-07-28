@@ -128,7 +128,6 @@ check('the boss keeps its parsed health', boss && boss.prop.health === 25000, bo
 check('the boss contributes its HP to the wavespawn total',
   bossWave.wavespawns[0].bots[0].other.health === 25000);
 
-// Popfile-defined movement geometry (SigMod/RafMod root keys).
 const runPop = (pop, opts = {}) => {
   const model = buildModel(parse(pop), []);
   const wave = model.waves[0];
@@ -161,7 +160,6 @@ check('a tank on an ExtraTankPath follows the popfile route',
   etpTank && etpTank.track[etpTank.track.length - 2] > etpTank.track[0] + 500,
   etpTank && [etpTank.track[0], etpTank.track[etpTank.track.length - 2]].map(Math.round).join('->'));
 
-// Root-level movement settings.
 const wide = { ...mapData, spawns: [{ name: 'spawnbot', origin: [200, 450, 0] }] };
 const runRoot = root => {
   const model = buildModel(parse(`WaveSchedule { ${root} Wave { WaveSpawn { Name w TotalCount 10 MaxActive 10 SpawnCount 10 Where spawnbot TFBot { Class Heavyweapons Attributes IgnoreFlag } } } }`), []);

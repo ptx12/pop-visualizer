@@ -4,7 +4,7 @@ import { getValue, setValue, findAll, makeBlock, makeKV, removeNode, serialize, 
 import { resolveBot, botDisplayName, CLASS_INFO, buildModel } from './popmodel.js';
 import { native } from './native.js';
 import { rawEditModal } from './inspector.js';
-import { getIconDirs, setIconDirs, refreshIcons, getTFPath, getTFOverride, setTFOverride } from './icons.js';
+import { getIconDirs, setIconDirs, refreshIcons, getTFPath, getTFOverride, setTFOverride, getAssetDirs, setAssetDirs, pushAssetDirs } from './icons.js';
 import { iconBrowserModal } from './iconbrowser.js';
 import { diffModels } from './diff.js';
 
@@ -265,6 +265,44 @@ export function renderSettings(container, file) {
       if (span) span.textContent = p || 'not found — set it with Browse';
     });
   }
+  wrap.append(el('div', { class: 'panel-title', text: 'Custom asset folders' }));
+  wrap.append(el('div', { class: 'nav-gate-sub', text: 'Searched before the game files for any dependency — nav meshes, maps, models, materials. Point these at a folder laid out like tf/ (maps/, models/, materials/).' }));
+  const assetDirs = getAssetDirs();
+  for (const d of assetDirs) {
+    const row = el('div', { class: 'other-block' },
+      el('span', { class: 'muted', text: d }),
+      el('span', { class: 'grow' }),
+      el('button', { class: 'icon-btn sm danger', text: '×', title: 'Remove folder', onclick: async () => {
+        await setAssetDirs(assetDirs.filter(x => x !== d));
+        if (native.isElectron) await window.popnative.mapFlush();
+        for (const f of state.files) rebuild(f);
+        emit();
+      } }));
+    wrap.append(row);
+  }
+  if (native.isElectron) {
+    if (assetDirs.length) {
+      pushAssetDirs().then(rows => {
+        for (const r of rows || []) {
+          if (r.exists) continue;
+          const idx = assetDirs.indexOf(r.path);
+          const node = wrap.querySelectorAll('.other-block')[idx];
+          const span = node && node.querySelector('.muted');
+          if (span) { span.textContent = r.path + '  — folder not found'; span.classList.add('warn'); }
+        }
+      });
+    }
+    wrap.append(el('div', { class: 'btn-row' },
+      el('button', { class: 'btn', text: '+ Add asset folder…', onclick: async () => {
+        const dir = await native.dirDialog('Add a folder to search for map dependencies');
+        if (!dir) return;
+        if (!assetDirs.includes(dir)) await setAssetDirs([...assetDirs, dir]);
+        await window.popnative.mapFlush();
+        for (const f of state.files) rebuild(f);
+        emit();
+      } })));
+  }
+
   wrap.append(el('div', { class: 'panel-title', text: 'Extra icon folders' }));
   const dirs = getIconDirs();
   for (const d of dirs) {

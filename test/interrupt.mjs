@@ -82,7 +82,6 @@ const POP_INTERRUPT = `WaveSchedule
 
 const POP_PLAIN = POP_INTERRUPT.replace(/InterruptAction[\s\S]*?\n\t\t\t\t\}\n/, '');
 
-// --- parsing ---
 const mi = modelFor(POP_INTERRUPT);
 const bot = mi.waves[0].wavespawns[0].bots[0].bot;
 check('InterruptAction parsed', bot.interrupts.length === 1);
@@ -94,7 +93,6 @@ check('Delay defaults to 10 when absent', modelFor(POP_INTERRUPT.replace('Delay\
 check('parsePoint rejects non-coordinates', parsePoint('controlpanel_baseboss') === null);
 check('parsePoint accepts quoted triples', JSON.stringify(parsePoint('"750 -538 573"')) === '[750,-538,573]');
 
-// --- the bot actually diverts ---
 const withIA = runWave(mi);
 const plain = runWave(modelFor(POP_PLAIN));
 check('no InterruptAction parsed on the control popfile',
@@ -135,7 +133,6 @@ check('the control bot still runs the objective', plainReach < 260, 'closest ' +
 check('the interrupted bot resumes and reaches the objective too', iaReach < 260, 'closest ' + iaReach.toFixed(1));
 check('actorPosAt works on the interrupted track', !!actorPosAt(aIA, aIA.spawnT + 5));
 
-// --- teleport ---
 const POP_TP = POP_PLAIN.replace('Skill\tEasy', `Skill\tEasy
 				FireInput
 				{
@@ -161,7 +158,6 @@ const ment = modelFor(POP_TP_ENT);
 check('entity teleport parsed as entity',
   ment.waves[0].wavespawns[0].bots[0].bot.teleports[0].teleport.entity === 'detour_node');
 
-// --- event-driven gating ---
 const POP_EVENT = `WaveSchedule
 {
 	Wave
@@ -231,7 +227,6 @@ const eg = eventGate(lateGate);
 check('gate is attributed to the runtime event', !!eg && /bot dying/.test(eg.why || ''), JSON.stringify(eg));
 check('the firing entity is named', !!eg && !!eg.by);
 
-// --- the global robot limit is enforced by the AI sim, not just the spawn sim ---
 const POP_MANY = `WaveSchedule
 {
 	Wave
@@ -409,6 +404,50 @@ const pTrig = simulateWave(pWave, {
 check('a trigger time fires a parked row at that time, not time plus the sentinel wait',
   Math.abs(pTrig.results.get(sentinelWs).firstSpawn - 30) < 0.01,
   String(pTrig.results.get(sentinelWs).firstSpawn));
+
+const POP_TWO_IA = POP_INTERRUPT.replace(/InterruptAction[\s\S]*?\n\t\t\t\t\}\n/,
+`\t\t\t\tInterruptAction
+\t\t\t\t{
+\t\t\t\t\tTarget\t"600 150 24"
+\t\t\t\t\tDuration\t4
+\t\t\t\t\tDelay\t1
+\t\t\t\t\tDistance\t50
+\t\t\t\t\tWaitUntilDone\t1
+\t\t\t\t\tRepeats\t1
+\t\t\t\t}
+\t\t\t\tInterruptAction
+\t\t\t\t{
+\t\t\t\t\tTarget\t"1800 150 72"
+\t\t\t\t\tDuration\t4
+\t\t\t\t\tDelay\t1
+\t\t\t\t\tDistance\t50
+\t\t\t\t\tWaitUntilDone\t1
+\t\t\t\t\tRepeats\t1
+\t\t\t\t}
+`);
+
+const mTwo = modelFor(POP_TWO_IA);
+const twoBot = mTwo.waves[0].wavespawns[0].bots[0].bot;
+check('both InterruptActions parse', twoBot.interrupts.length === 2, String(twoBot.interrupts.length));
+
+const twoRun = runWave(mTwo);
+const aTwo = twoRun.actors.find(a => a.kind === 'bot');
+check('the two-interrupt run produced a bot', !!aTwo);
+if (aTwo) {
+  const near = tgt => {
+    let best = Infinity;
+    for (let t = 0; t < 120; t += STEP) {
+      const p = actorPosAt(aTwo, t);
+      if (!p) continue;
+      best = Math.min(best, Math.hypot(p[0] - tgt[0], p[1] - tgt[1]));
+    }
+    return best;
+  };
+  const d1 = near([600, 150]);
+  const d2 = near([1800, 150]);
+  check('the bot reaches the first InterruptAction target', d1 < 120, 'nearest ' + Math.round(d1));
+  check('the bot also reaches the second InterruptAction target', d2 < 120, 'nearest ' + Math.round(d2));
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

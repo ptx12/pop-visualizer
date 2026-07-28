@@ -1,10 +1,16 @@
-import { readLump, brushModelDrawn, applyBrushXform, skyboxFaceMask } from './bsp.js';
+import { readLump, brushModelDrawn, applyBrushXform, skyboxFaceMask, readEntityLump, parseEntities } from './bsp.js';
+import { tonemapWithDefaults } from './tonemap.js';
 
 const SURF_SKY2D = 0x2, SURF_SKY = 0x4, SURF_WARP = 0x8, SURF_TRIGGER = 0x40, SURF_NODRAW = 0x80, SURF_HINT = 0x100, SURF_SKIP = 0x200;
 const SKIP_FLAGS = SURF_SKY2D | SURF_SKY | SURF_TRIGGER | SURF_NODRAW | SURF_HINT | SURF_SKIP;
 const LUM = (r, g, b) => r * 0.2126 + g * 0.7152 + b * 0.0722;
 const ROOF_CLEARANCE = 110;
 export const LM_RANGE = 16;
+
+const LM_LIN = new Float64Array(256);
+for (let i = 0; i < 256; i++) LM_LIN[i] = Math.pow(i / 255, 2.2) * LM_RANGE;
+const EXP2 = new Float64Array(256);
+for (let i = 0; i < 256; i++) EXP2[i] = Math.pow(2, i < 128 ? i : i - 256);
 
 export function buildNavCeil(nav, points = []) {
   const areas = (nav && nav.areas) || [];
@@ -91,7 +97,6 @@ function packLightmaps(faces, maxDim = 4096) {
   }
   H = Math.min(maxDim, H);
   const rgba = new Uint8Array(W * H * 4);
-  // "white" (unlit) texel must decode to lm=1.0 under the shader's pow(s,2.2)*LM_RANGE recovery.
   const white = Math.round(Math.pow(1 / LM_RANGE, 1 / 2.2) * 255);
   for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) { const o = (j * W + i) * 4; rgba[o] = rgba[o + 1] = rgba[o + 2] = white; rgba[o + 3] = 255; }
   for (const f of items) {
@@ -123,11 +128,6 @@ export function extractWorldFaces(bspPath, opts = {}) {
     const lm = f.lm, place = f.lmPlace;
     let g = groups.get(f.name);
     if (!g) { g = { pos: [], uv: [], nrm: [], lm: [] }; groups.set(f.name, g); }
-    // Displacement lightmaps are NOT addressed by projecting a position through lightmapVecs:
-    // vrad lays the luxels out on the displacement's own (s,t) grid, spanning the whole block
-    // (s -> [0,sizeInLuxels[0]], t -> [0,sizeInLuxels[1]]). Which grid axis maps to u, and the
-    // sign of each, vary per displacement with its start-corner/edge ordering, so derive them
-    // from how the projected corner luxel coords actually move along s and t.
     let dispMap = null;
     if (lm && place && f.st && f.dispCorners && f.dispCorners.length === 4) {
       const S = lm.vecs[0], T = lm.vecs[1];
@@ -136,14 +136,9 @@ export function extractWorldFaces(bspPath, opts = {}) {
       const lenS = Math.hypot(L3[0] - L0[0], L3[1] - L0[1]);
       const lenT = Math.hypot(L1[0] - L0[0], L1[1] - L0[1]);
       const su = lm.w - 1, sv = lm.h - 1;
-      // Which grid axis maps to the block's u is decided by matching each axis's LENGTH in
-      // luxel space against the block dimensions — comparing du/ds against du/dt instead
-      // measures the texinfo axes, which tells you nothing when the block is transposed.
       const swap = (Math.abs(lenS - sv) + Math.abs(lenT - su)) < (Math.abs(lenS - su) + Math.abs(lenT - sv));
       dispMap = { swap, su, sv };
     }
-    // texinfo texture and lightmap axes are in the brush model's own space, so a brush entity
-    // moved by its origin/angles must be sampled at its untransformed position.
     const local = f.lpts;
     const emit = (p, idx) => {
       const q = local ? local[idx] : p;
@@ -184,29 +179,16 @@ export function extractWorldFaces(bspPath, opts = {}) {
       count: g.pos.length / 3
     });
   }
-  // Auto-exposure, faithful to Source's CLuminanceHistogramSystem (viewpostprocess.cpp):
-  // pick the tonemap scale so the brightest mat_tonemap_percent_bright_pixels (2%) of pixels
-  // sit at mat_tonemap_percent_target (60%), with a mat_tonemap_min_avglum (3%) floor,
-  // clamped to [mat_autoexposure_min 0.5, mat_autoexposure_max 2.0]. Measured on scene
-  // luminance (albedo*lightmap); per-texel albedo isn't known at bake so a 0.25 average
-  // diffuse reflectivity stands in. Luxels are ~uniform in world space so the lightmap
-  // texel histogram approximates the screen pixel histogram; at convergence the tonemap
-  // scale is exactly 0.60 / (2%-brightest scene luminance), so this computes it directly.
   const NB = 64, hist = new Float64Array(NB);
   const dhist = new Float64Array(256);
   let total = 0, sceneSum = 0, litCount = 0;
-  // Scene luminance = albedo * lightmap. Use each material's REAL average albedo (texdata
-  // reflectivity, what vrad itself uses) instead of one constant for the whole map: with a
-  // flat 0.25 stand-in, maps whose surfaces are much brighter than that (mannhattan's pale
-  // roofs) had their scene luminance underestimated, so auto-exposure ran too high and sunlit
-  // surfaces clipped to washed-out white.
   const ALBEDO_REF = 0.25;
   for (const f of faces) {
     if (!f.lm) continue;
     const albedo = f.refl ? Math.max(0.02, Math.min(1, LUM(f.refl[0], f.refl[1], f.refl[2]))) : ALBEDO_REF;
     const b = f.lm.bytes;
     for (let i = 0; i < b.length; i += 4) {
-      const r = Math.pow(b[i] / 255, 2.2) * LM_RANGE, g = Math.pow(b[i + 1] / 255, 2.2) * LM_RANGE, bl = Math.pow(b[i + 2] / 255, 2.2) * LM_RANGE;
+      const r = LM_LIN[b[i]], g = LM_LIN[b[i + 1]], bl = LM_LIN[b[i + 2]];
       const sl = Math.min(1, albedo * LUM(r, g, bl));
       hist[Math.min(NB - 1, Math.floor(sl * NB))]++; total++; sceneSum += sl;
       if (sl > 0.0005) { dhist[Math.min(255, Math.floor(Math.pow(sl, 1 / 2.2) * 255))]++; litCount++; }
@@ -216,20 +198,14 @@ export function extractWorldFaces(bspPath, opts = {}) {
   if (total) { let acc = 0; for (let k = NB - 1; k >= 0; k--) { acc += hist[k]; if (acc >= 0.02 * total) { l2 = (k + 0.5) / NB; break; } } }
   const avgScene = total ? sceneSum / total : 0.1;
   const target = Math.max(0.60 / Math.max(0.02, l2), 0.03 / Math.max(0.004, avgScene));
-  const exposure = Math.max(0.5, Math.min(2.0, target));
-  // Minimum-ambient level for faces vrad baked with zero light (sealed interiors/undersides
-  // that TF2 hides behind its PVS but this previewer has to draw). Magnitude = the dimmest
-  // light this map actually gives a lit surface (10th percentile of lit texels, display
-  // space, pre-exposure) so night maps floor low and daylit maps floor higher; the hue comes
-  // from the map's real light_environment _ambient. No invented constant.
+  const tm = tonemapWithDefaults(opts.tonemap);
+  const exposure = tm.tonemapScale !== null
+    ? tm.tonemapScale
+    : Math.max(tm.autoExposureMin, Math.min(tm.autoExposureMax, target));
   let minLight = 0.05;
   if (litCount) { let acc = 0; for (let k = 0; k < 256; k++) { acc += dhist[k]; if (acc >= 0.10 * litCount) { minLight = k / 255; break; } } }
   minLight = Math.max(0.02, Math.min(0.16, minLight));
 
-  // Reference brightness of sunlit, up-facing world surfaces, in the same units the shader
-  // feeds the lightmap. Models are lit from the leaf ambient cube, which is ambient-only; the
-  // difference between this and the ambient cube is the direct sun, so this lets the sun term
-  // be calibrated from real vrad output instead of guessed.
   const upLums = [];
   for (const f of faces) {
     const n = f.normal;
@@ -237,7 +213,7 @@ export function extractWorldFaces(bspPath, opts = {}) {
     const b = f.lm.bytes;
     let sum = 0, cnt = 0;
     for (let i = 0; i < b.length; i += 4) {
-      sum += LUM(Math.pow(b[i] / 255, 2.2) * LM_RANGE, Math.pow(b[i + 1] / 255, 2.2) * LM_RANGE, Math.pow(b[i + 2] / 255, 2.2) * LM_RANGE);
+      sum += LUM(LM_LIN[b[i]], LM_LIN[b[i + 1]], LM_LIN[b[i + 2]]);
       cnt++;
     }
     if (cnt) upLums.push(sum / cnt);
@@ -270,10 +246,6 @@ export function extractFaces(bspPath, cull = null, opts = {}) {
   const numTexinfo = Math.floor(texinfoBuf.length / 72);
   const numTexdata = texdataBuf ? Math.floor(texdataBuf.length / 32) : 0;
 
-  // Only draw faces the game draws: worldspawn plus the brush entities whose class does not
-  // spawn with EF_NODRAW. Without this the invisible gameplay volumes come through as solid
-  // geometry, and they are enormous -- mannhattan's two map-spanning func_nav_prerequisite
-  // brushes alone are 376M units^2, fourteen times the rest of the map put together.
   const faceDrawn = new Uint8Array(numFaces).fill(1);
   const faceXform = new Array(numFaces).fill(null);
   try {
@@ -288,9 +260,6 @@ export function extractFaces(bspPath, cull = null, opts = {}) {
       }
     }
   } catch {}
-  // The 3D skybox is a miniature the engine draws scaled and re-centred on the viewer, never as
-  // world geometry at its build location. Leaving it in put a second, distant copy of the
-  // scenery in the scene and blew up the map bounds the camera fits to.
   try {
     const skyMask = skyboxFaceMask(bspPath);
     if (skyMask) for (let f = 0; f < numFaces && f < skyMask.length; f++) if (skyMask[f]) faceDrawn[f] = 0;
@@ -314,7 +283,6 @@ export function extractFaces(bspPath, cull = null, opts = {}) {
     const f = v => Math.max(14, Math.min(235, Math.round(Math.pow(Math.max(0, v), 1 / 2.2) * 255)));
     return [f(texdataBuf.readFloatLE(td * 32)), f(texdataBuf.readFloatLE(td * 32 + 4)), f(texdataBuf.readFloatLE(td * 32 + 8))];
   };
-  // texdata reflectivity = the material's average LINEAR albedo, the same value vrad uses.
   const matRefl = ti => {
     if (ti < 0 || ti >= numTexinfo || !texdataBuf) return null;
     const td = texinfoBuf.readInt32LE(ti * 72 + 68);
@@ -343,13 +311,11 @@ export function extractFaces(bspPath, cull = null, opts = {}) {
     let r = 0, g = 0, b = 0;
     for (let i = 0; i < count; i++) {
       const p = ofs + i * 4;
-      const s = Math.pow(2, lightBuf.readInt8(p + 3)) / 255;
+      const s = EXP2[lightBuf[p + 3]] / 255;
       r += lightBuf[p] * s; g += lightBuf[p + 1] * s; b += lightBuf[p + 2] * s;
     }
     return [r / count, g / count, b / count];
   };
-  // Real per-texel lightmap: decode the (w+1)x(h+1) ColorRGBExp32 sample block (style 0)
-  // straight from LUMP_LIGHTING (8), plus the luxel-space texture axes it maps to.
   const faceLightmap = (fi, ti) => {
     if (!lmBuf) return null;
     const base = fi * 56;
@@ -364,10 +330,8 @@ export function extractFaces(bspPath, cull = null, opts = {}) {
     const bytes = new Uint8Array(count * 4);
     for (let i = 0; i < count; i++) {
       const p = ofs + i * 4;
-      const sc = Math.pow(2, lmBuf.readInt8(p + 3)) / 255;
+      const sc = EXP2[lmBuf[p + 3]] / 255;
       for (let c = 0; c < 3; c++) {
-        // Preserve the real HDR range (radiosity can exceed 1.0) by storing lin/LM_RANGE,
-        // sRGB-encoded for precision; the shader recovers lin = pow(sample,2.2)*LM_RANGE.
         const lin = Math.min(1, Math.max(0, lmBuf[p + c] * sc) / LM_RANGE);
         bytes[i * 4 + c] = Math.round(Math.pow(lin, 1 / 2.2) * 255);
       }
@@ -416,19 +380,11 @@ export function extractFaces(bspPath, cull = null, opts = {}) {
     if (ti < 0) continue;
     const flags = texinfoBuf.readInt32LE(ti * 72 + 64);
     if (flags & SKIP_FLAGS) continue;
-    // No material-name filtering here. "Does this material draw" is answered by the VMT's
-    // %compilenodraw, which vbsp turns into SURF_NODRAW and SKIP_FLAGS already catches. Names
-    // that look like compile helpers are not: tools/toolsblack is a plain LightmappedGeneric
-    // the game draws as solid black (65k faces across 231 maps) and dev/reflectivity_* are
-    // ordinary greys used as real surfaces, so skipping them punches holes in the map.
     const name = matName(ti);
     const tv = texVecs(ti);
     const col = matColor(ti);
     const refl = matRefl(ti);
     const isWater = !!(flags & SURF_WARP);
-    // Brush-entity vertices are model space; the entity's origin/angles place them. Texture and
-    // lightmap axes are model space too, so the untransformed points stay on the face as lpts
-    // and only the world position moves.
     const xf = faceXform[fi];
     const toWorld = xf ? pts => pts.map(p => applyBrushXform(xf, p)) : null;
 
@@ -594,7 +550,59 @@ export async function bakeTopDown(bspPath, loadTexture, opts = {}) {
 
   const heightGrid = opts.heightGrid === false ? null : downsampleHeights(heightBuf, outW, outH);
 
+  if (opts.sky !== false) {
+    const sky = await loadSkyTexture(bspPath, loadTexture);
+    if (sky) fillSky(img, outW, outH, sky);
+  }
+
   return { width: outW, height: outH, bounds, rgba: img, scale, heightGrid };
+}
+
+function skyNameOf(bspPath) {
+  try {
+    const ents = parseEntities(readEntityLump(bspPath) || '');
+    for (const e of ents) {
+      if (e.classname !== 'worldspawn' || !e.skyname) continue;
+      const n = String(e.skyname).trim().toLowerCase();
+      if (n) return n;
+    }
+  } catch {}
+  return null;
+}
+
+async function loadSkyTexture(bspPath, loadTexture) {
+  const sky = skyNameOf(bspPath);
+  if (!sky) return null;
+  for (const side of ['up', 'ft', 'lf', 'rt', 'bk']) {
+    let tex = null;
+    try { tex = await loadTexture('skybox/' + sky + side); } catch {}
+    if (tex && tex.rgba && tex.width > 0 && tex.height > 0) return tex;
+  }
+  return null;
+}
+
+function fillSky(img, W, H, tex) {
+  const tw = tex.width, th = tex.height, tp = tex.rgba;
+  const s = Math.max(W / tw, H / th);
+  const ox = (W - tw * s) / 2, oy = (H - th * s) / 2;
+  for (let y = 0; y < H; y++) {
+    const ty = Math.max(0, Math.min(th - 1, (y - oy) / s));
+    const ty0 = Math.floor(ty), ty1 = Math.min(th - 1, ty0 + 1), fy = ty - ty0;
+    for (let x = 0; x < W; x++) {
+      const o = (y * W + x) * 4;
+      if (img[o + 3] > 0) continue;
+      const tx = Math.max(0, Math.min(tw - 1, (x - ox) / s));
+      const tx0 = Math.floor(tx), tx1 = Math.min(tw - 1, tx0 + 1), fx = tx - tx0;
+      const p00 = (ty0 * tw + tx0) * 4, p01 = (ty0 * tw + tx1) * 4;
+      const p10 = (ty1 * tw + tx0) * 4, p11 = (ty1 * tw + tx1) * 4;
+      for (let c = 0; c < 3; c++) {
+        const top = tp[p00 + c] * (1 - fx) + tp[p01 + c] * fx;
+        const bot = tp[p10 + c] * (1 - fx) + tp[p11 + c] * fx;
+        img[o + c] = top * (1 - fy) + bot * fy;
+      }
+      img[o + 3] = 255;
+    }
+  }
 }
 
 function downsampleHeights(h, W, H, cellPx = 7) {

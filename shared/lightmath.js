@@ -1,7 +1,6 @@
 export const EMIT_SURFACE = 0, EMIT_POINT = 1, EMIT_SPOTLIGHT = 2, EMIT_SKYLIGHT = 3,
   EMIT_QUAKELIGHT = 4, EMIT_SKYAMBIENT = 5;
 
-// Point -> leaf, descending the BSP tree the way the engine does.
 export function pointLeaf(L, x, y, z) {
   let n = 0;
   for (let guard = 0; guard < 4096; guard++) {
@@ -13,9 +12,6 @@ export function pointLeaf(L, x, y, z) {
   return 0;
 }
 
-// Mod_LeafAmbientColorAtPos: inverse-squared-distance weighted average of the leaf's ambient
-// samples, falling back to the nearest sampled leaf when this one carries none. Returns the
-// 6-face ambient cube (+X,-X,+Y,-Y,+Z,-Z) in TF world axes.
 export function ambientCubeAt(L, x, y, z) {
   const out = new Float32Array(18);
   if (!L) return out;
@@ -54,7 +50,6 @@ export function ambientCubeAt(L, x, y, z) {
   return out;
 }
 
-// Engine_WorldLightDistanceFalloff, plus the spotlight cone gate, used to rank lights.
 export function lightStrengthAt(w, x, y, z) {
   if (w.type === EMIT_SKYAMBIENT) return 0;
   const dx = w.origin[0] - x, dy = w.origin[1] - y, dz = w.origin[2] - z;
@@ -76,7 +71,6 @@ export function lightStrengthAt(w, x, y, z) {
   return falloff * lum;
 }
 
-// The engine keeps the strongest MAXLOCALLIGHTS lights per model.
 export function pickLocalLights(L, x, y, z, max = 4) {
   if (!L || !L.lights) return [];
   const scored = [];
