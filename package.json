@@ -25,11 +25,11 @@
   "type": "module",
   "scripts": {
     "start": "electron .",
-    "test": "node test/roundtrip.mjs && node test/model.mjs && node test/hardening.mjs && node test/navkernel.mjs && node test/vtfkernel.mjs && node test/mapentities.mjs && node test/interrupt.mjs && node test/separation.mjs && node test/truncation.mjs && node test/registry.mjs && node test/spawners.mjs && node test/traits.mjs && node test/events.mjs && node test/pointtemplates.mjs && node test/vmt.mjs && node test/gamefs.mjs && node test/navpick.mjs && node test/tonemap.mjs && node test/rafmod.mjs && node test/mapassets.mjs && node test/botanims.mjs",
+    "test": "node test/roundtrip.mjs && node test/model.mjs && node test/hardening.mjs && node test/navkernel.mjs && node test/vtfkernel.mjs && node test/lzmakernel.mjs && node test/mapentities.mjs && node test/interrupt.mjs && node test/separation.mjs && node test/truncation.mjs && node test/registry.mjs && node test/spawners.mjs && node test/traits.mjs && node test/events.mjs && node test/pointtemplates.mjs && node test/vmt.mjs && node test/gamefs.mjs && node test/navpick.mjs && node test/tonemap.mjs && node test/rafmod.mjs && node test/mapassets.mjs && node test/botanims.mjs",
     "dev": "node test/devserver.mjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
-    "build:wasm": "cargo build --release --manifest-path rust/Cargo.toml --target wasm32-unknown-unknown && node -e \"for (const n of ['navkernel','vtfkernel']) require('fs').copyFileSync(`rust/target/wasm32-unknown-unknown/release/${n}.wasm`,`shared/${n}.wasm`)\"",
+    "build:wasm": "cargo build --release --manifest-path rust/Cargo.toml --target wasm32-unknown-unknown && node -e \"for (const n of ['navkernel','vtfkernel','lzmakernel']) require('fs').copyFileSync(`rust/target/wasm32-unknown-unknown/release/${n}.wasm`,`shared/${n}.wasm`)\"",
     "predist": "node tools/wincodesign.mjs",
     "prepack": "node tools/wincodesign.mjs"
   },

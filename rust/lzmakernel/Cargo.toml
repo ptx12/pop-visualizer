@@ -1,0 +1,9 @@
+[package]
+name = "lzmakernel"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+description = "LZMA lump decoding for pop visualizer"
+
+[lib]
+crate-type = ["cdylib"]

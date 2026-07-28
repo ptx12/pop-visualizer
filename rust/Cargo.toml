@@ -1,5 +1,5 @@
 [workspace]
-members = ["navkernel", "vtfkernel"]
+members = ["navkernel", "vtfkernel", "lzmakernel"]
 resolver = "2"
 
 [profile.release]

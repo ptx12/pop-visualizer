@@ -1,9 +1,44 @@
 import { LIMITS, cap } from './limits.js';
+import { readFileSync } from 'node:fs';
+
+let wasm = null;
+let wasmTried = false;
+
+function lzmaWasm() {
+  if (wasmTried) return wasm;
+  wasmTried = true;
+  try {
+    const url = new URL('./lzmakernel.wasm', import.meta.url);
+    const bytes = readFileSync(url);
+    wasm = new WebAssembly.Instance(new WebAssembly.Module(bytes), {}).exports;
+  } catch {
+    wasm = null;
+  }
+  return wasm;
+}
+
+export function lzmaWasmReady() {
+  return !!lzmaWasm();
+}
 
 export function lzmaDecode(props, src, outSize) {
   cap(outSize, LIMITS.lzmaOut, 'lzma output');
   if (src.length < 5) throw new Error('lzma: source too short');
   if (outSize > src.length * LIMITS.lzmaRatio) throw new Error('lzma: decompression ratio too high');
+  const m = lzmaWasm();
+  if (m) {
+    try {
+      const srcPtr = m.reserve(src.length, outSize);
+      new Uint8Array(m.memory.buffer, srcPtr, src.length).set(src);
+      if (m.decode(src.length, outSize, props[0]) === 1) {
+        return Buffer.from(new Uint8Array(m.memory.buffer, m.out_addr(), outSize));
+      }
+    } catch {}
+  }
+  return lzmaDecodeJS(props, src, outSize);
+}
+
+export function lzmaDecodeJS(props, src, outSize) {
   let d = props[0];
   if (d >= 9 * 5 * 5) throw new Error('bad lzma props');
   const lc = d % 9;
