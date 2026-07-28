@@ -1,10 +1,10 @@
 import { el, clear, fmtTime, fmtNum, fmtCompact, compositionChips, botVisual, toast } from './ui.js';
-import { state, simFor, emit, beginEdit, commitEdit, getRecent, openFile, rebuild } from './state.js';
+import { state, simFor, emit, beginEdit, commitEdit, getRecent, openFile, rebuild, refreshBases } from './state.js';
 import { getValue, setValue, findAll, makeBlock, makeKV, removeNode, serialize, parse } from './kv.js';
 import { resolveBot, botDisplayName, CLASS_INFO, buildModel } from './popmodel.js';
 import { native } from './native.js';
 import { rawEditModal } from './inspector.js';
-import { getIconDirs, setIconDirs, refreshIcons, getTFPath, getTFOverride, setTFOverride, getAssetDirs, setAssetDirs, pushAssetDirs } from './icons.js';
+import { getTemplateDirs, setTemplateDirs, getIconDirs, setIconDirs, refreshIcons, getTFPath, getTFOverride, setTFOverride, getAssetDirs, setAssetDirs, pushAssetDirs } from './icons.js';
 import { iconBrowserModal } from './iconbrowser.js';
 import { diffModels } from './diff.js';
 
@@ -301,6 +301,34 @@ export function renderSettings(container, file) {
         for (const f of state.files) rebuild(f);
         emit();
       } })));
+  }
+
+  wrap.append(el('div', { class: 'panel-title', text: 'Template folders' }));
+  wrap.append(el('div', { class: 'nav-gate-sub', text: 'Searched for #base files after the popfile’s own folder and before the bundled templates, so a shared library can override robot_standard.pop and friends.' }));
+  const tplDirs = getTemplateDirs();
+  for (const d of tplDirs) {
+    wrap.append(el('div', { class: 'other-block' },
+      el('span', { class: 'muted', text: d }),
+      el('span', { class: 'grow' }),
+      el('button', {
+        class: 'icon-btn sm danger', text: '×', title: 'Remove folder', onclick: async () => {
+          setTemplateDirs(tplDirs.filter(x => x !== d));
+          for (const f of state.files) await refreshBases(f);
+          emit();
+        }
+      })));
+  }
+  if (native.isElectron) {
+    wrap.append(el('div', { class: 'btn-row' },
+      el('button', {
+        class: 'btn', text: '+ Add template folder…', onclick: async () => {
+          const dir = await native.dirDialog('Add a folder to search for #base template files');
+          if (!dir) return;
+          if (!tplDirs.includes(dir)) setTemplateDirs([...tplDirs, dir]);
+          for (const f of state.files) await refreshBases(f);
+          emit();
+        }
+      })));
   }
 
   wrap.append(el('div', { class: 'panel-title', text: 'Extra icon folders' }));

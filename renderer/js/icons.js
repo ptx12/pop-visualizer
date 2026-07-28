@@ -25,6 +25,14 @@ export async function pushAssetDirs() {
   try { return await window.popnative.assetRoots(getAssetDirs()); } catch { return []; }
 }
 
+export function getTemplateDirs() {
+  try { return JSON.parse(localStorage.getItem('popvis.templatedirs') || '[]'); } catch { return []; }
+}
+
+export function setTemplateDirs(dirs) {
+  localStorage.setItem('popvis.templatedirs', JSON.stringify(dirs));
+}
+
 export function getTFOverride() {
   return localStorage.getItem('popvis.tfpath') || null;
 }

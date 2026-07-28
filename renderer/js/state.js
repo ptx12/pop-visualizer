@@ -3,7 +3,7 @@ import { buildModel } from './popmodel.js';
 import { simulateWave, DEFAULT_SIM_OPTS } from './sim.js';
 import { lintModel } from './lint.js';
 import { native } from './native.js';
-import { collectIconNames, ensureIcons, getTFPath } from './icons.js';
+import { collectIconNames, ensureIcons, getTFPath, getTemplateDirs } from './icons.js';
 import { buildTriggerGraph, analyzeWave, isGated, navToggles, firesAny } from './gating.js';
 
 let fileSeq = 1;
@@ -129,6 +129,7 @@ export function activateFile(id) {
 export async function resolveBases(doc, dirPath) {
   const out = [];
   const paths = await native.paths();
+  const tplDirs = getTemplateDirs();
   const queue = doc.bases.map(b => ({ ref: b, path: b.path }));
   const seen = new Set();
   while (queue.length) {
@@ -138,6 +139,7 @@ export async function resolveBases(doc, dirPath) {
     seen.add(key);
     const candidates = [];
     if (dirPath) candidates.push(native.join(dirPath, rel));
+    for (const d of tplDirs) candidates.push(native.join(d, rel));
     candidates.push(native.join(paths.base, rel));
     candidates.push(native.join(paths.vanilla, rel));
     let text = null;
