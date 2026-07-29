@@ -52,9 +52,8 @@ export function fmtCompact(n) {
 export function fmtTime(s) {
   if (!Number.isFinite(s)) return '∞';
   if (s < 60) return fmtNum(s) + 's';
-  const m = Math.floor(s / 60);
-  const sec = Math.round(s % 60);
-  return `${m}:${String(sec).padStart(2, '0')}`;
+  const total = Math.round(s);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
 export function botVisual(bot, opts = {}) {
