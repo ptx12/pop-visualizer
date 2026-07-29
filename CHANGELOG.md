@@ -39,6 +39,7 @@ work that has not shipped in a tagged release yet.
 - Wave rows are separated for readability.
 
 ### Fixed
+- The map asset checks now ignore commented-out material parameters, the way the renderer already did. A `$basetexture` a mapper had commented out was being read as the live one, reporting three shipping maps as broken when they render correctly.
 - The 3D world pass sets its own back-face culling state instead of inheriting whatever the previous frame left behind, so the same geometry can no longer draw differently from one frame to the next.
 - Times ending just short of a whole minute no longer display an impossible clock like `24:60`; a wave that runs 1499.7 seconds now reads `25:00`. This affected every time readout: the map playhead, wave durations, the truncation note, the timeline ruler and the actor card.
 - Bomb path disable lists are applied, not just enable lists, so waves no longer all pick the same path on maps like Mannworks.

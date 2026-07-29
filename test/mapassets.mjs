@@ -6,6 +6,7 @@ import { readStaticProps, readDynamicProps, brushModelDrawn, skyboxFaceMask, rea
 import { extractWorldFaces } from '../shared/bsprender.js';
 import { parseMDL, parseVVD, parseVTX, buildMeshes } from '../shared/mdl.js';
 import { readGameFile } from '../shared/gamefs.js';
+import { stripVmtComments, vmtParam } from '../shared/vmt.js';
 
 const TF_CANDIDATES = [
   'C:/Program Files (x86)/Steam/steamapps/common/Team Fortress 2/tf',
@@ -36,8 +37,8 @@ const check = (label, cond, detail = '') => {
 async function effectiveVmt(rel, pak, seen) {
   const buf = await readMaterialFile(rel, tfPath, pak);
   if (!buf) return null;
-  const text = buf.toString('latin1');
-  if (/\$basetexture\b/i.test(text) || seen.size > 4) return text;
+  const text = stripVmtComments(buf.toString('latin1'));
+  if (vmtParam(text, 'basetexture') !== null || seen.size > 4) return text;
   const inc = text.match(/["']?include["']?\s+["']?([^"'\r\n]+?)["']?\s*$/im);
   if (!inc) return text;
   const next = 'materials/' + inc[1].trim().replace(/\\/g, '/').replace(/^materials\//i, '').replace(/\.vmt$/i, '').toLowerCase() + '.vmt';
@@ -57,9 +58,9 @@ async function resolves(name, cds, pak) {
   for (const c of cands) { text = await effectiveVmt(c, pak, new Set([c])); if (text) break; }
   if (!text) return 'VMT missing (' + cands[0] + ')';
   if (/^\s*"?Water"?\s*$/im.test(text.split(/[\r\n{]/)[0] || '')) return null;
-  const bm = text.match(/\$basetexture"?\s*"?([^"\r\n]+?)"?\s*$/im);
+  const bm = vmtParam(text, 'basetexture');
   if (!bm) return null;
-  const vtf = 'materials/' + bm[1].trim().replace(/\\/g, '/').replace(/\.vtf$/i, '').toLowerCase() + '.vtf';
+  const vtf = 'materials/' + bm.trim().replace(/\\/g, '/').replace(/\.vtf$/i, '').toLowerCase() + '.vtf';
   const raw = await readMaterialFile(vtf, tfPath, pak);
   return raw ? null : 'VTF missing (' + vtf + ')';
 }
