@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "bakekernel"
+version = "1.0.0"
+
+[[package]]
 name = "lzmakernel"
 version = "1.0.0"
 

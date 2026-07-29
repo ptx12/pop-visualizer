@@ -1,5 +1,6 @@
 import { readLump, brushModelDrawn, applyBrushXform, skyboxFaceMask, readEntityLump, parseEntities } from './bsp.js';
 import { tonemapWithDefaults } from './tonemap.js';
+import { bakeWasm } from './bakewasm.js';
 
 const SURF_SKY2D = 0x2, SURF_SKY = 0x4, SURF_WARP = 0x8, SURF_TRIGGER = 0x40, SURF_NODRAW = 0x80, SURF_HINT = 0x100, SURF_SKIP = 0x200;
 const SKIP_FLAGS = SURF_SKY2D | SURF_SKY | SURF_TRIGGER | SURF_NODRAW | SURF_HINT | SURF_SKIP;
@@ -11,6 +12,8 @@ export const LM_RANGE = 16;
 
 const LM_LIN = new Float64Array(256);
 for (let i = 0; i < 256; i++) LM_LIN[i] = Math.pow(i / 255, 2.2) * LM_RANGE;
+const LM_POW_BIN = new Float64Array(256);
+for (let i = 0; i < 256; i++) LM_POW_BIN[i] = Math.pow(i / 255, 2.2);
 const EXP2 = new Float64Array(256);
 for (let i = 0; i < 256; i++) EXP2[i] = Math.pow(2, i < 128 ? i : i - 256);
 
@@ -62,6 +65,7 @@ export function buildNavCeil(nav, points = []) {
     return v === -Infinity ? null : v;
   };
   lookup.inBounds = (x, y) => x >= minX && x <= maxX && y >= minY && y <= maxY;
+  lookup.grid = { z, cols, rows, minX, minY, cell: CELL };
   return lookup;
 }
 
@@ -181,21 +185,8 @@ export function extractWorldFaces(bspPath, opts = {}) {
       count: g.pos.length / 3
     });
   }
-  const NB = 64, hist = new Float64Array(NB);
-  const dhist = new Float64Array(256);
-  let total = 0, sceneSum = 0, litCount = 0;
-  const ALBEDO_REF = 0.25;
-  for (const f of faces) {
-    if (!f.lm) continue;
-    const albedo = f.refl ? Math.max(0.02, Math.min(1, LUM(f.refl[0], f.refl[1], f.refl[2]))) : ALBEDO_REF;
-    const b = f.lm.bytes;
-    for (let i = 0; i < b.length; i += 4) {
-      const r = LM_LIN[b[i]], g = LM_LIN[b[i + 1]], bl = LM_LIN[b[i + 2]];
-      const sl = Math.min(1, albedo * LUM(r, g, bl));
-      hist[Math.min(NB - 1, Math.floor(sl * NB))]++; total++; sceneSum += sl;
-      if (sl > 0.0005) { dhist[Math.min(255, Math.floor(Math.pow(sl, 1 / 2.2) * 255))]++; litCount++; }
-    }
-  }
+  const { hist, dhist, total, sceneSum, litCount, lmUpBright } = lightmapStats(faces);
+  const NB = 64;
   let l2 = 1;
   if (total) { let acc = 0; for (let k = NB - 1; k >= 0; k--) { acc += hist[k]; if (acc >= 0.02 * total) { l2 = (k + 0.5) / NB; break; } } }
   const avgScene = total ? sceneSum / total : 0.1;
@@ -208,10 +199,75 @@ export function extractWorldFaces(bspPath, opts = {}) {
   if (litCount) { let acc = 0; for (let k = 0; k < 256; k++) { acc += dhist[k]; if (acc >= 0.10 * litCount) { minLight = k / 255; break; } } }
   minLight = Math.max(0.02, Math.min(0.16, minLight));
 
+  return { materials, bounds, lightmap: { rgba: atlas.rgba, width: atlas.width, height: atlas.height, range: LM_RANGE }, exposure, minLight, lmUpBright };
+}
+
+const ALBEDO_REF = 0.25;
+
+function faceAlbedo(f) {
+  return f.refl ? Math.max(0.02, Math.min(1, LUM(f.refl[0], f.refl[1], f.refl[2]))) : ALBEDO_REF;
+}
+
+function faceIsUp(f) {
+  const n = f.normal;
+  return !!(n && n[2] >= 0.9);
+}
+
+export function lightmapStats(faces) {
+  const lit = faces.filter(f => f.lm && f.lm.bytes && f.lm.bytes.length >= 4);
+  const m = bakeWasm();
+  if (m && lit.length) {
+    try {
+      let bytes = 0;
+      for (const f of lit) bytes += f.lm.bytes.length;
+      const ptr = m.lm_reserve(bytes, lit.length * 4);
+      const heap = new Uint8Array(m.memory.buffer, ptr, bytes);
+      const table = new Float64Array(m.memory.buffer, m.lm_faces_addr(), lit.length * 4);
+      let at = 0;
+      for (let i = 0; i < lit.length; i++) {
+        const b = lit[i].lm.bytes;
+        heap.set(b, at);
+        table[i * 4] = at;
+        table[i * 4 + 1] = b.length;
+        table[i * 4 + 2] = faceAlbedo(lit[i]);
+        table[i * 4 + 3] = faceIsUp(lit[i]) ? 1 : 0;
+        at += b.length;
+      }
+      new Float64Array(m.memory.buffer, m.lm_lin_addr(), 256).set(LM_LIN);
+      new Float64Array(m.memory.buffer, m.lm_powb_addr(), 256).set(LM_POW_BIN);
+      m.lm_stats(lit.length);
+      const o = new Float64Array(m.memory.buffer, m.lm_out_addr(), 324);
+      return {
+        hist: o.slice(4, 68),
+        dhist: o.slice(68, 324),
+        total: o[0],
+        sceneSum: o[1],
+        litCount: o[2],
+        lmUpBright: o[3]
+      };
+    } catch {}
+  }
+  return lightmapStatsJS(faces);
+}
+
+export function lightmapStatsJS(faces) {
+  const NB = 64, hist = new Float64Array(NB);
+  const dhist = new Float64Array(256);
+  let total = 0, sceneSum = 0, litCount = 0;
+  for (const f of faces) {
+    if (!f.lm) continue;
+    const albedo = faceAlbedo(f);
+    const b = f.lm.bytes;
+    for (let i = 0; i < b.length; i += 4) {
+      const r = LM_LIN[b[i]], g = LM_LIN[b[i + 1]], bl = LM_LIN[b[i + 2]];
+      const sl = Math.min(1, albedo * LUM(r, g, bl));
+      hist[Math.min(NB - 1, Math.floor(sl * NB))]++; total++; sceneSum += sl;
+      if (sl > 0.0005) { dhist[Math.min(255, Math.floor(Math.pow(sl, 1 / 2.2) * 255))]++; litCount++; }
+    }
+  }
   const upLums = [];
   for (const f of faces) {
-    const n = f.normal;
-    if (!f.lm || !n || n[2] < 0.9) continue;
+    if (!f.lm || !faceIsUp(f)) continue;
     const b = f.lm.bytes;
     let sum = 0, cnt = 0;
     for (let i = 0; i < b.length; i += 4) {
@@ -221,8 +277,10 @@ export function extractWorldFaces(bspPath, opts = {}) {
     if (cnt) upLums.push(sum / cnt);
   }
   upLums.sort((a, b) => a - b);
-  const lmUpBright = upLums.length ? upLums[Math.floor(upLums.length * 0.9)] : 0;
-  return { materials, bounds, lightmap: { rgba: atlas.rgba, width: atlas.width, height: atlas.height, range: LM_RANGE }, exposure, minLight, lmUpBright };
+  return {
+    hist, dhist, total, sceneSum, litCount,
+    lmUpBright: upLums.length ? upLums[Math.floor(upLums.length * 0.9)] : 0
+  };
 }
 
 export function extractFaces(bspPath, cull = null, opts = {}) {
@@ -483,23 +541,53 @@ function dispQuads(di, corners, dispInfoBuf, dispVertsBuf) {
   return { quads, corners: c };
 }
 
+const CELL_PX = 7;
+
+function mipLevelFor(face, tex, scale) {
+  const [tv0, tv1] = face.tv;
+  const texPerWorld = Math.max(Math.hypot(tv0[0], tv0[1], tv0[2]), Math.hypot(tv1[0], tv1[1], tv1[2]));
+  const texPerPx = texPerWorld / scale;
+  return Math.min(tex.mips.length - 1, Math.max(0, Math.floor(Math.log2(Math.max(1, texPerPx)))));
+}
+
+function mipDown(cur) {
+  const w = cur.width >> 1, h = cur.height >> 1;
+  const m = bakeWasm();
+  if (m) {
+    try {
+      const srcLen = cur.width * cur.height * 4, dstLen = w * h * 4;
+      const ptr = m.mip_reserve(srcLen, dstLen);
+      new Uint8Array(m.memory.buffer, ptr, srcLen).set(cur.rgba);
+      m.mip_down(cur.width, cur.height);
+      const rgba = new Uint8ClampedArray(dstLen);
+      rgba.set(new Uint8Array(m.memory.buffer, m.mip_dst_addr(), dstLen));
+      return { rgba, width: w, height: h };
+    } catch {}
+  }
+  return mipDownJS(cur);
+}
+
+function mipDownJS(cur) {
+  const w = cur.width >> 1, h = cur.height >> 1;
+  const rgba = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const s0 = ((y * 2) * cur.width + x * 2) * 4;
+      const s1 = s0 + 4;
+      const s2 = s0 + cur.width * 4;
+      const s3 = s2 + 4;
+      const d = (y * w + x) * 4;
+      for (let c = 0; c < 4; c++) rgba[d + c] = (cur.rgba[s0 + c] + cur.rgba[s1 + c] + cur.rgba[s2 + c] + cur.rgba[s3 + c]) / 4;
+    }
+  }
+  return { rgba, width: w, height: h };
+}
+
 function withMips(tex) {
   const mips = [{ rgba: tex.rgba, width: tex.width, height: tex.height }];
   let cur = mips[0];
   while (cur.width > 32 && cur.height > 32) {
-    const w = cur.width >> 1, h = cur.height >> 1;
-    const rgba = new Uint8ClampedArray(w * h * 4);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const s0 = ((y * 2) * cur.width + x * 2) * 4;
-        const s1 = s0 + 4;
-        const s2 = s0 + cur.width * 4;
-        const s3 = s2 + 4;
-        const d = (y * w + x) * 4;
-        for (let c = 0; c < 4; c++) rgba[d + c] = (cur.rgba[s0 + c] + cur.rgba[s1 + c] + cur.rgba[s2 + c] + cur.rgba[s3 + c]) / 4;
-      }
-    }
-    cur = { rgba, width: w, height: h };
+    cur = mipDown(cur);
     mips.push(cur);
   }
   return { mips };
@@ -546,6 +634,7 @@ export async function bakeTopDown(bspPath, loadTexture, opts = {}) {
   const heightBuf = new Float32Array(outW * outH).fill(NaN);
 
   faces.sort((a, b) => a.z - b.z);
+
   for (const f of faces) rasterFace(img, heightBuf, outW, outH, bounds, scale, f, texCache.get(f.name), faceShade(f, white), roof);
 
   if (opts.relief !== false) applyRelief(img, heightBuf, outW, outH, scale);

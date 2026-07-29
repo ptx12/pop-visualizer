@@ -26,6 +26,7 @@ work that has not shipped in a tagged release yet.
 - Flag escorts are capped and carrier health regenerates per the TF2 convars.
 
 ### Changed
+- Map loading is roughly a third faster. The lightmap tone-mapping pass and texture mip generation moved into a Rust WebAssembly kernel, cutting the 3D geometry step nearly in half; every image, height grid and exposure value it produces is bit-identical to the JavaScript it replaced, verified across 25 maps.
 - Despawn zones in the 3D map view are rebuilt as ground-conforming meshes tessellated at the height map's own resolution, with a screen-constant rim, a graded fill and a soft skirt, instead of a flat disc with a hairline outline.
 - Map view controls reworked into two grouped toolbar rows with a consistent control system.
 - Skybox backdrop toned down and cluster collapse steadied so icons stop jittering.

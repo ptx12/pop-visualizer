@@ -1,0 +1,9 @@
+[package]
+name = "bakekernel"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+description = "Top-down map bake and lightmap statistics kernel for pop visualizer"
+
+[lib]
+crate-type = ["cdylib"]
