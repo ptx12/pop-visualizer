@@ -116,8 +116,29 @@ gl_FragColor=vec4(vColor*t.rgb*a,a);}`;
 const VIG_VS = `attribute vec2 aPos;varying vec2 vUV;void main(){vUV=aPos*0.5+0.5;gl_Position=vec4(aPos,0.0,1.0);}`;
 const VIG_FS = `precision mediump float;varying vec2 vUV;uniform float uInner;uniform float uOuter;uniform float uStrength;uniform vec2 uAspect;
 void main(){vec2 d=(vUV-0.5)*uAspect;float v=smoothstep(uInner,uOuter,length(d))*uStrength;gl_FragColor=vec4(0.0,0.0,0.0,v);}`;
-const ZONE_VS = `attribute vec3 aPos;uniform mat4 uMVP;void main(){gl_Position=uMVP*vec4(aPos,1.0);}`;
-const ZONE_FS = `precision mediump float;uniform vec4 uColor;void main(){gl_FragColor=uColor;}`;
+const OVL_VS = `attribute vec3 aPos;attribute vec3 aOff;attribute vec3 aAux;
+uniform mat4 uMVP;uniform float uPx;uniform vec2 uViewport;
+varying float vA;varying float vD;varying float vS;
+void main(){vA=aAux.x;vD=aAux.y;vS=aAux.z;
+vec4 p=uMVP*vec4(aPos,1.0);
+if(uPx>0.0){
+vec4 o=uMVP*vec4(aPos+aOff,1.0);
+vec2 d=(o.xy/o.w-p.xy/p.w)*uViewport;
+float l=length(d);
+if(l>1e-6)p.xy+=d/l*uPx*2.0/uViewport*p.w;}
+gl_Position=p;}`;
+const OVL_FS = `precision mediump float;varying float vA;varying float vD;varying float vS;
+uniform vec4 uColor;uniform vec4 uDone;uniform float uDash;uniform float uPhase;uniform float uCovered;
+void main(){
+bool done=vD<=uCovered;
+vec4 c=done?uDone:uColor;
+float a=c.a*vA;
+if(uDash>0.0&&!done){
+float f=fract((vD-uPhase)/uDash);
+float head=0.58-0.30*abs(vS);
+a*=smoothstep(0.0,0.05,f)*(1.0-smoothstep(head-0.07,head,f));}
+if(a<=0.004)discard;
+gl_FragColor=vec4(c.rgb*a,a);}`;
 const BLUR_FS = `precision mediump float;varying vec2 vUV;uniform sampler2D uTex;uniform vec2 uDir;
 void main(){vec3 s=texture2D(uTex,vUV).rgb*0.227027;
 s+=texture2D(uTex,vUV+uDir*1.384615).rgb*0.316216;
@@ -191,6 +212,25 @@ float a=mix(1.0,t.a,uUseTexAlpha)*uMatAlpha;
 gl_FragColor=vec4(c,a);}`;
 
 const NO_TEX_COLOR = new Float32Array([0.5, 0.52, 0.55]);
+const OVL_STRIDE = 36;
+const ZONE_SEG_MIN = 48;
+const ZONE_SEG_MAX = 192;
+const ZONE_RING_MIN = 4;
+const ZONE_RING_MAX = 24;
+const ZONE_WALL = 108;
+const ZONE_LIFT = 3;
+const ZONE_RIM_PX = 2.4;
+const ZONE_FILL_IN = 0.05;
+const ZONE_FILL_OUT = 0.3;
+const ZONE_WALL_A = 0.26;
+const ZONE_FILL_RGB = [0.83, 0.31, 0.29];
+const ZONE_RIM_RGB = [0.83, 0.45, 0.42];
+const ROUTE_LIFT = 5;
+const ROUTE_PX = 3.6;
+const ROUTE_RGB = [0.5, 0.72, 0.94];
+const ROUTE_DONE_RGB = [0.65, 0.82, 1];
+const ROUTE_DASH_FRAC = 0.013;
+const ROUTE_FLOW = 46;
 const LUM3 = (r, g, b) => r * 0.2126 + g * 0.7152 + b * 0.0722;
 const ZUP2YUP = [1, 0, 0, 0, 0, 0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1];
 function mTranslate(x, y, z) { return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1]; }
@@ -356,13 +396,22 @@ export function createMap3D(scene) {
     fogStart: gl.getUniformLocation(modelProg, 'uFogStart'),
     fogEnd: gl.getUniformLocation(modelProg, 'uFogEnd')
   };
-  const zoneProg = program(gl, ZONE_VS, ZONE_FS);
-  const zA = {
-    pos: gl.getAttribLocation(zoneProg, 'aPos'),
-    mvp: gl.getUniformLocation(zoneProg, 'uMVP'),
-    color: gl.getUniformLocation(zoneProg, 'uColor')
+  const ovlProg = program(gl, OVL_VS, OVL_FS);
+  const oA = {
+    pos: gl.getAttribLocation(ovlProg, 'aPos'),
+    off: gl.getAttribLocation(ovlProg, 'aOff'),
+    aux: gl.getAttribLocation(ovlProg, 'aAux'),
+    mvp: gl.getUniformLocation(ovlProg, 'uMVP'),
+    px: gl.getUniformLocation(ovlProg, 'uPx'),
+    viewport: gl.getUniformLocation(ovlProg, 'uViewport'),
+    color: gl.getUniformLocation(ovlProg, 'uColor'),
+    done: gl.getUniformLocation(ovlProg, 'uDone'),
+    dash: gl.getUniformLocation(ovlProg, 'uDash'),
+    phase: gl.getUniformLocation(ovlProg, 'uPhase'),
+    covered: gl.getUniformLocation(ovlProg, 'uCovered')
   };
   const zoneBuf = gl.createBuffer();
+  const routeBuf = gl.createBuffer();
   gl.getExtension('OES_element_index_uint');
   const anisoExt = gl.getExtension('EXT_texture_filter_anisotropic') || gl.getExtension('WEBKIT_EXT_texture_filter_anisotropic');
   const maxAniso = anisoExt ? Math.min(8, gl.getParameter(anisoExt.MAX_TEXTURE_MAX_ANISOTROPY_EXT)) : 0;
@@ -818,6 +867,157 @@ export function createMap3D(scene) {
     return h === h ? h : hg.zMin;
   }
 
+  function groundAt(x, y) {
+    const hg = scene.heightGrid, b = scene.bounds;
+    const fx = (x - b[0]) / (b[2] - b[0]) * hg.gw - 0.5;
+    const fy = (b[3] - y) / (b[3] - b[1]) * hg.gh - 0.5;
+    const c0 = Math.floor(fx), r0 = Math.floor(fy);
+    const tx = fx - c0, ty = fy - r0;
+    let sum = 0, wsum = 0;
+    for (let dr = 0; dr < 2; dr++) {
+      const r = Math.max(0, Math.min(hg.gh - 1, r0 + dr));
+      const wr = dr ? ty : 1 - ty;
+      for (let dc = 0; dc < 2; dc++) {
+        const c = Math.max(0, Math.min(hg.gw - 1, c0 + dc));
+        const h = hg.grid[r * hg.gw + c];
+        if (h !== h) continue;
+        const w = wr * (dc ? tx : 1 - tx);
+        if (w <= 0) continue;
+        sum += h * w;
+        wsum += w;
+      }
+    }
+    return wsum > 0 ? sum / wsum : sampleHeight(x, y);
+  }
+
+  function ovlVert(arr, o, x, y, z, ox, oy, alpha, dist, side) {
+    arr[o] = x; arr[o + 1] = z; arr[o + 2] = -y;
+    arr[o + 3] = ox; arr[o + 4] = 0; arr[o + 5] = -oy;
+    arr[o + 6] = alpha; arr[o + 7] = dist; arr[o + 8] = side;
+  }
+
+  function ribbonVerts(pts, closed, alpha) {
+    const n = pts.length;
+    if (n < 2) return null;
+    const total = closed ? n + 1 : n;
+    const arr = new Float32Array(total * 2 * 9);
+    let dist = 0, o = 0;
+    for (let i = 0; i < total; i++) {
+      const k = i % n;
+      const p = pts[k];
+      const a = pts[k > 0 ? k - 1 : (closed ? n - 1 : 0)];
+      const b = pts[k < n - 1 ? k + 1 : (closed ? 0 : n - 1)];
+      let dx = b[0] - a[0], dy = b[1] - a[1];
+      let dl = Math.hypot(dx, dy);
+      if (dl < 1e-6) { dx = 1; dy = 0; dl = 1; }
+      dx /= dl; dy /= dl;
+      if (i > 0) {
+        const q = pts[(i - 1) % n];
+        dist += Math.hypot(p[0] - q[0], p[1] - q[1]);
+      }
+      ovlVert(arr, o, p[0], p[1], p[2], -dy, dx, alpha, dist, 1); o += 9;
+      ovlVert(arr, o, p[0], p[1], p[2], dy, -dx, alpha, dist, -1); o += 9;
+    }
+    return arr;
+  }
+
+  function zoneGeometry(kps) {
+    const hg = scene.heightGrid, b = scene.bounds;
+    const cell = Math.max(1, (b[2] - b[0]) / hg.gw);
+    const chunks = [];
+    const fills = [], walls = [], rims = [];
+    let at = 0;
+    const add = (arr, list) => {
+      chunks.push(arr);
+      list.push([at, arr.length / 9]);
+      at += arr.length / 9;
+    };
+    for (const kp of kps) {
+      const cx = kp[0], cy = kp[1], R = kp[2] || 200;
+      const rings = Math.max(ZONE_RING_MIN, Math.min(ZONE_RING_MAX, Math.ceil(R / cell)));
+      const segs = Math.max(ZONE_SEG_MIN, Math.min(ZONE_SEG_MAX, Math.ceil(2 * Math.PI * R / cell)));
+      const ringPt = (k, i) => {
+        const rr = R * (k / rings);
+        const ang = i / segs * Math.PI * 2;
+        const x = cx + rr * Math.cos(ang), y = cy + rr * Math.sin(ang);
+        return [x, y, groundAt(x, y) + ZONE_LIFT];
+      };
+      const fill = new Float32Array((rings * (segs + 1) * 2 + (rings - 1) * 2) * 9);
+      let fo = 0;
+      for (let k = 0; k < rings; k++) {
+        const aIn = ZONE_FILL_IN + (ZONE_FILL_OUT - ZONE_FILL_IN) * (k / rings);
+        const aOut = ZONE_FILL_IN + (ZONE_FILL_OUT - ZONE_FILL_IN) * ((k + 1) / rings);
+        if (k > 0) {
+          fill.copyWithin(fo, fo - 9, fo);
+          fo += 9;
+          const s = ringPt(k, 0);
+          ovlVert(fill, fo, s[0], s[1], s[2], 0, 0, aIn, 0, 0); fo += 9;
+        }
+        for (let i = 0; i <= segs; i++) {
+          const p = ringPt(k, i), q = ringPt(k + 1, i);
+          ovlVert(fill, fo, p[0], p[1], p[2], 0, 0, aIn, 0, 0); fo += 9;
+          ovlVert(fill, fo, q[0], q[1], q[2], 0, 0, aOut, 0, 0); fo += 9;
+        }
+      }
+      add(fill, fills);
+      const wall = new Float32Array((segs + 1) * 2 * 9);
+      let wo = 0;
+      for (let i = 0; i <= segs; i++) {
+        const p = ringPt(rings, i);
+        ovlVert(wall, wo, p[0], p[1], p[2], 0, 0, ZONE_WALL_A, 0, 0); wo += 9;
+        ovlVert(wall, wo, p[0], p[1], p[2] + ZONE_WALL, 0, 0, 0, 0, 0); wo += 9;
+      }
+      add(wall, walls);
+      const loop = [];
+      for (let i = 0; i < segs; i++) loop.push(ringPt(rings, i));
+      add(ribbonVerts(loop, true, 1), rims);
+    }
+    const data = new Float32Array(at * 9);
+    let o = 0;
+    for (const c of chunks) { data.set(c, o); o += c.length; }
+    return { data, fills, walls, rims };
+  }
+
+  let zoneGeo = null, zoneKey = null, zoneGrid = null;
+  function zoneOverlay() {
+    const kps = scene.killPoints;
+    if (!kps || !kps.length || !scene.heightGrid) return null;
+    const key = kps.map(k => k.join(',')).join(';');
+    if (zoneGeo && zoneKey === key && zoneGrid === scene.heightGrid) return zoneGeo;
+    zoneGeo = zoneGeometry(kps);
+    zoneKey = key;
+    zoneGrid = scene.heightGrid;
+    gl.bindBuffer(gl.ARRAY_BUFFER, zoneBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, zoneGeo.data, gl.STATIC_DRAW);
+    return zoneGeo;
+  }
+
+  let routeGeo = null, routeSrc = null;
+  function routeOverlay() {
+    const pts = scene.route;
+    if (!pts || pts.length < 2) return null;
+    if (routeGeo && routeSrc === pts) return routeGeo;
+    const lifted = pts.map(p => [p[0], p[1], (Number.isFinite(p[2]) ? p[2] : groundAt(p[0], p[1])) + ROUTE_LIFT]);
+    const data = ribbonVerts(lifted, false, 1);
+    if (!data) return null;
+    const cum = new Float64Array(lifted.length);
+    for (let i = 1; i < lifted.length; i++) {
+      cum[i] = cum[i - 1] + Math.hypot(lifted[i][0] - lifted[i - 1][0], lifted[i][1] - lifted[i - 1][1]);
+    }
+    routeGeo = { data, count: data.length / 9, cum, length: cum[cum.length - 1] };
+    routeSrc = pts;
+    gl.bindBuffer(gl.ARRAY_BUFFER, routeBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    return routeGeo;
+  }
+
+  function bindOverlay(buf) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.enableVertexAttribArray(oA.pos); gl.vertexAttribPointer(oA.pos, 3, gl.FLOAT, false, OVL_STRIDE, 0);
+    gl.enableVertexAttribArray(oA.off); gl.vertexAttribPointer(oA.off, 3, gl.FLOAT, false, OVL_STRIDE, 12);
+    gl.enableVertexAttribArray(oA.aux); gl.vertexAttribPointer(oA.aux, 3, gl.FLOAT, false, OVL_STRIDE, 24);
+  }
+
   function camEye() {
     const cam = scene.cam;
     const target = [center[0] + (cam.panX || 0), center[1] + (cam.panY || 0), center[2] + (cam.panZ || 0)];
@@ -864,38 +1064,56 @@ export function createMap3D(scene) {
     return null;
   }
 
-  function drawZones(mvp) {
-    const kps = scene.killPoints;
-    if (!kps || !kps.length) return;
-    gl.useProgram(zoneProg);
-    gl.uniformMatrix4fv(zA.mvp, false, mvp);
-    gl.enable(gl.DEPTH_TEST); gl.depthMask(false);
-    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    const N = 44;
-    const fan = new Float32Array((N + 2) * 3);
-    const ring = new Float32Array(N * 3);
-    for (const kp of kps) {
-      const wx = kp[0], wy = kp[1], r = kp[2] || 200;
-      fan[0] = wx; fan[1] = sampleHeight(wx, wy) + 6; fan[2] = -wy;
-      for (let i = 0; i <= N; i++) {
-        const a = i / N * Math.PI * 2, tx = wx + r * Math.cos(a), ty = wy + r * Math.sin(a), o = (i + 1) * 3;
-        fan[o] = tx; fan[o + 1] = sampleHeight(tx, ty) + 6; fan[o + 2] = -ty;
-      }
-      gl.bindBuffer(gl.ARRAY_BUFFER, zoneBuf);
-      gl.bufferData(gl.ARRAY_BUFFER, fan, gl.DYNAMIC_DRAW);
-      gl.enableVertexAttribArray(zA.pos); gl.vertexAttribPointer(zA.pos, 3, gl.FLOAT, false, 0, 0);
-      gl.uniform4f(zA.color, 0.95, 0.26, 0.2, 0.24);
-      gl.drawArrays(gl.TRIANGLE_FAN, 0, N + 2);
-      for (let i = 0; i < N; i++) {
-        const a = i / N * Math.PI * 2, tx = wx + r * Math.cos(a), ty = wy + r * Math.sin(a), o = i * 3;
-        ring[o] = tx; ring[o + 1] = sampleHeight(tx, ty) + 8; ring[o + 2] = -ty;
-      }
-      gl.bufferData(gl.ARRAY_BUFFER, ring, gl.DYNAMIC_DRAW);
-      gl.vertexAttribPointer(zA.pos, 3, gl.FLOAT, false, 0, 0);
-      gl.uniform4f(zA.color, 1.0, 0.42, 0.34, 0.9);
-      gl.drawArrays(gl.LINE_LOOP, 0, N);
+  function drawOverlays(mvp) {
+    const zone = zoneOverlay();
+    const route = routeOverlay();
+    if (!zone && !route) return;
+    gl.useProgram(ovlProg);
+    gl.uniformMatrix4fv(oA.mvp, false, mvp);
+    gl.uniform2f(oA.viewport, canvas.width, canvas.height);
+    gl.uniform1f(oA.covered, -1);
+    gl.uniform1f(oA.dash, 0);
+    gl.uniform1f(oA.phase, 0);
+    gl.uniform4f(oA.done, 0, 0, 0, 0);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthMask(false);
+    gl.disable(gl.CULL_FACE);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.enable(gl.POLYGON_OFFSET_FILL);
+    gl.polygonOffset(-2, -8);
+
+    if (zone) {
+      bindOverlay(zoneBuf);
+      gl.uniform1f(oA.px, 0);
+      gl.uniform4f(oA.color, ZONE_FILL_RGB[0], ZONE_FILL_RGB[1], ZONE_FILL_RGB[2], 1);
+      for (const [start, count] of zone.fills) gl.drawArrays(gl.TRIANGLE_STRIP, start, count);
+      gl.uniform4f(oA.color, ZONE_RIM_RGB[0], ZONE_RIM_RGB[1], ZONE_RIM_RGB[2], 1);
+      for (const [start, count] of zone.walls) gl.drawArrays(gl.TRIANGLE_STRIP, start, count);
+      gl.uniform1f(oA.px, ZONE_RIM_PX);
+      gl.uniform4f(oA.color, ZONE_RIM_RGB[0], ZONE_RIM_RGB[1], ZONE_RIM_RGB[2], 0.95);
+      for (const [start, count] of zone.rims) gl.drawArrays(gl.TRIANGLE_STRIP, start, count);
     }
-    gl.depthMask(true); gl.disable(gl.BLEND);
+
+    if (route) {
+      bindOverlay(routeBuf);
+      const idx = scene.routeCoveredAt ? scene.routeCoveredAt(scene.ps.t) : 0;
+      const covered = idx > 0 ? route.cum[Math.min(idx, route.cum.length - 1)] : -1;
+      gl.uniform1f(oA.px, ROUTE_PX);
+      gl.uniform1f(oA.dash, Math.max(48, diag * ROUTE_DASH_FRAC));
+      gl.uniform1f(oA.phase, scene.ps.t * ROUTE_FLOW);
+      gl.uniform1f(oA.covered, covered);
+      gl.uniform4f(oA.color, ROUTE_RGB[0], ROUTE_RGB[1], ROUTE_RGB[2], 0.88);
+      gl.uniform4f(oA.done, ROUTE_DONE_RGB[0], ROUTE_DONE_RGB[1], ROUTE_DONE_RGB[2], 0.95);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, route.count);
+    }
+
+    gl.polygonOffset(0, 0);
+    gl.disable(gl.POLYGON_OFFSET_FILL);
+    gl.disableVertexAttribArray(oA.off);
+    gl.disableVertexAttribArray(oA.aux);
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
   }
 
   function draw() {
@@ -1187,7 +1405,7 @@ export function createMap3D(scene) {
       }
     }
 
-    drawZones(mvp);
+    drawOverlays(mvp);
 
     if (world && world.length && lmTex && worldBloom > 0) {
       ensureBloomFBs(canvas.width, canvas.height);

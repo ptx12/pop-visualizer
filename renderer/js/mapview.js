@@ -1694,6 +1694,12 @@ export function renderMapView(container, file, waveIndex) {
       mapName: mapData.map, bspPath: file.mapBspPath || null, tex: tex.canvas, heightGrid: tex.heightGrid, bounds: tex.bounds, faces3d: file.mapFaces3d || null, props: file.mapProps || null, lighting: file.mapLighting || null, ps, cam, waveEnd,
       actorsAt: actorsAt3D,
       tool: ps.tool, killPoints: killPts,
+      route: ps.showRoute !== false ? ai.route : null,
+      routeCoveredAt: tt => {
+        if (!ai.route || !ai.bomb || !ai.bomb.samples.length) return 0;
+        const bi = Math.max(0, Math.min(ai.bomb.samples.length - 1, Math.round(tt / STEP)));
+        return routeProgress(ai.route, ai.bomb.samples[bi]);
+      },
       onKill: (wx, wy, remove) => {
         const list = killPointsFor(mapData.map);
         const hit = list.findIndex(k => (k[0] - wx) ** 2 + (k[1] - wy) ** 2 < (k[2] || KILL_RADIUS) ** 2);

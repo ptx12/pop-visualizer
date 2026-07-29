@@ -1122,11 +1122,13 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     const g = graphFor(carrierProfile);
     const field = g.flowField(objArea.id);
     if (!field) return null;
+    const areaZ = a => (a.nw[2] + a.se[2]) / 2;
     const raw = [];
     if (startPt) {
       raw.push([
         Math.min(Math.max(startPt[0], startArea.nw[0]), startArea.se[0]),
-        Math.min(Math.max(startPt[1], startArea.nw[1]), startArea.se[1])
+        Math.min(Math.max(startPt[1], startArea.nw[1]), startArea.se[1]),
+        areaZ(startArea)
       ]);
     }
     const seen = new Set();
@@ -1135,11 +1137,12 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       seen.add(cur);
       const nxt = g.nextToward(field, cur);
       if (nxt == null) break;
-      const p = g.portal(cur, nxt) || g.center(nxt);
-      if (p) raw.push([p[0], p[1]]);
+      const c = g.center(nxt);
+      const p = g.portal(cur, nxt) || c;
+      if (p && c) raw.push([p[0], p[1], c[2]]);
       cur = nxt;
     }
-    raw.push([objective[0], objective[1]]);
+    raw.push([objective[0], objective[1], Number.isFinite(objective[2]) ? objective[2] : areaZ(objArea)]);
     const pts = [];
     for (const p of raw) {
       const last = pts[pts.length - 1];
@@ -1153,7 +1156,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     const out = [pts[0]];
     for (let i = 1; i < pts.length - 1; i++) {
       const a = pts[i - 1], b = pts[i], c = pts[i + 1];
-      out.push([b[0] * 0.5 + (a[0] + c[0]) * 0.25, b[1] * 0.5 + (a[1] + c[1]) * 0.25]);
+      out.push([b[0] * 0.5 + (a[0] + c[0]) * 0.25, b[1] * 0.5 + (a[1] + c[1]) * 0.25, b[2] * 0.5 + (a[2] + c[2]) * 0.25]);
     }
     out.push(pts[pts.length - 1]);
     return out;
