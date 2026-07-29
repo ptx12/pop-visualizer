@@ -3,7 +3,7 @@
 All notable changes to this project are recorded here. The top section collects
 work that has not shipped in a tagged release yet.
 
-## Unreleased
+## 1.2.0 - 2026-07-29
 
 ### Added
 - The bomb route is drawn in the 3D map view, following the nav heights the bots actually walk at, with animated chevrons ahead of the bomb and a solid trail behind it. The Route toggle controls it in 3D as well as in 2D.
