@@ -409,7 +409,6 @@ export async function openFile(path, text = null) {
       doc,
       baseDocs,
       dirty: false,
-      conflict: false,
       savedText: serialize(doc),
       rev: 0,
       undo: [],
@@ -457,7 +456,6 @@ export function newFile(kind = 'empty') {
     doc,
     baseDocs: [],
     dirty: true,
-    conflict: false,
     savedText: '',
     rev: 0,
     undo: [],
@@ -488,7 +486,6 @@ export async function reloadFromDisk(file, opts = {}) {
   updateBaseWatches(file);
   file.savedText = serialize(file.doc);
   file.dirty = false;
-  file.conflict = false;
   file.recoveryPending = null;
   file.rev = (file.rev || 0) + 1;
   file.selection = null;
@@ -608,7 +605,6 @@ export async function saveFile(file, as = false) {
   const text = serialize(file.doc);
   const bad = nonLatinReport(text);
   if (bad.length) return { blocked: 'encoding', bad };
-  if (file.conflict && !as) return { blocked: 'conflict' };
   let target = file.path;
   const isVirtual = !native.isElectron || file.virtual;
   if (as || isVirtual) {
@@ -636,7 +632,6 @@ export async function saveFile(file, as = false) {
     file.savedText = text;
     if ((file.rev || 0) === rev) file.dirty = false;
     else file.dirty = serialize(file.doc) !== text;
-    file.conflict = false;
     file.virtual = false;
     addRecent(target);
     if (renamed) {

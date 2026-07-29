@@ -263,7 +263,6 @@ body.tf-font .nav-wave-cash { font-weight: 400; }
 .tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-dir { color: var(--fg-faint); font-size: var(--fs-meta); max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
 .tab-dirty { color: var(--warn); }
-.tab-conflict { color: var(--warn); font-weight: 700; }
 .tab-close { color: var(--fg-faint); padding: 0 2px; border-radius: var(--r-sm); }
 .tab-close:hover { color: var(--err); background: var(--bg3); }
 

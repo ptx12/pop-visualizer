@@ -64,7 +64,6 @@ function renderTabs() {
       el('span', { class: 'tab-name', text: f.name }),
       dupName && parentDir ? el('span', { class: 'tab-dir', text: parentDir }) : null,
       f.dirty ? el('span', { class: 'tab-dirty', text: '*' }) : null,
-      f.conflict ? el('span', { class: 'tab-conflict', text: '!', title: 'Changed on disk' }) : null,
       el('span', { class: 'tab-close', text: 'x', onclick: e => {
         e.stopPropagation();
         requestClose(f);
@@ -77,33 +76,9 @@ function renderBanner() {
   const bar = $('banner');
   clear(bar);
   const file = activeFile();
-  const show = !!(file && (file.conflict || file.recoveryPending));
+  const show = !!(file && file.recoveryPending);
   document.body.classList.toggle('has-banner', show);
   if (!show) return;
-  if (file.conflict) {
-    bar.append(
-      el('span', { class: 'banner-msg', text: file.name + ' was changed on disk while you have unsaved edits.' }),
-      el('button', { class: 'btn sm', text: 'Reload from disk', title: 'Load the disk version. Ctrl+Z brings your edits back.', onclick: async () => {
-        try {
-          await reloadFromDisk(file, { preserveUndo: true });
-          toast('Disk version loaded — Ctrl+Z restores your edits');
-        } catch (e) {
-          toast('Reload failed: ' + e.message, 'error');
-        }
-      } }),
-      el('button', { class: 'btn sm', text: 'Compare', title: 'Show the differences against the disk version', onclick: () => {
-        state.diffOtherId = '__disk';
-        state.view = { mode: 'diff', wave: 0 };
-        emit();
-      } }),
-      el('button', { class: 'btn sm', text: 'Keep mine', title: 'Dismiss the disk change. Save will overwrite it.', onclick: () => {
-        file.conflict = false;
-        emit();
-        toast('Keeping your version — Save will overwrite the disk copy');
-      } })
-    );
-    return;
-  }
   bar.append(
     el('span', { class: 'banner-msg', text: 'Unsaved changes for ' + file.name + ' were recovered from a previous session.' }),
     el('button', { class: 'btn sm', text: 'Restore', title: 'Apply the recovered changes. Undo works as usual.', onclick: () => {
@@ -513,10 +488,6 @@ async function doSave(file, as) {
       modal('Save blocked', el('div', {},
         el('div', { class: 'enc-msg', text: 'Popfiles are Latin-1. These characters cannot be written to ' + file.name + ' and would be corrupted. Nothing was saved — replace them first:' }),
         ...rows));
-      return false;
-    }
-    if (r.blocked === 'conflict') {
-      toast(file.name + ' changed on disk — resolve the banner above the editor first', 'error');
       return false;
     }
     toast('Saved ' + file.name, 'ok');

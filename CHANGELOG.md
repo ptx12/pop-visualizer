@@ -48,6 +48,7 @@ work that has not shipped in a tagged release yet.
 - The dev server root route serves the app at `/` again.
 
 ### Removed
+- The disk-conflict banner, its tab marker and the save block behind it. Files changed on disk have been auto-reloaded with your edits kept in undo since that behaviour changed, so none of it could ever appear.
 - The Log panel and its toolbar button. Internal logging, diagnostics and error reporting are unchanged.
 - Per-wave currency and the peak readouts.
 
