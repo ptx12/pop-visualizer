@@ -1148,6 +1148,7 @@ export function createMap3D(scene) {
     gl.enable(gl.DEPTH_TEST);
     gl.depthMask(true);
     if (world && world.length) {
+      gl.disable(gl.CULL_FACE);
       gl.useProgram(worldProg);
       gl.uniformMatrix4fv(wA.mvp, false, mvp);
       gl.uniform3fv(wA.fogColor, FOG_COLOR);
