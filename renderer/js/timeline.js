@@ -911,6 +911,7 @@ function attachLinkDrag(container, dot, file, wave, waveIndex, ws, sim, pps) {
             do { name = `w${waveIndex + 1}_${String.fromCharCode(96 + n)}`; n++; } while (used.has(name.toLowerCase()));
             setValue(ws.node, 'Name', name);
           }
+          setValue(target.node, isDead ? 'WaitForAllSpawned' : 'WaitForAllDead', null);
           setValue(target.node, isDead ? 'WaitForAllDead' : 'WaitForAllSpawned', name);
           commitEdit(file);
           toast(`"${target.name || 'wavespawn'}" now waits for ${isDead ? 'death of' : 'spawn of'} "${name}"`);
