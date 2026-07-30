@@ -362,11 +362,11 @@ function buildActivity(span, pps, sim, wave) {
   const H = 46;
   const wrap = el('div', { class: 'tl-activity', style: `padding-left:${GUTTER}px;height:${H + 14}px` });
   const w = Math.max(10, span * pps);
-  const maxY = Math.max(sim.peak.active, 1);
+  const maxY = Math.max(sim.peak.bots, 1);
   const pts = [];
   for (const p of sim.curve) {
     if (p.t > span) break;
-    pts.push(`${(p.t * pps).toFixed(1)},${(H - p.active / maxY * (H - 4)).toFixed(1)}`);
+    pts.push(`${(p.t * pps).toFixed(1)},${(H - p.bots / maxY * (H - 4)).toFixed(1)}`);
   }
   const line = pts.join(' ');
   const lastT = sim.curve.length ? Math.min(span, sim.curve[sim.curve.length - 1].t) : 0;

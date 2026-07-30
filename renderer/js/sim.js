@@ -8,6 +8,8 @@ export const DEFAULT_SIM_OPTS = {
   step: 0.5
 };
 
+const countsTowardLimit = ws => ws.bots.length > 0 && !ws.isTank;
+
 export function simulateWave(wave, opts = {}) {
   const o = { ...DEFAULT_SIM_OPTS, ...opts };
   const robotLimit = Math.max(1, Math.round(o.robotLimit || 22));
@@ -48,7 +50,7 @@ export function simulateWave(wave, opts = {}) {
       life: lifetimeFor(ws),
       batch: Math.max(1, ws.squadSize > 1 ? Math.ceil(ws.spawnCount / ws.squadSize) * ws.squadSize : ws.spawnCount),
       total: hasBots ? (unlimited ? Infinity : Math.max(0, ws.totalCount)) : 0,
-      countsGlobal: hasBots && !ws.isTank,
+      countsGlobal: countsTowardLimit(ws),
       spawned: 0, active: 0,
       deaths: [],
       events: [],
@@ -244,8 +246,8 @@ export function simulateWave(wave, opts = {}) {
   }
 
   const curve = buildCurve(wave, results, waveEnd, o.step);
-  let peak = { t: 0, active: 0 };
-  for (const p of curve) if (p.active > peak.active) peak = p;
+  let peak = { t: 0, active: 0, bots: 0 };
+  for (const p of curve) if (p.bots > peak.bots) peak = p;
 
   return { results, waveEnd, curve, peak, issues, opts: o, robotLimit };
 }
@@ -256,21 +258,27 @@ function buildCurve(wave, results, waveEnd, step) {
     if (!ws.bots.length) continue;
     const r = results.get(ws);
     if (!r) continue;
+    const counts = countsTowardLimit(ws) ? 1 : 0;
     for (const ev of r.events) {
-      deltas.push([ev.t, ev.count]);
-      deltas.push([ev.t + r.life, -ev.count]);
+      deltas.push([ev.t, ev.count, counts]);
+      deltas.push([ev.t + r.life, -ev.count, counts]);
     }
   }
   deltas.sort((a, b) => a[0] - b[0]);
   const curve = [];
   let active = 0;
+  let bots = 0;
   let di = 0;
   let end = Math.max(waveEnd, deltas.length ? deltas[deltas.length - 1][0] : 0);
   if (!Number.isFinite(end) || end > 1e6) end = Math.min(waveEnd, 1e6);
   const st = Math.max(step, end / 20000);
   for (let t = 0; t <= end + st; t += st) {
-    while (di < deltas.length && deltas[di][0] <= t) { active += deltas[di][1]; di++; }
-    curve.push({ t, active: Math.max(0, active) });
+    while (di < deltas.length && deltas[di][0] <= t) {
+      active += deltas[di][1];
+      if (deltas[di][2]) bots += deltas[di][1];
+      di++;
+    }
+    curve.push({ t, active: Math.max(0, active), bots: Math.max(0, bots) });
   }
   return curve;
 }

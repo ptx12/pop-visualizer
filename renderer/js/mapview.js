@@ -2385,12 +2385,12 @@ export function renderMapView(container, file, waveIndex) {
     const c2 = mini.getContext('2d');
     c2.setTransform(dpr, 0, 0, dpr, 0, 0);
     c2.clearRect(0, 0, mw, mh);
-    const peakA = Math.max(1, sim.peak.active);
+    const peakA = Math.max(1, sim.peak.bots);
     const path = new Path2D();
     path.moveTo(0, mh);
     for (const p of sim.curve) {
       if (p.t > waveEnd) break;
-      path.lineTo(p.t / waveEnd * mw, mh - 2 - (p.active / peakA) * (mh - 6));
+      path.lineTo(p.t / waveEnd * mw, mh - 2 - (p.bots / peakA) * (mh - 6));
     }
     path.lineTo(mw, mh);
     path.closePath();
