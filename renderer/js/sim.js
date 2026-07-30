@@ -113,6 +113,7 @@ export function simulateWave(wave, opts = {}) {
   };
 
   function resolveGates() {
+    let resolved = false;
     for (const s of st) {
       if (s.startTime !== null) continue;
       if (s.gated && s.triggerAt === null) { s.stuck = true; continue; }
@@ -133,7 +134,9 @@ export function simulateWave(wave, opts = {}) {
       s.startTime = gate + (s.parked ? 0 : Math.max(0, s.ws.waitBeforeStarting));
       s.nextAllowed = s.startTime;
       if (s.total === 0) { s.finishedAt = s.startTime; s.lastDeath = s.startTime; }
+      resolved = true;
     }
+    return resolved;
   }
 
   let globalActive = 0;
@@ -151,10 +154,9 @@ export function simulateWave(wave, opts = {}) {
         s.lastDeath = d[0];
       }
     }
-    resolveGates();
     let progress = true;
     while (progress) {
-      progress = false;
+      progress = resolveGates();
       for (const s of st) {
         if (s.startTime === null || s.stuck || s.spawned >= s.total) continue;
         if (t < s.nextAllowed) continue;
