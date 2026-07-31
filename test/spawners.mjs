@@ -204,6 +204,29 @@ check('a teleporter is tagged with the spawn it serves', (teleAI.teleporters[0] 
 const noTele = runSlow('TotalCount 1 SpawnCount 1 MaxActive 1 TFBot { Class Engineer ' + IGNORE + ' }');
 check('an engineer without TeleportWhere builds none', (noTele.teleporters || []).length === 0);
 
+const busterPop = [
+  'WaveSchedule', '{',
+  ' Mission', ' {',
+  '  Objective DestroySentries', '  InitialCooldown 1', '  CooldownTime 30',
+  '  DesiredCount 1', '  BeginAtWave 1', '  RunForThisManyWaves 1', '  Where spawnbot',
+  '  TFBot { Class Demoman }', ' }',
+  ' Wave', ' {',
+  '  WaveSpawn { Name a TotalCount 4 SpawnCount 1 MaxActive 4 WaitBetweenSpawns 3 TFBot { Class Scout } }',
+  ' }', '}'
+].join('\n');
+const busterModel = buildModel(parse(busterPop), []);
+const busterWave = busterModel.waves[0];
+const nestMap = { ...mapData, hints: [{ kind: 'bot_hint_engineer_nest', origin: AT(N - 2) }] };
+const busterAI = simulateBotAI(
+  busterWave,
+  simulateWave(busterWave, { robotLimit: 99, teamDPS: 20, missions: busterModel.missions }),
+  nestMap,
+  { deathModel: 'hatch', robotLimit: 99 });
+const busters = busterAI.actors.filter(a => a.ws && a.ws.isMission);
+check('sentry busters exist as map actors', busters.length > 0, String(busters.length));
+check('a sentry buster goes for the sentry nest, not the hatch',
+  busters.some(a => a.state === 'busterToSentry' || a.reachedSentry), busters.map(a => a.state).join(','));
+
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');
 if (fail) process.exit(1);

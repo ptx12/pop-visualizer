@@ -116,3 +116,29 @@ export const engineerBuild = {
     });
   }
 };
+
+const BUSTER_ARRIVE_RANGE = 90;
+
+export function isSentryBuster(a) {
+  const m = a.ws && a.ws.mission;
+  return !!(m && /destroysentr/i.test(String(m.objective || '')));
+}
+
+export const busterToSentry = {
+  id: 'busterToSentry',
+  order: 25,
+  selects(a, ctx) { return isSentryBuster(a) && (ctx.nests || []).length > 0; },
+  enter(a, ctx) {
+    let best = null, bestD = Infinity;
+    for (const n of ctx.nests) {
+      const d = (n.origin[0] - a.pos[0]) ** 2 + (n.origin[1] - a.pos[1]) ** 2;
+      if (d < bestD) { bestD = d; best = n; }
+    }
+    a.sentry = best ? best.origin : ctx.objective;
+    a.sentryField = ctx.hasNav ? ctx.navOf(a).flowField((ctx.navOf(a).nearestArea(a.sentry) || { id: -1 }).id) : null;
+  },
+  step(a, ctx, t, dt, speed) {
+    const d = ctx.moveField(a, a.sentryField, a.sentry, dt, speed);
+    if (d < BUSTER_ARRIVE_RANGE) { a.reachedSentry = true; ctx.killActor(a, t); }
+  }
+};
