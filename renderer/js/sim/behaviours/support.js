@@ -94,7 +94,25 @@ export const engineerToNest = {
   }
 };
 
+const TELEPORTER_BUILD_TIME = 10;
+
 export const engineerBuild = {
   id: 'engineerBuild',
-  step() {}
+  step(a, ctx, t) {
+    const where = (a.bot && a.bot.teleportWhere) || [];
+    if (!where.length || a.builtTeleporter) return;
+    a.builtTeleporter = true;
+    let pos = a.nest || a.pos;
+    let bestD = Infinity;
+    for (const h of ctx.teleExits || []) {
+      const d = (h.origin[0] - a.pos[0]) ** 2 + (h.origin[1] - a.pos[1]) ** 2;
+      if (d < bestD) { bestD = d; pos = h.origin; }
+    }
+    ctx.teleporters.push({
+      pos: [pos[0], pos[1], Number.isFinite(pos[2]) ? pos[2] : (a.z || 0)],
+      where: new Set(where.map(w => String(w).toLowerCase())),
+      readyAt: t + TELEPORTER_BUILD_TIME,
+      by: a
+    });
+  }
 };

@@ -489,6 +489,17 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   };
 
   const nests = mapData.hints.filter(h => h.kind === 'bot_hint_engineer_nest');
+  const teleExits = mapData.hints.filter(h => h.kind === 'bot_hint_teleporter_exit');
+  const teleporters = [];
+  const teleporterFor = ws => {
+    const names = (ws.where || []).map(w => String(w).toLowerCase());
+    if (!names.length) return null;
+    for (const tp of teleporters) {
+      if (!tp.readyAt) continue;
+      if (names.some(n => tp.where.has(n))) return tp;
+    }
+    return null;
+  };
   const redSpawns = mapData.redSpawns.length ? mapData.redSpawns : [objective];
 
   const actors = [];
@@ -672,6 +683,10 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     a.spawnT = t;
     a.hp = a.kind === 'tank' ? (a.tank.health || 20000) : a.kind === 'prop' ? (a.prop.health || 0) : (a.bot.health || 100);
     if (a.squadRole === 'leader' && a.squadId) squadLeaders.set(a.squadId, a);
+    if (a.kind === 'bot') {
+      const tp = teleporterFor(a.ws);
+      if (tp && t >= tp.readyAt) { a.spawnPos = tp.pos.slice(0, 3); a.viaTeleporter = true; }
+    }
     a.pos = a.spawnPos ? a.spawnPos.slice(0, 2) : [0, 0];
     a.z = a.spawnPos ? a.spawnPos[2] : 0;
     if (a.kind === 'prop') {
@@ -923,7 +938,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     maxSpeed: Number.isFinite(opts.maxSpeedLimit) ? opts.maxSpeedLimit : TF_MAX_SPEED,
     actors, live, bomb, bombSamples, squadLeaders,
     nav, hasNav, navOf, graphFor, objective, objArea, chains,
-    nests, redSpawns, spawnsByName, namedPoints,
+    nests, teleExits, teleporters, redSpawns, spawnsByName, namedPoints,
     clsOf, eligible, zoneW, killActor, nudge, areaOf, holds, placeActor,
     hatchFieldOf, bombFieldOf, resolvePoint,
     moveAlong, moveField, takeBomb, dropBomb, upgradeOverTime
@@ -1078,7 +1093,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       delete a.zs;
     }
     finalized = {
-      actors, objective, chains, nav, end: Math.max(endT, 10), teamDPS, deathModel,
+      actors, objective, chains, nav, end: Math.max(endT, 10), teamDPS, deathModel, teleporters,
       bomb: { samples: bombSamples, deliveredAt: bomb.deliveredAt, home: bomb.home },
       hatchDist: hatchField ? hatchField.dist : null, hatchMaxDist,
       navVolumes, route: buildBombRoute(),

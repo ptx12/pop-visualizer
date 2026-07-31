@@ -191,6 +191,19 @@ check('a medic with a full charge ubers its patient when it is hurt', uberAI.act
 const plainAI = runDamage('TotalCount 2 SpawnCount 2 MaxActive 2 Squad { TFBot { Class Heavyweapons } TFBot { Class Scout } }');
 check('a squad with no medic never ubers', !plainAI.actors.some(a => a.uberUntil > 0));
 
+
+
+const runSlow = body => {
+  const model = buildModel(parse(wrap(body)), []);
+  const wave = model.waves[0];
+  return simulateBotAI(wave, simulateWave(wave, { robotLimit: 99, teamDPS: 20 }), mapData, { deathModel: 'hatch', robotLimit: 99 });
+};
+const teleAI = runSlow('TotalCount 1 SpawnCount 1 MaxActive 1 TFBot { Class Engineer TeleportWhere spawnbot ' + IGNORE + ' }');
+check('an engineer with TeleportWhere builds a teleporter', (teleAI.teleporters || []).length === 1, String((teleAI.teleporters || []).length));
+check('a teleporter is tagged with the spawn it serves', (teleAI.teleporters[0] || { where: new Set() }).where.has('spawnbot'));
+const noTele = runSlow('TotalCount 1 SpawnCount 1 MaxActive 1 TFBot { Class Engineer ' + IGNORE + ' }');
+check('an engineer without TeleportWhere builds none', (noTele.teleporters || []).length === 0);
+
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');
 if (fail) process.exit(1);
