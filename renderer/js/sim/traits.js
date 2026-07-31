@@ -117,6 +117,16 @@ registerTraits([
     apply(info, value) { const v = positive(value); if (v) info.moveSpeedMult *= v; }
   },
   {
+    id: 'uber-rate',
+    attribute: /^ubercharge rate bonus$/i,
+    apply(info, value) { const v = positive(value); if (v) info.uberRateMult *= v; }
+  },
+  {
+    id: 'uber-duration',
+    attribute: /^uber duration bonus$/i,
+    apply(info, value) { const v = parseFloat(value); if (Number.isFinite(v)) info.uberDurationAdd += v; }
+  },
+  {
     id: 'charge-time',
     attribute: /^charge time increased$/i,
     apply(info, value) { const v = positive(value); if (v) info.chargeTimeMult *= v; }

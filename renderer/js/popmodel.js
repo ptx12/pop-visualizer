@@ -144,6 +144,7 @@ export function resolveBot(node, templates, stack = []) {
     useHumanModel: false, useBusterModel: false, customWeapons: [], stripSlots: [],
     icon: null, attrs: [], items: [], tags: [], restriction: null, templateChain: [],
     missingTemplates: [], moveSpeedMult: 1, chargeTimeMult: 1, chargeRechargeMult: 1,
+    uberRateMult: 1, uberDurationAdd: 0,
     interrupts: [], actions: [], node
   };
   applyBotBlock(node, info, templates, stack);

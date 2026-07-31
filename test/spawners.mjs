@@ -204,6 +204,15 @@ check('a teleporter is tagged with the spawn it serves', (teleAI.teleporters[0] 
 const noTele = runSlow('TotalCount 1 SpawnCount 1 MaxActive 1 TFBot { Class Engineer ' + IGNORE + ' }');
 check('an engineer without TeleportWhere builds none', (noTele.teleporters || []).length === 0);
 
+const uberAttr = body => buildModel(parse(wrap(body)), []).waves[0].wavespawns[0].bots.find(b => b.bot && b.bot.cls === 'medic').bot;
+const fastMed = uberAttr('TotalCount 1 SpawnCount 1 MaxActive 1 TFBot { Class Medic ItemAttributes { ItemName "TF_WEAPON_MEDIGUN" "ubercharge rate bonus" 5 "uber duration bonus" -3 } }');
+check('ubercharge rate bonus is read off the medigun', fastMed.uberRateMult === 5, String(fastMed.uberRateMult));
+check('uber duration bonus is read off the medigun', fastMed.uberDurationAdd === -3, String(fastMed.uberDurationAdd));
+const plainMed = uberAttr('TotalCount 1 SpawnCount 1 MaxActive 1 TFBot { Class Medic }');
+check('a medic with no uber attributes keeps stock values', plainMed.uberRateMult === 1 && plainMed.uberDurationAdd === 0);
+const deadMed = uberAttr('TotalCount 1 SpawnCount 1 MaxActive 1 TFBot { Class Medic ItemAttributes { ItemName "TF_WEAPON_MEDIGUN" "ubercharge rate bonus" 0.01 } }');
+check('a near-zero ubercharge rate is preserved, not clamped away', deadMed.uberRateMult === 0.01, String(deadMed.uberRateMult));
+
 const busterPop = [
   'WaveSchedule', '{',
   ' Mission', ' {',

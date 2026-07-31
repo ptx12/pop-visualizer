@@ -50,10 +50,12 @@ export const healing = {
       const rate = HEAL_RATE * ramp * (p.bot.healRateMult ?? 1);
       p.hp = Math.min(max, p.hp + rate * dt);
       a.healed += rate * dt;
-      a.uber = Math.min(1, (a.uber || 0) + dt / UBER_BUILD_TIME);
-      if (a.uber >= 1 && p.hp / max <= UBER_TRIGGER_HP && !(p.uberUntil > t)) {
-        p.uberUntil = t + UBER_DURATION;
-        a.uberUntil = t + UBER_DURATION;
+      const uberRate = a.bot && a.bot.uberRateMult > 0 ? a.bot.uberRateMult : 1;
+      a.uber = Math.min(1, (a.uber || 0) + dt * uberRate / UBER_BUILD_TIME);
+      const dur = Math.max(0, UBER_DURATION + ((a.bot && a.bot.uberDurationAdd) || 0));
+      if (a.uber >= 1 && dur > 0 && p.hp / max <= UBER_TRIGGER_HP && !(p.uberUntil > t)) {
+        p.uberUntil = t + dur;
+        a.uberUntil = t + dur;
         a.uber = 0;
       }
     }
