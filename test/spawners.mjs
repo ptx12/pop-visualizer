@@ -216,6 +216,7 @@ const gateMapData = {
   gates: [{
     point: 'gate_a', label: 'Gate A', index: 1, origin: AT(2), capTime: 3, capCount: 1,
     startsLocked: false, previous: null, relay: 'gate1_relay',
+    bounds: { mins: [AT(2)[0] - 200, 0, -64], maxs: [AT(2)[0] + 200, 900, 64] },
     effects: { pauseFor: 22, spawnsOn: [{ name: 'spawnbot_fwd', delay: 0 }], spawnsOff: [{ name: 'spawnbot', delay: 0 }] }
   }]
 };

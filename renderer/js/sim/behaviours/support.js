@@ -117,7 +117,6 @@ export const engineerBuild = {
   }
 };
 
-const BUSTER_ARRIVE_RANGE = 90;
 
 export function isSentryBuster(a) {
   const m = a.ws && a.ws.mission;
@@ -138,12 +137,19 @@ export const busterToSentry = {
     a.sentryField = ctx.hasNav ? ctx.navOf(a).flowField((ctx.navOf(a).nearestArea(a.sentry) || { id: -1 }).id) : null;
   },
   step(a, ctx, t, dt, speed) {
-    const d = ctx.moveField(a, a.sentryField, a.sentry, dt, speed);
-    if (d < BUSTER_ARRIVE_RANGE) { a.reachedSentry = true; ctx.killActor(a, t); }
+    ctx.moveField(a, a.sentryField, a.sentry, dt, speed);
+    if (ctx.sameArea(a, a.sentry)) { a.reachedSentry = true; ctx.killActor(a, t); }
   }
 };
 
-const GATE_CAPTURE_RANGE = 180;
+const inGateVolume = (a, g) => {
+  const b = g.def.bounds;
+  if (!b) return false;
+  const z = a.z ?? 0;
+  return a.pos[0] >= b.mins[0] && a.pos[0] <= b.maxs[0]
+    && a.pos[1] >= b.mins[1] && a.pos[1] <= b.maxs[1]
+    && z >= b.mins[2] - 64 && z <= b.maxs[2] + 64;
+};
 
 export const gatebotToGate = {
   id: 'gatebotToGate',
@@ -161,8 +167,8 @@ export const gatebotToGate = {
       a.gate = g;
       a.gateField = ctx.hasNav ? ctx.navOf(a).flowField((ctx.navOf(a).nearestArea(g.pos) || { id: -1 }).id) : null;
     }
-    const d = ctx.moveField(a, a.gateField, a.gate.pos, dt, speed);
-    if (d > GATE_CAPTURE_RANGE) return;
+    ctx.moveField(a, a.gateField, a.gate.pos, dt, speed);
+    if (!inGateVolume(a, a.gate)) return;
     a.gate.holders++;
     if (a.gate.holders < a.gate.def.capCount) return;
     a.gate.progress += dt;
@@ -170,7 +176,6 @@ export const gatebotToGate = {
   }
 };
 
-const SNIPER_ARRIVE_RANGE = 120;
 
 export const sniperToSpot = {
   id: 'sniperToSpot',
@@ -187,8 +192,8 @@ export const sniperToSpot = {
     a.sniperField = ctx.hasNav ? ctx.navOf(a).flowField((ctx.navOf(a).nearestArea(a.sniperSpot) || { id: -1 }).id) : null;
   },
   step(a, ctx, t, dt, speed) {
-    const d = ctx.moveField(a, a.sniperField, a.sniperSpot, dt, speed);
-    if (d < SNIPER_ARRIVE_RANGE) a.state = 'sniperLurk';
+    ctx.moveField(a, a.sniperField, a.sniperSpot, dt, speed);
+    if (ctx.sameArea(a, a.sniperSpot)) a.state = 'sniperLurk';
   }
 };
 

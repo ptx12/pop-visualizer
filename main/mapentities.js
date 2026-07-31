@@ -135,7 +135,7 @@ function gateEffects(graph, relay, spawnNames) {
   };
 }
 
-export function buildGates(ents, spawns) {
+export function buildGates(ents, spawns, brushBox) {
   const graph = entityOutputs(ents);
   const spawnNames = new Set((spawns || []).map(s => String(s.name || '').toLowerCase()).filter(Boolean));
   const points = new Map();
@@ -169,6 +169,7 @@ export function buildGates(ents, spawns) {
       capCount: Number.isFinite(capCount) && capCount > 0 ? capCount : 1,
       startsLocked: String(e.startdisabled) === '1',
       previous: prevPoint(cp),
+      bounds: brushBox ? brushBox(e) : null,
       relay,
       effects: relay ? gateEffects(graph, relay, spawnNames) : null
     });
@@ -280,5 +281,5 @@ export function extractMapEntities(ents, models) {
     }
   }
 
-  return { spawns, flags, capzones, tracks, redSpawns, hints, navVolumes, spawnRooms, pathProps, bombPaths: buildBombPaths(ents, navVolumes), gates: buildGates(ents, spawns) };
+  return { spawns, flags, capzones, tracks, redSpawns, hints, navVolumes, spawnRooms, pathProps, bombPaths: buildBombPaths(ents, navVolumes), gates: buildGates(ents, spawns, brushBox) };
 }

@@ -462,6 +462,11 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     const d = hatchField.dist.get(a.areaId);
     return d === undefined ? 0.5 : Math.min(1, d / hatchMaxDist);
   };
+  const sameArea = (a, pos) => {
+    if (!hasNav || a.areaId == null || !pos) return false;
+    const ar = navOf(a).nearestArea(pos);
+    return !!ar && ar.id === a.areaId;
+  };
   const zoneW = a => zoneWeights ? (zoneWeights.get(a.areaId) || 0) : dpsProfile(zoneU(a));
 
   const spawnsByName = new Map();
@@ -987,7 +992,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     actors, live, bomb, bombSamples, squadLeaders,
     nav, hasNav, navOf, graphFor, objective, objArea, chains,
     nests, teleExits, sniperSpots, teleporters, gates, gateOpen, nextGate, captureGate, redSpawns, spawnsByName, namedPoints,
-    clsOf, eligible, zoneW, killActor, nudge, areaOf, holds, placeActor,
+    clsOf, eligible, zoneW, sameArea, killActor, nudge, areaOf, holds, placeActor,
     hatchFieldOf, bombFieldOf, resolvePoint,
     moveAlong, moveField, takeBomb, dropBomb, upgradeOverTime
   };
