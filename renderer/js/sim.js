@@ -1,4 +1,5 @@
 import { PARK_WAIT } from './gating.js';
+import { missionWaveSpawn } from './popmodel.js';
 
 export const DEFAULT_SIM_OPTS = {
   botLifetime: 12,
@@ -13,6 +14,8 @@ const countsTowardLimit = ws => ws.bots.length > 0 && !ws.isTank;
 export function simulateWave(wave, opts = {}) {
   const o = { ...DEFAULT_SIM_OPTS, ...opts };
   const robotLimit = Math.max(1, Math.round(o.robotLimit || 22));
+  const missionSpawns = (o.missions || []).map(missionWaveSpawn);
+  const entries = missionSpawns.length ? wave.wavespawns.concat(missionSpawns) : wave.wavespawns;
   const byName = new Map();
   for (const ws of wave.wavespawns) {
     if (!ws.name) continue;
@@ -37,7 +40,7 @@ export function simulateWave(wave, opts = {}) {
 
   const gateStateFor = o.gateStateFor || (() => null);
 
-  const st = wave.wavespawns.map(ws => {
+  const st = entries.map(ws => {
     const unlimited = ws.support === 'unlimited';
     const hasBots = ws.bots.length > 0;
     const gs = gateStateFor(ws);
@@ -245,16 +248,17 @@ export function simulateWave(wave, opts = {}) {
     results.set(s.ws, r);
   }
 
-  const curve = buildCurve(wave, results, waveEnd, o.step);
+  const curve = buildCurve(entries, results, waveEnd, o.step);
   let peak = { t: 0, active: 0, bots: 0 };
   for (const p of curve) if (p.bots > peak.bots) peak = p;
 
-  return { results, waveEnd, curve, peak, issues, opts: o, robotLimit };
+  const missions = missionSpawns.map(ws => ({ ws, mission: ws.mission, result: results.get(ws) }));
+  return { results, waveEnd, curve, peak, issues, opts: o, robotLimit, missions };
 }
 
-function buildCurve(wave, results, waveEnd, step) {
+function buildCurve(entries, results, waveEnd, step) {
   const deltas = [];
-  for (const ws of wave.wavespawns) {
+  for (const ws of entries) {
     if (!ws.bots.length) continue;
     const r = results.get(ws);
     if (!r) continue;

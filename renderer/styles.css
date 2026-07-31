@@ -1614,3 +1614,10 @@ body.no-file .splitter { display: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+.tl-missions { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 4px; }
+.tl-missions-title { font-size: 10px; letter-spacing: .12em; color: var(--muted); padding: 2px 0 4px 10px; }
+.tl-row.row-mission { height: 26px; align-items: center; }
+.tl-row.row-mission .mission-label { position: absolute; left: 10px; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); z-index: 2; pointer-events: none; }
+.mission-spawn { position: absolute; top: 7px; height: 12px; border-radius: 3px; background: repeating-linear-gradient(135deg, #6b5a3a 0 5px, #4e4230 5px 10px); border: 1px solid #8a7448; }
+.mission-count { position: absolute; left: 3px; top: -1px; font-size: 9px; color: #f0e2c0; }

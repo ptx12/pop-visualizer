@@ -1,5 +1,5 @@
 import { parse, serialize } from './kv.js';
-import { buildModel } from './popmodel.js';
+import { buildModel, missionActiveOn } from './popmodel.js';
 import { simulateWave, DEFAULT_SIM_OPTS } from './sim.js';
 import { lintModel } from './lint.js';
 import { native } from './native.js';
@@ -297,6 +297,7 @@ export function simFor(file, wave) {
     const gates = gatingFor(file, wave);
     file.simCache.set(wave, simulateWave(wave, {
       ...state.simOpts,
+      missions: (file.model.missions || []).filter(m => m.bots && m.bots.length && missionActiveOn(m, wave.index)),
       robotLimit: file.model.robotLimit || 22,
       tankLifetime: tankTimeFor(file),
       tankTimeFor: ws => override !== null ? override : measuredTankTime(file, ws),

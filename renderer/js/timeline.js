@@ -209,6 +209,9 @@ export function renderTimeline(container, file, waveIndex) {
       el('button', { class: 'btn primary', text: '+ Add WaveSpawn', onclick: () => addWaveSpawn(file, wave) })));
   }
 
+  const missionRows = buildMissionRows(sim, pps);
+  if (missionRows) inner.append(missionRows);
+
   inner.append(buildArrows(file, wave, sim, pps, yOfWs, rowsTotalH));
 
   const sel = file.selection;
@@ -356,6 +359,43 @@ function buildRuler(span, pps, sim) {
   }
   ruler.append(el('div', { class: 'tl-waveend', style: `left:${GUTTER + sim.waveEnd * pps}px`, title: 'Estimated wave end' }));
   return ruler;
+}
+
+const MISSION_LABEL = { destroysentries: 'Sentry busters', sniper: 'Snipers', spy: 'Spies', engineer: 'Engineers', seekanddestroy: 'Seek and destroy' };
+
+function missionLabel(m) {
+  const k = String(m.objective || '').toLowerCase().replace(/[^a-z]/g, '');
+  return MISSION_LABEL[k] || m.objective || 'mission';
+}
+
+function buildMissionRows(sim, pps) {
+  const live = (sim.missions || []).filter(m => m.result && m.result.events.length);
+  if (!live.length) return null;
+  const wrap = el('div', { class: 'tl-missions' });
+  wrap.append(el('div', { class: 'tl-missions-title', text: 'MISSIONS' }));
+  for (const m of live) {
+    const r = m.result;
+    const row = el('div', { class: 'tl-row row-mission' });
+    const bot = m.ws.bots.find(b => b.bot);
+    const label = el('div', { class: 'mission-label' });
+    if (bot) label.append(botVisual(bot.bot, { size: 'sm' }));
+    label.append(el('span', { text: missionLabel(m.mission) }));
+    row.append(label);
+    const track = el('div', { class: 'tl-track' });
+    for (const ev of r.events) {
+      const tip = `${missionLabel(m.mission)} — ${ev.count} at ${fmtTime(ev.t)}\n`
+        + `InitialCooldown ${fmtNum(m.mission.initialCooldown)}s · CooldownTime ${fmtNum(m.mission.cooldownTime)}s · DesiredCount ${m.mission.desiredCount}`;
+      const mark = el('div', {
+        class: 'mission-spawn', title: tip,
+        style: `left:${GUTTER + ev.t * pps}px;width:${Math.max(6, r.life * pps)}px`
+      });
+      if (ev.count > 1) mark.append(el('span', { class: 'mission-count', text: 'x' + ev.count }));
+      track.append(mark);
+    }
+    row.append(track);
+    wrap.append(row);
+  }
+  return wrap;
 }
 
 function buildActivity(span, pps, sim, wave) {

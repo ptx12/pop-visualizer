@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from '../renderer/js/kv.js';
-import { buildModel } from '../renderer/js/popmodel.js';
+import { buildModel, missionActiveOn } from '../renderer/js/popmodel.js';
 import { simulateWave } from '../renderer/js/sim.js';
 
 let pass = 0, fail = 0;
@@ -88,6 +88,32 @@ const SCOUT = 'TFBot { Class Scout }';
 {
   const { by } = run(` WaveSpawn { Name a TotalCount 6 SpawnCount 6 MaxActive 6 Mob { Count 3 TFBot { Class Scout } } }`);
   check('a Mob spawner spawns its Count together', times(by.a) === '0x6', times(by.a));
+}
+
+{
+  const mis = txt => {
+    const model = buildModel(parse(`WaveSchedule\n{\n${txt}\n Wave\n {\n  WaveSpawn { Name a TotalCount 30 SpawnCount 1 MaxActive 6 WaitBetweenSpawns 4 ${SCOUT} }\n }\n}\n`), []);
+    return model;
+  };
+  const MI = ' Mission\n {\n  Objective DestroySentries\n  InitialCooldown 5\n  CooldownTime 20\n  DesiredCount 2\n  BeginAtWave 2\n  RunForThisManyWaves 3\n  Where spawnbot\n  TFBot { Class Demoman }\n }';
+  const model = mis(MI);
+  const m = model.missions[0];
+  check('a mission parses its own bots', m.bots.length === 1, String(m.bots.length));
+  check('a mission runs from BeginAtWave for RunForThisManyWaves', [0, 1, 2, 3, 4].map(i => missionActiveOn(m, i) ? 1 : 0).join('') === '01110',
+    [0, 1, 2, 3, 4].map(i => missionActiveOn(m, i) ? 1 : 0).join(''));
+
+  const sim = simulateWave(model.waves[0], { missions: [m] });
+  const mr = sim.missions[0].result;
+  check('a mission is reported on the wave it runs in', sim.missions.length === 1, String(sim.missions.length));
+  check('the first mission group waits InitialCooldown', mr.events[0].t === 5, String(mr.events[0].t));
+  check('a mission spawns DesiredCount per group', mr.events.every(e => e.count === 2), times(mr));
+  check('a mission regroups CooldownTime after the group dies', mr.events[1].t === mr.events[0].t + mr.life + 20, times(mr));
+  check('a mission keeps regrouping while the wave runs', mr.events.length > 2, String(mr.events.length));
+  check('mission robots count against the robot limit', peakBots(sim) <= sim.robotLimit, `${peakBots(sim)} > ${sim.robotLimit}`);
+
+  const without = simulateWave(mis(MI).waves[0], {});
+  check('a wave with no missions passed is unchanged', without.missions.length === 0 && peakBots(without) <= without.robotLimit, String(without.missions.length));
+  check('missions add robots the wave alone does not have', peakBots(sim) > peakBots(without), `${peakBots(sim)} vs ${peakBots(without)}`);
 }
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'vanilla');

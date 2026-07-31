@@ -333,8 +333,12 @@ export function parseWave(node, index, templates, wsTemplates) {
 
 export function parseMission(node, templates) {
   const spawnerNode = node.children.find(c => c.type === 'block' && SPAWNER_KEYS.has(c.key.toLowerCase()));
+  const spawner = spawnerNode ? parseSpawner(spawnerNode, templates) : null;
+  const bots = flattenBots(spawner);
   return {
-    node,
+    node, bots,
+    hasGiant: bots.some(b => b.bot && b.bot.isGiant),
+    hasBoss: bots.some(b => b.bot && b.bot.isBoss),
     objective: getValue(node, 'Objective', ''),
     initialCooldown: getNumber(node, 'InitialCooldown', 0),
     cooldownTime: getNumber(node, 'CooldownTime', 0),
@@ -342,7 +346,46 @@ export function parseMission(node, templates) {
     beginAtWave: getNumber(node, 'BeginAtWave', 1),
     runForThisManyWaves: getNumber(node, 'RunForThisManyWaves', 1),
     where: getValue(node, 'Where', ''),
-    spawner: spawnerNode ? parseSpawner(spawnerNode, templates) : null
+    spawner
+  };
+}
+
+export function missionActiveOn(m, waveIndex) {
+  const from = Math.max(1, m.beginAtWave);
+  const to = from + Math.max(1, m.runForThisManyWaves) - 1;
+  const w = waveIndex + 1;
+  return w >= from && w <= to;
+}
+
+export function missionWaveSpawn(m) {
+  const count = Math.max(1, Math.round(m.desiredCount));
+  return {
+    node: m.node,
+    name: m.objective || 'mission',
+    where: m.where ? [m.where] : [],
+    totalCount: 0,
+    maxActive: count,
+    spawnCount: count,
+    waitBeforeStarting: Math.max(0, m.initialCooldown),
+    waitBetweenSpawns: 0,
+    waitBetweenSpawnsAfterDeath: Math.max(0, m.cooldownTime),
+    totalCurrency: 0,
+    waitForAllSpawned: null,
+    waitForAllDead: null,
+    randomSpawn: false,
+    support: 'unlimited',
+    spawner: m.spawner,
+    templateName: null,
+    bots: m.bots,
+    squadSize: 1,
+    isTank: false,
+    hasBoss: m.hasBoss,
+    hasGiant: m.hasGiant,
+    outputs: [],
+    sounds: [],
+    isLogic: false,
+    isMission: true,
+    mission: m
   };
 }
 
