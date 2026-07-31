@@ -179,6 +179,7 @@ export async function loadPropModel(base, bsp = null) {
     pos = posed.pos; nrm = posed.nrm;
   }
   let boneOrigins = null;
+  let attachOrigins = null;
   if (bones && bones.length) {
     const w = [];
     boneOrigins = {};
@@ -188,10 +189,17 @@ export async function loadPropModel(base, bsp = null) {
       w.push(m);
       boneOrigins[String(bones[b].name || '').toLowerCase()] = [m[12], m[13], m[14]];
     }
+    for (const at of payload.attachments || []) {
+      const b = w[at.localbone];
+      if (!b || !at.local) continue;
+      const m = matMul(b, at.local);
+      if (!attachOrigins) attachOrigins = {};
+      attachOrigins[String(at.name || '').toLowerCase()] = [m[12], m[13], m[14]];
+    }
   }
   return {
     positions: pos, normals: nrm, uv: f32(payload.uvs), idx: u32(payload.indices),
-    meshes: payload.meshes || [], boneOrigins,
+    meshes: payload.meshes || [], boneOrigins, attachOrigins,
     textures: payload.textures || [], cdtextures: payload.cdtextures || [], skins: payload.skins || []
   };
 }

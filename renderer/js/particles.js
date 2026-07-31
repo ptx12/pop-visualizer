@@ -144,7 +144,9 @@ function applyOsc(osc, value, p, curTime, dt) {
   return value + rate * dt * sinEst01(cos);
 }
 
-export function createEmitter(def) {
+export const PARTICLE_STRIDE = 13;
+
+export function createEmitter(def, sheetSeq = null) {
   if (!def) return null;
   const parts = [];
   let acc = 0, age = 0, burstDone = false;
@@ -260,13 +262,19 @@ export function createEmitter(def) {
           cg += (def.colFade[1] - cg) * T;
           cb += (def.colFade[2] - cb) * T;
         }
-        const o = n * 9;
-        if (o + 9 > out.length) break;
+        const o = n * PARTICLE_STRIDE;
+        if (o + PARTICLE_STRIDE > out.length) break;
         out[o] = p.x; out[o + 1] = p.z; out[o + 2] = -p.y;
         out[o + 3] = p.radius;
         out[o + 4] = cr / 255; out[o + 5] = cg / 255; out[o + 6] = cb / 255;
         out[o + 7] = p.drawAlpha;
         out[o + 8] = p.rot;
+        if (sheetSeq && sheetSeq.frames.length) {
+          const fr = sheetSeq.frames[Math.min(sheetSeq.frames.length - 1, Math.max(0, Math.floor(f * sheetSeq.frames.length)))];
+          out[o + 9] = fr.uv[0]; out[o + 10] = fr.uv[1]; out[o + 11] = fr.uv[2]; out[o + 12] = fr.uv[3];
+        } else {
+          out[o + 9] = 0; out[o + 10] = 0; out[o + 11] = 1; out[o + 12] = 1;
+        }
         n++;
       }
       return n;

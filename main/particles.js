@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import { parsePCF } from '../shared/pcf.js';
 import { readGameFile, listGameDir } from '../shared/gamefs.js';
-import { decodeVTF } from '../shared/vtf.js';
+import { decodeVTF, decodeVTFSheet } from '../shared/vtf.js';
 import { detectTFPath } from './tfpath.js';
 import { readMaterialFile } from './materials.js';
 
@@ -78,7 +78,8 @@ async function sheetFor(sys, tfPath) {
     const vtf = await readMaterialFile(rel, tfPath, null);
     if (!vtf) return null;
     const d = decodeVTF(vtf);
-    return d ? { width: d.width, height: d.height, rgba: Buffer.from(d.rgba.buffer, d.rgba.byteOffset, d.rgba.byteLength) } : null;
+    const sheet = decodeVTFSheet(vtf);
+    return d ? { width: d.width, height: d.height, rgba: Buffer.from(d.rgba.buffer, d.rgba.byteOffset, d.rgba.byteLength), sheet: sheet ? sheet.sequences : null } : null;
   } catch {
     return null;
   }

@@ -232,3 +232,47 @@ export function decodeVTFFrames(buf) {
   }
   return { width: first.width, height: first.height, images };
 }
+
+const VTF_SHEET_TAG = 0x10;
+
+export function decodeVTFSheet(buf) {
+  if (buf.length < 80 || buf.toString('ascii', 0, 3) !== 'VTF') return null;
+  const verMajor = buf.readUInt32LE(4);
+  const verMinor = buf.readUInt32LE(8);
+  if (verMajor < 7 || (verMajor === 7 && verMinor < 3)) return null;
+  const numResources = cap(buf.readUInt32LE(68), LIMITS.vtfResources, 'VTF resources');
+  let at = -1;
+  for (let i = 0; i < numResources; i++) {
+    const e = 80 + i * 8;
+    if (e + 8 > buf.length) break;
+    if (buf[e] === VTF_SHEET_TAG && buf[e + 1] === 0 && buf[e + 2] === 0) { at = buf.readUInt32LE(e + 4); break; }
+  }
+  if (at < 0 || at + 12 > buf.length) return null;
+  const end = Math.min(buf.length, at + 4 + buf.readUInt32LE(at));
+  let p = at + 4;
+  const i32 = () => { const v = buf.readInt32LE(p); p += 4; return v; };
+  const f32 = () => { const v = buf.readFloatLE(p); p += 4; return v; };
+  const version = i32();
+  const count = i32();
+  if (count < 0 || count > 64) return null;
+  const sequences = [];
+  for (let s = 0; s < count; s++) {
+    if (p + 16 > end) break;
+    const id = i32();
+    const clamp = i32() !== 0;
+    const frameCount = i32();
+    const totalTime = f32();
+    if (frameCount < 0 || frameCount > 4096) return null;
+    const frames = [];
+    for (let f = 0; f < frameCount; f++) {
+      const need = (version > 0 ? 4 : 0) + 64;
+      if (p + need > end) return sequences.length ? { sequences } : null;
+      const dt = version > 0 ? f32() : 1;
+      const uv = [f32(), f32(), f32(), f32()];
+      p += 48;
+      frames.push({ dt, uv });
+    }
+    sequences.push({ id, clamp, totalTime: totalTime > 0 ? totalTime : frames.length, frames });
+  }
+  return sequences.length ? { sequences } : null;
+}

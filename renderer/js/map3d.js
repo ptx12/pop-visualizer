@@ -2,7 +2,7 @@ import { getTFPath } from './icons.js';
 import { loadBotPose, loadPropModel, loadAttachment } from './botmodels.js';
 import { ambientCubeAt, pickLocalLights, EMIT_SKYLIGHT } from '../../shared/lightmath.js';
 import { stripVmtComments, vmtParam, vmtColor, vmtTexturePath } from '../../shared/vmt.js';
-import { loadSystem, createEmitter } from './particles.js';
+import { loadSystem, createEmitter, PARTICLE_STRIDE } from './particles.js';
 
 const DEG = Math.PI / 180;
 function angleMatrix(p, y, r) {
@@ -96,20 +96,21 @@ float core=smoothstep(0.25,0.10,r);
 float rim=smoothstep(0.25,0.20,r)-smoothstep(0.19,0.10,r);
 vec3 c=mix(vColor,vec3(1.0),rim*0.5);
 gl_FragColor=vec4(c,core*(1.0-vFog*0.7));}`;
-const PART_VS = `attribute vec3 aPos;attribute float aSize;attribute vec3 aColor;attribute float aAlpha;attribute float aRot;
+const PART_VS = `attribute vec3 aPos;attribute float aSize;attribute vec3 aColor;attribute float aAlpha;attribute float aRot;attribute vec4 aFrame;
 uniform mat4 uMVP;uniform float uProjScale;uniform float uFogStart;uniform float uFogEnd;
-varying vec3 vColor;varying float vAlpha;varying float vRot;varying float vFog;
-void main(){vColor=aColor;vAlpha=aAlpha;vRot=aRot;vec4 p=uMVP*vec4(aPos,1.0);
+varying vec3 vColor;varying float vAlpha;varying float vRot;varying float vFog;varying vec4 vFrame;
+void main(){vColor=aColor;vAlpha=aAlpha;vRot=aRot;vFrame=aFrame;vec4 p=uMVP*vec4(aPos,1.0);
 vFog=clamp((p.w-uFogStart)/(uFogEnd-uFogStart),0.0,1.0);gl_Position=p;
 gl_PointSize=clamp(aSize*uProjScale/max(1.0,p.w),3.0,192.0);}`;
-const PART_FS = `precision mediump float;varying vec3 vColor;varying float vAlpha;varying float vRot;varying float vFog;
+const PART_FS = `precision mediump float;varying vec3 vColor;varying float vAlpha;varying float vRot;varying float vFog;varying vec4 vFrame;
 uniform sampler2D uTex;uniform float uHasTex;
 void main(){
 vec2 d=gl_PointCoord-vec2(0.5);
 float c=cos(vRot),si=sin(vRot);
 vec2 uv=vec2(d.x*c-d.y*si,d.x*si+d.y*c)+vec2(0.5);
 if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0)discard;
-vec4 t=uHasTex>0.5?texture2D(uTex,uv):vec4(1.0,1.0,1.0,max(0.0,1.0-4.0*dot(d,d)));
+vec2 suv=vFrame.xy+uv*(vFrame.zw-vFrame.xy);
+vec4 t=uHasTex>0.5?texture2D(uTex,suv):vec4(1.0,1.0,1.0,max(0.0,1.0-4.0*dot(d,d)));
 float a=t.a*vAlpha*(1.0-vFog);
 if(a<=0.003)discard;
 gl_FragColor=vec4(vColor*t.rgb*a,a);}`;
@@ -196,6 +197,7 @@ const LM_OVERBRIGHT = 2.0;
 const BOMB_MODEL = 'models/props_td/atom_bomb';
 const TANK_HULL_MODEL = 'models/bots/boss_bot/boss_tank';
 const TANK_BOMB_MODEL = 'models/bots/boss_bot/bomb_mechanism';
+const TANK_SMOKE_ATTACH = 'smoke_attachment';
 const TANK_TRACKS = [
   ['models/bots/boss_bot/tank_track_l', 'tank_track_l'],
   ['models/bots/boss_bot/tank_track_r', 'tank_track_r']
@@ -299,6 +301,7 @@ export function createMap3D(scene) {
     size: gl.getAttribLocation(partProg, 'aSize'),
     color: gl.getAttribLocation(partProg, 'aColor'),
     alpha: gl.getAttribLocation(partProg, 'aAlpha'),
+    frame: gl.getAttribLocation(partProg, 'aFrame'),
     rot: gl.getAttribLocation(partProg, 'aRot'),
     mvp: gl.getUniformLocation(partProg, 'uMVP'),
     projScale: gl.getUniformLocation(partProg, 'uProjScale'),
@@ -308,12 +311,12 @@ export function createMap3D(scene) {
     hasTex: gl.getUniformLocation(partProg, 'uHasTex')
   };
   const partBuf = gl.createBuffer();
-  let partScratch = new Float32Array(9 * 512);
+  let partScratch = new Float32Array(PARTICLE_STRIDE * 512);
   const fxCache = new Map();
   const fxEmitters = new Map();
   let fxLastT = null;
 
-  const FX = { carrier: 'mvm_hatch_destroy_smolderembers', crit: 'critgun_weaponmodel_blu' };
+  const FX = { carrier: 'mvm_hatch_destroy_smolderembers', crit: 'critgun_weaponmodel_blu', tanksmoke: 'smoke_train' };
   const CRIT_GLOW = (() => { const v = [5, 20, 80]; const m = Math.max(...v); return v.map(c => c / m * 0.62); })();
 
   function fxFor(key) {
@@ -323,9 +326,10 @@ export function createMap3D(scene) {
       fxCache.set(name, null);
       getTFPath().then(tf => loadSystem(name, tf)).then(rec => {
         if (disposed || !rec || !rec.def) return;
-        const layers = [{ def: rec.def, tex: rec.sheet && rec.sheet.rgba ? makeGLTex(rec.sheet) : null }];
+        const seqOf = sh => (sh && sh.sheet && sh.sheet.length ? sh.sheet[0] : null);
+        const layers = [{ def: rec.def, tex: rec.sheet && rec.sheet.rgba ? makeGLTex(rec.sheet) : null, seq: seqOf(rec.sheet) }];
         for (const c of (rec.children || [])) {
-          layers.push({ def: c.def, tex: c.sheet && c.sheet.rgba ? makeGLTex(c.sheet) : null });
+          layers.push({ def: c.def, tex: c.sheet && c.sheet.rgba ? makeGLTex(c.sheet) : null, seq: seqOf(c.sheet) });
         }
         fxCache.set(name, layers);
         schedule();
@@ -339,7 +343,7 @@ export function createMap3D(scene) {
     if (!layers) return null;
     let set = fxEmitters.get(id);
     if (!set || set.layers !== layers) {
-      set = { layers, emitters: layers.map(l => createEmitter(l.def)) };
+      set = { layers, emitters: layers.map(l => createEmitter(l.def, l.seq)) };
       if (origin) for (let i = 0; i < 45; i++) for (const e of set.emitters) e.step(1 / 30, origin, sampler);
       fxEmitters.set(id, set);
     }
@@ -670,7 +674,7 @@ export function createMap3D(scene) {
         const texName = m.textures[texIdx] ?? m.textures[me.material];
         resolveMat(texName, m.cdtextures, tfPath).then(mat => { if (!disposed) { mats.set(me.material, mat); schedule(); } });
       }
-      Object.assign(rec, { loading: false, loaded: true, posBuf, nrmBuf, uvBuf, idxBuf, meshes: m.meshes, mats, boneOrigins: m.boneOrigins || null });
+      Object.assign(rec, { loading: false, loaded: true, posBuf, nrmBuf, uvBuf, idxBuf, meshes: m.meshes, mats, boneOrigins: m.boneOrigins || null, attachOrigins: m.attachOrigins || null });
       schedule();
     })();
   }
@@ -1402,19 +1406,33 @@ export function createMap3D(scene) {
       fxLastT = tNow;
       const live = [];
       for (const a of actors) {
+        if (a.kind === 'tank') {
+          const hull = props.get(TANK_HULL_MODEL);
+          const at = hull && hull.loaded && hull.attachOrigins ? hull.attachOrigins[TANK_SMOKE_ATTACH] : null;
+          if (!at) continue;
+          const gy0 = Number.isFinite(a.z) ? a.z : sampleHeight(a.x, a.y);
+          const M = mul(mul(mul(mTranslate(a.x, gy0, -a.y), mRotY(a.heading || 0)), ZUP2YUP), mScale(a.scale || 1));
+          const rx = M[0] * at[0] + M[4] * at[1] + M[8] * at[2] + M[12];
+          const ry = M[1] * at[0] + M[5] * at[1] + M[9] * at[2] + M[13];
+          const rz = M[2] * at[0] + M[6] * at[1] + M[10] * at[2] + M[14];
+          const o = [rx, -rz, ry];
+          const set = fxEmitter('tanksmoke:' + a.phase, 'tanksmoke', o);
+          if (set) for (let i = 0; i < set.emitters.length; i++) { set.emitters[i].step(dt, o); live.push([set.layers[i].tex, set.emitters[i], !!set.layers[i].def.additive]); }
+          continue;
+        }
         if (a.kind !== 'bot') continue;
         const gy = Number.isFinite(a.z) ? a.z : sampleHeight(a.x, a.y);
         if (a.carrying) {
           const o = [a.x, a.y, gy + 52];
           const set = fxEmitter('carrier', 'carrier', o);
-          if (set) for (let i = 0; i < set.emitters.length; i++) { set.emitters[i].step(dt, o); live.push([set.layers[i].tex, set.emitters[i]]); }
+          if (set) for (let i = 0; i < set.emitters.length; i++) { set.emitters[i].step(dt, o); live.push([set.layers[i].tex, set.emitters[i], !!set.layers[i].def.additive]); }
         }
         if (a.crit) {
           const o = [a.x, a.y, gy];
           const pool = a.loadoutKey ? models.get(a.loadoutKey) : null;
           const sampler = pool && pool.loaded ? modelSampler(pool, a.frame || 0, a, gy) : null;
           const set = fxEmitter('crit:' + (a.key || a.id || Math.round(a.x) + ',' + Math.round(a.y)), 'crit', o, sampler);
-          if (set) for (let i = 0; i < set.emitters.length; i++) { set.emitters[i].step(dt, o, sampler); live.push([set.layers[i].tex, set.emitters[i]]); }
+          if (set) for (let i = 0; i < set.emitters.length; i++) { set.emitters[i].step(dt, o, sampler); live.push([set.layers[i].tex, set.emitters[i], !!set.layers[i].def.additive]); }
         }
       }
       if (live.length) {
@@ -1427,9 +1445,15 @@ export function createMap3D(scene) {
         gl.enable(gl.DEPTH_TEST);
         gl.depthMask(false);
         gl.enable(gl.BLEND);
-        gl.blendFunc(gl.ONE, gl.ONE);
-        for (const [layerTex, e] of live) {
-          const need = 9 * Math.max(1, e.particles.length);
+        live.sort((a, b) => (a[2] ? 1 : 0) - (b[2] ? 1 : 0));
+        let blendAdd = null;
+        for (const [layerTex, e, additive] of live) {
+          if (blendAdd !== additive) {
+            blendAdd = additive;
+            if (additive) gl.blendFunc(gl.ONE, gl.ONE);
+            else gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          }
+          const need = PARTICLE_STRIDE * Math.max(1, e.particles.length);
           if (partScratch.length < need) partScratch = new Float32Array(need * 2);
           const n = e.fill(partScratch);
           if (!n) continue;
@@ -1437,13 +1461,14 @@ export function createMap3D(scene) {
           if (layerTex) gl.bindTexture(gl.TEXTURE_2D, layerTex);
           gl.uniform1f(paA.hasTex, layerTex ? 1 : 0);
           gl.bindBuffer(gl.ARRAY_BUFFER, partBuf);
-          gl.bufferData(gl.ARRAY_BUFFER, partScratch.subarray(0, n * 9), gl.DYNAMIC_DRAW);
-          const stride = 36;
+          gl.bufferData(gl.ARRAY_BUFFER, partScratch.subarray(0, n * PARTICLE_STRIDE), gl.DYNAMIC_DRAW);
+          const stride = PARTICLE_STRIDE * 4;
           gl.enableVertexAttribArray(paA.pos); gl.vertexAttribPointer(paA.pos, 3, gl.FLOAT, false, stride, 0);
           gl.enableVertexAttribArray(paA.size); gl.vertexAttribPointer(paA.size, 1, gl.FLOAT, false, stride, 12);
           gl.enableVertexAttribArray(paA.color); gl.vertexAttribPointer(paA.color, 3, gl.FLOAT, false, stride, 16);
           gl.enableVertexAttribArray(paA.alpha); gl.vertexAttribPointer(paA.alpha, 1, gl.FLOAT, false, stride, 28);
           gl.enableVertexAttribArray(paA.rot); gl.vertexAttribPointer(paA.rot, 1, gl.FLOAT, false, stride, 32);
+          gl.enableVertexAttribArray(paA.frame); gl.vertexAttribPointer(paA.frame, 4, gl.FLOAT, false, stride, 36);
           gl.drawArrays(gl.POINTS, 0, n);
         }
         gl.disableVertexAttribArray(paA.alpha);
