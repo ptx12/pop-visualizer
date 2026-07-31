@@ -13,7 +13,8 @@ export function entityOutputs(ents) {
     const list = graph.get(name);
     for (const o of en.outputs) {
       const parts = splitOutput(o.value);
-      list.push({ on: o.key, target: (parts[0] || '').toLowerCase(), input: (parts[1] || '').toLowerCase(), param: parts[2] || '' });
+      const delay = parseFloat(parts[3]);
+      list.push({ on: o.key, target: (parts[0] || '').toLowerCase(), input: (parts[1] || '').toLowerCase(), param: parts[2] || '', delay: Number.isFinite(delay) ? delay : 0 });
     }
   }
   return graph;
@@ -117,7 +118,25 @@ function prevPoint(cp) {
   return p && p !== self ? p : null;
 }
 
+function gateEffects(graph, relay) {
+  const outs = graph.get(relay) || [];
+  let pauseAt = null, resumeAt = null;
+  const spawnsOn = [], spawnsOff = [];
+  for (const o of outs) {
+    if (o.input === 'pausebotspawning') pauseAt = pauseAt === null ? o.delay : Math.min(pauseAt, o.delay);
+    if (o.input === 'unpausebotspawning') resumeAt = resumeAt === null ? o.delay : Math.max(resumeAt, o.delay);
+    if (!/^spawnbot/i.test(o.target)) continue;
+    if (o.input === 'enable' && !spawnsOn.some(x => x.name === o.target)) spawnsOn.push({ name: o.target, delay: o.delay });
+    if (o.input === 'disable' && !spawnsOff.some(x => x.name === o.target)) spawnsOff.push({ name: o.target, delay: o.delay });
+  }
+  return {
+    pauseFor: pauseAt !== null && resumeAt !== null ? Math.max(0, resumeAt - pauseAt) : 0,
+    spawnsOn, spawnsOff
+  };
+}
+
 export function buildGates(ents) {
+  const graph = entityOutputs(ents);
   const points = new Map();
   const relays = new Set();
   for (const e of ents) {
@@ -149,7 +168,8 @@ export function buildGates(ents) {
       capCount: Number.isFinite(capCount) && capCount > 0 ? capCount : 1,
       startsLocked: String(e.startdisabled) === '1',
       previous: prevPoint(cp),
-      relay
+      relay,
+      effects: relay ? gateEffects(graph, relay) : null
     });
   }
   out.sort((a, b) => a.index - b.index);

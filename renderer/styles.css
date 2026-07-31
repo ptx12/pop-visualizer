@@ -1633,3 +1633,4 @@ body.no-file .splitter { display: none; }
 .gate-time { font-size: 10px; color: var(--muted); line-height: 1.15; }
 .gate-note { font-size: 10px; letter-spacing: .06em; color: #d0d8e2; background: #12161caa; padding: 2px 7px; border-radius: 3px; }
 .gate-note.muted { color: var(--muted); }
+.gate-fx { font-size: 10px; color: #c9a45e; line-height: 1.2; }

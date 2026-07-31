@@ -141,7 +141,7 @@ check('a logic_case unrelated to nav volumes is not a route',
 const gateEnts = [
   { classname: 'team_control_point', targetname: 'gate1_point_a', origin: '10 20 30', point_index: '1', point_printname: 'Loading Gate A', team_previouspoint_3_0: 'gate1_point_a' },
   { classname: 'team_control_point', targetname: 'gate2_point_b', origin: '40 50 60', point_index: '3', point_printname: 'Loading Gate B', team_previouspoint_3_0: 'gate1_point_a' },
-  { classname: 'logic_relay', targetname: 'gate1_relay', outputs: [out('OnTrigger', 'spawnbot_main1', 'Enable')] },
+  { classname: 'logic_relay', targetname: 'gate1_relay', outputs: [out('OnTrigger', 'spawnbot_main1', 'Enable'), out('OnTrigger', 'pop_interface', 'PauseBotSpawning'), { key: 'OnTrigger', value: ['pop_interface', 'UnpauseBotSpawning', '', '22'].join(ESC) }] },
   { classname: 'logic_relay', targetname: 'gate2_relay', outputs: [out('OnTrigger', 'spawnbot_main2', 'Enable')] },
   { classname: 'trigger_timer_door', targetname: 'gate1_door_trigger', area_cap_point: 'gate1_point_a', area_time_to_cap: '10', team_numcap_3: '1', startdisabled: '0', outputs: [out('OnCapTeam2', 'gate1_relay', 'Trigger')] },
   { classname: 'trigger_timer_door', targetname: 'gate2_door_trigger', area_cap_point: 'gate2_point_b', area_time_to_cap: '12', team_numcap_3: '1', startdisabled: '1', outputs: [out('OnCapTeam2', 'gate2_relay', 'Trigger')] },
@@ -157,6 +157,9 @@ eq('the relay fired on capture is recorded', gr.gates.map(g => g.relay), ['gate1
 check('a control point that is its own previous point has no prerequisite', gr.gates[0].previous === null, String(gr.gates[0].previous));
 eq('a later gate keeps its prerequisite', gr.gates[1].previous, 'gate1_point_a');
 check('a trigger with no matching capture point is ignored', !gr.gates.some(g => g.trigger === 'orphan_trigger'));
+check('gate capture effects record the spawn pause window', gr.gates[0].effects.pauseFor === 22, String(gr.gates[0].effects.pauseFor));
+eq('gate capture effects list the spawn points that switch on', gr.gates[0].effects.spawnsOn.map(x => x.name), ['spawnbot_main1']);
+eq('a gate with no relay has no effects', gr.gates.filter(g => !g.relay).map(g => g.effects), []);
 eq('a map with no gates yields none', extractMapEntities([], models).gates, []);
 
 const oneRelayEnts = [

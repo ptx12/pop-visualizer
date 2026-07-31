@@ -474,10 +474,20 @@ function buildGateHUD(mapData, wave) {
         + (g.startsLocked ? '\nlocked until the previous gate is captured' : '\nopen from the start of the wave')
         + (g.relay ? `\nfires ${g.relay} on capture` : '')
     });
+    const fx = g.effects;
+    if (fx) {
+      const on = fx.spawnsOn.map(x => x.name).join(', ');
+      const off = fx.spawnsOff.map(x => x.name).join(', ');
+      cell.title += (fx.pauseFor ? `\n\non capture: bot spawning pauses ${fmtNum(fx.pauseFor)}s` : '\n\non capture:')
+        + (on ? `\nspawns move to ${on}` : '')
+        + (off ? `\nspawns stop at ${off}` : '');
+    }
     cell.append(el('div', { class: 'gate-icon', text: gateLetter(g, i) }));
-    cell.append(el('div', { class: 'gate-meta' },
+    const meta = el('div', { class: 'gate-meta' },
       el('div', { class: 'gate-name', text: g.label }),
-      el('div', { class: 'gate-time', text: g.startsLocked ? 'locked · ' + fmtNum(g.capTime) + 's' : fmtNum(g.capTime) + 's to cap' })));
+      el('div', { class: 'gate-time', text: g.startsLocked ? 'locked · ' + fmtNum(g.capTime) + 's' : fmtNum(g.capTime) + 's to cap' }));
+    if (fx && fx.pauseFor) meta.append(el('div', { class: 'gate-fx', text: '+' + fmtNum(fx.pauseFor) + 's spawn pause' }));
+    cell.append(meta);
     strip.append(cell);
   });
   hud.append(strip);
