@@ -204,6 +204,43 @@ check('a teleporter is tagged with the spawn it serves', (teleAI.teleporters[0] 
 const noTele = runSlow('TotalCount 1 SpawnCount 1 MaxActive 1 TFBot { Class Engineer ' + IGNORE + ' }');
 check('an engineer without TeleportWhere builds none', (noTele.teleporters || []).length === 0);
 
+const gatePop = [
+  'WaveSchedule', '{', ' Wave', ' {',
+  '  WaveSpawn { Name a TotalCount 4 SpawnCount 2 MaxActive 4 WaitBetweenSpawns 2 Where spawnbot',
+  '   TFBot { Class Scout Tag bot_gatebot ' + IGNORE + ' } }',
+  ' }', '}'
+].join('\n');
+const gateMapData = {
+  ...mapData,
+  spawns: [{ name: 'spawnbot', origin: AT(0) }, { name: 'spawnbot_fwd', origin: AT(N - 2), disabled: true }],
+  gates: [{
+    point: 'gate_a', label: 'Gate A', index: 1, origin: AT(2), capTime: 3, capCount: 1,
+    startsLocked: false, previous: null, relay: 'gate1_relay',
+    effects: { pauseFor: 22, spawnsOn: [{ name: 'spawnbot_fwd', delay: 0 }], spawnsOff: [{ name: 'spawnbot', delay: 0 }] }
+  }]
+};
+const gateModel = buildModel(parse(gatePop), []);
+const gateAI = simulateBotAI(
+  gateModel.waves[0],
+  simulateWave(gateModel.waves[0], { robotLimit: 99, teamDPS: 20 }),
+  gateMapData,
+  { deathModel: 'hatch', robotLimit: 99 });
+check('a gatebot heads for the gate', gateAI.actors.some(a => a.isGatebot && (a.gate || a.state === 'gatebotToGate')),
+  gateAI.actors.map(a => a.state).join(','));
+check('holding the gate for its capture time captures it', gateAI.gates[0].capturedAt !== null,
+  'progress=' + gateAI.gates[0].progress.toFixed(1) + '/' + gateAI.gates[0].def.capTime);
+const afterCap = gateAI.actors.filter(a => gateAI.gates[0].capturedAt !== null && a.spawnT > gateAI.gates[0].capturedAt);
+check('robots spawning after the capture use the forward spawn',
+  !afterCap.length || afterCap.every(a => Math.abs(a.spawnPos[0] - AT(N - 2)[0]) < 1),
+  afterCap.map(a => Math.round(a.spawnPos[0])).join(','));
+
+check('capturing a gate pauses bot spawning for the relay window',
+  Math.abs(gateAI.spawnPauseUntil - (gateAI.gates[0].capturedAt + 22)) < 1e-6,
+  'pauseUntil=' + gateAI.spawnPauseUntil + ' cap=' + gateAI.gates[0].capturedAt);
+check('no robot enters the map during the spawn pause',
+  !gateAI.actors.some(a => a.spawnT > gateAI.gates[0].capturedAt && a.spawnT < gateAI.spawnPauseUntil - 1e-6),
+  gateAI.actors.map(a => a.spawnT.toFixed(1)).join(','));
+
 const uberAttr = body => buildModel(parse(wrap(body)), []).waves[0].wavespawns[0].bots.find(b => b.bot && b.bot.cls === 'medic').bot;
 const fastMed = uberAttr('TotalCount 1 SpawnCount 1 MaxActive 1 TFBot { Class Medic ItemAttributes { ItemName "TF_WEAPON_MEDIGUN" "ubercharge rate bonus" 5 "uber duration bonus" -3 } }');
 check('ubercharge rate bonus is read off the medigun', fastMed.uberRateMult === 5, String(fastMed.uberRateMult));

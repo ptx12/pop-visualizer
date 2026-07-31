@@ -2,6 +2,7 @@ import { buildNavGraphWasm, navWasmReady } from './navwasm.js';
 import { buildPipeline } from './sim/systems.js';
 import { behaviours, selectBehaviour } from './sim/behaviours.js';
 import { instantiateSpawner } from './sim/spawners.js';
+import { isGatebot } from './popmodel.js';
 import { createEventBus, seedWaveEvents } from './sim/events.js';
 import { waveStartOutputs, wavespawnOutputs } from './gating.js';
 import { RANGES, healTarget } from './sim/systems/healing.js';
@@ -490,6 +491,44 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
   const nests = mapData.hints.filter(h => h.kind === 'bot_hint_engineer_nest');
   const teleExits = mapData.hints.filter(h => h.kind === 'bot_hint_teleporter_exit');
+  const gates = (mapData.gates || []).filter(g => g.origin).map(g => ({
+    def: g, pos: g.origin, progress: 0, capturedAt: null,
+    open: !g.startsLocked, holders: 0
+  }));
+  const gateOpen = g => g.open && g.capturedAt === null;
+  const nextGate = () => gates.find(gateOpen) || null;
+  const spawnMoves = new Map();
+  let spawnPauseUntil = 0;
+  const captureGate = (g, t) => {
+    g.capturedAt = t;
+    const fx = g.def.effects;
+    if (fx) {
+      if (fx.pauseFor > 0) spawnPauseUntil = Math.max(spawnPauseUntil, t + fx.pauseFor);
+      for (const off of fx.spawnsOff) spawnMoves.set(off.name, { off: true, at: t + off.delay });
+      for (const on of fx.spawnsOn) spawnMoves.set(on.name, { off: false, at: t + on.delay });
+    }
+    const nextIdx = gates.findIndex(x => x.def.previous === g.def.point);
+    if (nextIdx >= 0) gates[nextIdx].open = true;
+  };
+  const gateSpawnFor = (ws, t) => {
+    if (!spawnMoves.size) return null;
+    const names = (ws.where || []).map(w => String(w).toLowerCase());
+    if (!names.length || !names.some(n => spawnEnabledAt(n, t) === false)) return null;
+    for (const [name, mv] of spawnMoves) {
+      if (mv.off || t < mv.at) continue;
+      const pool = enabledOf(spawnsByName.get(name) || []);
+      if (pool.length) return pool[Math.floor(rng() * pool.length)];
+      const any = spawnsByName.get(name) || [];
+      if (any.length) return any[0];
+    }
+    return null;
+  };
+
+  const spawnEnabledAt = (name, t) => {
+    const mv = spawnMoves.get(String(name).toLowerCase());
+    if (!mv || t < mv.at) return null;
+    return !mv.off;
+  };
   const teleporters = [];
   const teleporterFor = ws => {
     const names = (ws.where || []).map(w => String(w).toLowerCase());
@@ -684,6 +723,9 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     a.hp = a.kind === 'tank' ? (a.tank.health || 20000) : a.kind === 'prop' ? (a.prop.health || 0) : (a.bot.health || 100);
     if (a.squadRole === 'leader' && a.squadId) squadLeaders.set(a.squadId, a);
     if (a.kind === 'bot') {
+      a.isGatebot = isGatebot(a.bot);
+      const moved = gateSpawnFor(a.ws, t);
+      if (moved) a.spawnPos = moved.origin.slice(0, 3);
       const tp = teleporterFor(a.ws);
       if (tp && t >= tp.readyAt) { a.spawnPos = tp.pos.slice(0, 3); a.viaTeleporter = true; }
     }
@@ -938,7 +980,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     maxSpeed: Number.isFinite(opts.maxSpeedLimit) ? opts.maxSpeedLimit : TF_MAX_SPEED,
     actors, live, bomb, bombSamples, squadLeaders,
     nav, hasNav, navOf, graphFor, objective, objArea, chains,
-    nests, teleExits, teleporters, redSpawns, spawnsByName, namedPoints,
+    nests, teleExits, teleporters, gates, gateOpen, nextGate, captureGate, redSpawns, spawnsByName, namedPoints,
     clsOf, eligible, zoneW, killActor, nudge, areaOf, holds, placeActor,
     hatchFieldOf, bombFieldOf, resolvePoint,
     moveAlong, moveField, takeBomb, dropBomb, upgradeOverTime
@@ -959,7 +1001,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     if (cursor >= sorted.length && !waiting.length && live.size === 0 && t > sim.waveEnd) return false;
     endT = t;
     while (cursor < sorted.length && sorted[cursor].spawnT <= t) waiting.push(sorted[cursor++]);
-    if (waiting.length) {
+    if (waiting.length && t >= spawnPauseUntil) {
       let bots = 0;
       for (const a of live) if (a.kind === 'bot') bots++;
       let waitingBots = 0;
@@ -990,6 +1032,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
         }
       }
     }
+    for (const g of gates) g.holders = 0;
     for (const a of live) {
       if (t >= a.dieT || a.done) {
         killActor(a, Math.min(t, a.dieT));
@@ -1093,7 +1136,8 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       delete a.zs;
     }
     finalized = {
-      actors, objective, chains, nav, end: Math.max(endT, 10), teamDPS, deathModel, teleporters,
+      actors, objective, chains, nav, end: Math.max(endT, 10), teamDPS, deathModel, teleporters, gates,
+      spawnPauseUntil,
       bomb: { samples: bombSamples, deliveredAt: bomb.deliveredAt, home: bomb.home },
       hatchDist: hatchField ? hatchField.dist : null, hatchMaxDist,
       navVolumes, route: buildBombRoute(),

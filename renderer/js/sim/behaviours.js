@@ -1,7 +1,7 @@
 import { createRegistry } from './registry.js';
 import { fetchFlag, deliverFlag, deployBomb, escortFlagCarrier, pushToPoint } from './behaviours/bomb.js';
 import { escortSquadLeader } from './behaviours/squad.js';
-import { medicHeal, spyLeaveSpawn, spyLurk, engineerToNest, engineerBuild, busterToSentry } from './behaviours/support.js';
+import { medicHeal, spyLeaveSpawn, spyLurk, engineerToNest, engineerBuild, busterToSentry, gatebotToGate } from './behaviours/support.js';
 
 export const behaviours = createRegistry('behaviour', {
   required: ['step'],
@@ -9,7 +9,7 @@ export const behaviours = createRegistry('behaviour', {
 });
 
 behaviours.registerAll([
-  escortSquadLeader, busterToSentry, spyLeaveSpawn, engineerToNest, medicHeal, pushToPoint, fetchFlag,
+  escortSquadLeader, busterToSentry, gatebotToGate, spyLeaveSpawn, engineerToNest, medicHeal, pushToPoint, fetchFlag,
   deliverFlag, deployBomb, escortFlagCarrier, spyLurk, engineerBuild
 ]);
 

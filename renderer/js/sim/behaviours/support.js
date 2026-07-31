@@ -142,3 +142,30 @@ export const busterToSentry = {
     if (d < BUSTER_ARRIVE_RANGE) { a.reachedSentry = true; ctx.killActor(a, t); }
   }
 };
+
+const GATE_CAPTURE_RANGE = 180;
+
+export const gatebotToGate = {
+  id: 'gatebotToGate',
+  order: 22,
+  selects(a, ctx) { return !!(a.isGatebot && ctx.nextGate && ctx.nextGate()); },
+  enter(a, ctx) {
+    const g = ctx.nextGate();
+    a.gate = g;
+    a.gateField = g && ctx.hasNav ? ctx.navOf(a).flowField((ctx.navOf(a).nearestArea(g.pos) || { id: -1 }).id) : null;
+  },
+  step(a, ctx, t, dt, speed) {
+    if (!a.gate || a.gate.capturedAt !== null) {
+      const g = ctx.nextGate();
+      if (!g) { a.state = 'fetchFlag'; return; }
+      a.gate = g;
+      a.gateField = ctx.hasNav ? ctx.navOf(a).flowField((ctx.navOf(a).nearestArea(g.pos) || { id: -1 }).id) : null;
+    }
+    const d = ctx.moveField(a, a.gateField, a.gate.pos, dt, speed);
+    if (d > GATE_CAPTURE_RANGE) return;
+    a.gate.holders++;
+    if (a.gate.holders < a.gate.def.capCount) return;
+    a.gate.progress += dt;
+    if (a.gate.progress >= a.gate.def.capTime) ctx.captureGate(a.gate, t);
+  }
+};
