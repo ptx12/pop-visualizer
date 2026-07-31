@@ -111,6 +111,42 @@ eq('comma-separated outputs parse like escape-separated ones',
 eq('no entities yields empty collections',
   extractMapEntities([], models).bombPaths, []);
 
+const relayOnlyEnts = [
+  { classname: 'func_nav_avoid', targetname: 'avoid_a', model: '*2' },
+  { classname: 'func_nav_avoid', targetname: 'avoid_b', model: '*3', start_disabled: '1' },
+  { classname: 'logic_relay', targetname: 'route_a_relay', outputs: [
+    out('OnTrigger', 'avoid_a', 'Enable'), out('OnTrigger', 'avoid_b', 'Disable')
+  ] },
+  { classname: 'logic_relay', targetname: 'route_b_relay', outputs: [
+    out('OnTrigger', 'avoid_b', 'Enable'), out('OnTrigger', 'avoid_a', 'Disable')
+  ] },
+  { classname: 'logic_relay', targetname: 'clearall_relay', outputs: [
+    out('OnTrigger', 'avoid_a', 'Disable'), out('OnTrigger', 'avoid_b', 'Disable')
+  ] },
+  { classname: 'logic_case', targetname: 'subway_random', outputs: [
+    out('OnCase01', 'subway_car_relay', 'Trigger')
+  ] }
+];
+const relayOnly = extractMapEntities(relayOnlyEnts, models);
+eq('routes switched by complementary relays are found without a logic_case',
+  relayOnly.bombPaths.map(p => p.key), ['route_a', 'route_b']);
+eq('each relay route carries its own enable and disable set',
+  relayOnly.bombPaths.map(p => [p.enable, p.disable]),
+  [[['avoid_a'], ['avoid_b']], [['avoid_b'], ['avoid_a']]]);
+check('a reset relay that only disables is not a route',
+  !relayOnly.bombPaths.some(p => p.key === 'clearall'));
+check('a logic_case unrelated to nav volumes is not a route',
+  !relayOnly.bombPaths.some(p => p.key === 'subway_random'));
+
+const oneRelayEnts = [
+  { classname: 'func_nav_avoid', targetname: 'avoid_a', model: '*2' },
+  { classname: 'logic_relay', targetname: 'lone_relay', outputs: [
+    out('OnTrigger', 'avoid_a', 'Enable'), out('OnTrigger', 'avoid_a', 'Disable')
+  ] }
+];
+eq('a single toggling relay is not treated as a route set',
+  extractMapEntities(oneRelayEnts, models).bombPaths, []);
+
 const originedEnts = [
   { classname: 'func_capturezone', model: '*2', origin: '0 -2368 48', teamnum: '3' },
   { classname: 'func_capturezone', model: '*2', origin: '0 -2368 48', teamnum: '2' },

@@ -84,8 +84,31 @@ export function buildBombPaths(ents, navVolumes) {
       paths.push({ key, relay, chooser: (en.targetname || '').toLowerCase(), enable: t.enable, disable: t.disable });
     }
   }
+  if (!paths.length) for (const p of complementaryRoutes(ents, graph, volumeNames)) paths.push(p);
   for (const p of paths) p.rerollBy = rerollSources(graph, p.chooser);
   return paths;
+}
+
+function complementaryRoutes(ents, graph, volumeNames) {
+  const seen = new Set();
+  const cand = [];
+  for (const en of ents) {
+    const name = (en.targetname || '').toLowerCase();
+    if (!name || !en.outputs || seen.has(name)) continue;
+    if (en.classname !== 'logic_relay' && en.classname !== 'logic_case') continue;
+    seen.add(name);
+    const t = resolveToggles(graph, name, volumeNames);
+    if (!t.enable.length || !t.disable.length) continue;
+    cand.push({ name, ...t });
+  }
+  const routes = [];
+  for (const c of cand) {
+    if (!cand.some(o => o !== c && o.enable.some(n => c.disable.includes(n)))) continue;
+    const key = c.name.replace(/^bombpath_/, '').replace(/_relay$/, '') || c.name;
+    if (routes.some(p => p.key === key)) continue;
+    routes.push({ key, relay: c.name, chooser: '', enable: c.enable, disable: c.disable });
+  }
+  return routes.length > 1 ? routes : [];
 }
 
 const HINT_CLASSES = /^(bot_hint_sniper_spot|bot_hint_engineer_nest|bot_hint_sentrygun|bot_hint_teleporter_exit|func_tfbot_hint)$/;
