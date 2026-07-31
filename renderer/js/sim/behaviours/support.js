@@ -147,7 +147,7 @@ const GATE_CAPTURE_RANGE = 180;
 
 export const gatebotToGate = {
   id: 'gatebotToGate',
-  order: 22,
+  order: 45,
   selects(a, ctx) { return !!(a.isGatebot && ctx.nextGate && ctx.nextGate()); },
   enter(a, ctx) {
     const g = ctx.nextGate();

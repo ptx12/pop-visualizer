@@ -546,7 +546,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   let jitterSeq = 0;
   let capHit = false;
   let intendedActors = 0;
-  const simEntries = wave.wavespawns.concat((sim.missions || []).map(m => m.ws));
+  const simEntries = wave.wavespawns.concat((sim.missions || []).map(m => m.ws), (sim.probes || []).map(p => p.ws));
   for (const ws of simEntries) {
     if (ws.isLogic) continue;
     const r = sim.results.get(ws);

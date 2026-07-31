@@ -234,6 +234,26 @@ check('robots spawning after the capture use the forward spawn',
   !afterCap.length || afterCap.every(a => Math.abs(a.spawnPos[0] - AT(N - 2)[0]) < 1),
   afterCap.map(a => Math.round(a.spawnPos[0])).join(','));
 
+const gateRolePop = [
+  'WaveSchedule', '{', ' Wave', ' {',
+  '  WaveSpawn { Name a TotalCount 3 SpawnCount 3 MaxActive 3 Where spawnbot',
+  '   Squad {',
+  '    TFBot { Class Heavyweapons Tag bot_gatebot ' + IGNORE + ' }',
+  '    TFBot { Class Medic Tag bot_gatebot ' + IGNORE + ' }',
+  '    TFBot { Class Engineer Tag bot_gatebot ' + IGNORE + ' }',
+  '   } }',
+  ' }', '}'
+].join('\n');
+const gateRoleModel = buildModel(parse(gateRolePop), []);
+const gateRoleAI = simulateBotAI(
+  gateRoleModel.waves[0],
+  simulateWave(gateRoleModel.waves[0], { robotLimit: 99, teamDPS: 20 }),
+  gateMapData,
+  { deathModel: 'hatch', robotLimit: 99 });
+const roleOf = cls => (gateRoleAI.actors.find(a => a.bot && a.bot.cls === cls) || {}).state;
+check('a gatebot medic still heals rather than running the gate', roleOf('medic') !== 'gatebotToGate', String(roleOf('medic')));
+check('a gatebot engineer still builds rather than running the gate', roleOf('engineer') !== 'gatebotToGate', String(roleOf('engineer')));
+
 check('capturing a gate pauses bot spawning for the relay window',
   Math.abs(gateAI.spawnPauseUntil - (gateAI.gates[0].capturedAt + 22)) < 1e-6,
   'pauseUntil=' + gateAI.spawnPauseUntil + ' cap=' + gateAI.gates[0].capturedAt);

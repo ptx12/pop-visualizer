@@ -1637,3 +1637,5 @@ body.no-file .splitter { display: none; }
 .gate-cell.captured { border-color: #4f7fd0; }
 .gate-cell.captured .gate-icon { background: #4f8fe0; }
 .gate-note.paused { color: #e0b95a; }
+.opt-row.probe-giant { gap: 6px; cursor: pointer; }
+.opt-row.probe-giant input { margin: 0; }

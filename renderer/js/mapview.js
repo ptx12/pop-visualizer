@@ -1,5 +1,5 @@
 import { el, clear, showTip, hideTip, fmtTime, fmtNum, loader, botVisual, tankVisual } from './ui.js';
-import { simFor, emit, onChange, deathModel, navTogglesFor, bombPathRerollsFor, mapQueryName } from './state.js';
+import { simFor, emit, onChange, deathModel, navTogglesFor, bombPathRerollsFor, mapQueryName, probesFor, addProbe, clearProbes } from './state.js';
 import { CLASS_INFO, botDisplayName } from './popmodel.js';
 import { getTFPath, iconURL, iconNameFor, classIconName, tankIconName } from './icons.js';
 import { native } from './native.js';
@@ -1578,6 +1578,30 @@ export function renderMapView(container, file, waveIndex) {
       onclick: () => { saveKillPoints(mapData.map, []); emit('map'); }
     }));
     panel.append(killRow);
+
+    panel.append(el('div', { class: 'tool-sep' }));
+    const probeClasses = ['scout', 'soldier', 'pyro', 'demoman', 'heavyweapons', 'engineer', 'medic', 'sniper', 'spy'];
+    const probeSel = el('select', { class: 'inp sm', 'aria-label': 'Robot class' },
+      ...probeClasses.map(c => el('option', { value: c, text: (CLASS_INFO[c] || {}).label || c, selected: c === ps.probeClass })));
+    const giantBox = el('input', { type: 'checkbox', id: 'probe-giant', checked: !!ps.probeGiant });
+    giantBox.addEventListener('change', () => { ps.probeGiant = giantBox.checked; });
+    probeSel.addEventListener('change', () => { ps.probeClass = probeSel.value; });
+    const existing = probesFor(file, waveIndex);
+    const probeRow = el('div', { class: 'opt-row' },
+      el('span', { class: 'opt-label', text: 'Spawn' }), probeSel,
+      el('button', {
+        class: 'btn sm primary', text: 'Add',
+        title: 'Spawn one of these at the wave start and watch it play out. It is not written to the popfile.',
+        onclick: () => { addProbe(file, waveIndex, { cls: probeSel.value, giant: !!ps.probeGiant }); emit('map'); }
+      }));
+    if (existing.length) probeRow.append(el('button', {
+      class: 'btn sm', text: 'Clear ' + existing.length,
+      title: 'Remove every spawned test robot from this wave',
+      onclick: () => { clearProbes(file, waveIndex); emit('map'); }
+    }));
+    panel.append(probeRow);
+    panel.append(el('label', { class: 'opt-row probe-giant', for: 'probe-giant' }, giantBox, el('span', { class: 'opt-label', text: 'Giant' })));
+
 
     if (ps.tool === 'kill') {
       const radVal = el('span', { class: 'map-time', text: Math.round(ps.killRadius) + ' HU' });

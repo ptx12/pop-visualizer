@@ -26,7 +26,10 @@ export function simulateWave(wave, opts = {}) {
   const o = { ...DEFAULT_SIM_OPTS, ...opts };
   const robotLimit = Math.max(1, Math.round(o.robotLimit || 22));
   const missionSpawns = (o.missions || []).map(missionWaveSpawn);
-  const entries = missionSpawns.length ? wave.wavespawns.concat(missionSpawns) : wave.wavespawns;
+  const probeSpawns = (o.probes || []).filter(Boolean);
+  const entries = (missionSpawns.length || probeSpawns.length)
+    ? wave.wavespawns.concat(missionSpawns, probeSpawns)
+    : wave.wavespawns;
   const byName = new Map();
   for (const ws of wave.wavespawns) {
     if (!ws.name) continue;
@@ -326,7 +329,8 @@ export function simulateWave(wave, opts = {}) {
   for (const p of curve) if (p.bots > peak.bots) peak = p;
 
   const missions = missionSpawns.map(ws => ({ ws, mission: ws.mission, result: results.get(ws) }));
-  return { results, waveEnd, curve, peak, issues, opts: o, robotLimit, missions };
+  const probes = probeSpawns.map(ws => ({ ws, result: results.get(ws) }));
+  return { results, waveEnd, curve, peak, issues, opts: o, robotLimit, missions, probes };
 }
 
 function buildCurve(entries, results, waveEnd, step) {

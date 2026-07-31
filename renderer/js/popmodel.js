@@ -5,7 +5,7 @@ import { extractTemplateEntities } from './sim/pointtemplates.js';
 
 const GIANT_SCALE = 1.6;
 const TRAIT_API = { normalizeClass, parseInterruptBlock, parseActionBlock, getValue };
-import { findAll, findFirst, getValue, getNumber } from './kv.js';
+import { findAll, findFirst, getValue, getNumber, parse } from './kv.js';
 
 export const CLASS_INFO = {
   scout: { label: 'Scout', short: 'SCT', color: '#f2c94c', health: 125 },
@@ -367,6 +367,24 @@ export function parseMission(node, templates) {
     where: getValue(node, 'Where', ''),
     spawner
   };
+}
+
+export function probeWaveSpawn(spec, templates) {
+  const cls = String(spec.cls || 'scout');
+  const where = String(spec.where || 'spawnbot');
+  const lines = [
+    'WaveSpawn', '{', '	Name __probe', '	TotalCount 1', '	SpawnCount 1', '	MaxActive 1',
+    '	Where ' + where, '	TFBot', '	{', '		Class ' + cls
+  ];
+  if (spec.giant) lines.push('		Scale 1.75', '		Health 3000');
+  if (spec.tag) lines.push('		Tag ' + spec.tag);
+  lines.push('	}', '}');
+  const doc = parse(lines.join('\n') + '\n');
+  const node = (doc.children || []).find(c => c.type === 'block');
+  if (!node) return null;
+  const ws = parseWaveSpawn(node, templates || new Map(), null);
+  ws.isProbe = true;
+  return ws;
 }
 
 export function missionActiveOn(m, waveIndex) {

@@ -1,5 +1,5 @@
 import { parse, serialize } from './kv.js';
-import { buildModel, missionActiveOn } from './popmodel.js';
+import { buildModel, missionActiveOn, probeWaveSpawn } from './popmodel.js';
 import { simulateWave, DEFAULT_SIM_OPTS } from './sim.js';
 import { lintModel } from './lint.js';
 import { native } from './native.js';
@@ -290,6 +290,29 @@ export function measuredTankTime(file, ws) {
   return r.distance / Math.max(1, t.tank.speed);
 }
 
+const probeStore = new Map();
+
+function probeKey(file, waveIndex) {
+  return file.id + ':' + waveIndex;
+}
+
+export function probesFor(file, waveIndex) {
+  return probeStore.get(probeKey(file, waveIndex)) || [];
+}
+
+export function addProbe(file, waveIndex, spec) {
+  const key = probeKey(file, waveIndex);
+  const list = probeStore.get(key) || [];
+  list.push(spec);
+  probeStore.set(key, list);
+  invalidateSims(file);
+}
+
+export function clearProbes(file, waveIndex) {
+  probeStore.delete(probeKey(file, waveIndex));
+  invalidateSims(file);
+}
+
 export function simFor(file, wave) {
   if (!file.simCache) file.simCache = new Map();
   if (!file.simCache.has(wave)) {
@@ -298,6 +321,7 @@ export function simFor(file, wave) {
     file.simCache.set(wave, simulateWave(wave, {
       ...state.simOpts,
       missions: (file.model.missions || []).filter(m => m.bots && m.bots.length && missionActiveOn(m, wave.index)),
+      probes: probesFor(file, wave.index).map(spec => probeWaveSpawn(spec, file.model.templates)),
       robotLimit: file.model.robotLimit || 22,
       tankTimeFor: ws => override !== null ? override : measuredTankTime(file, ws),
       gateStateFor: ws => {

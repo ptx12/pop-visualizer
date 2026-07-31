@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from '../renderer/js/kv.js';
-import { buildModel, missionActiveOn } from '../renderer/js/popmodel.js';
+import { buildModel, missionActiveOn, probeWaveSpawn } from '../renderer/js/popmodel.js';
 import { simulateWave } from '../renderer/js/sim.js';
 
 let pass = 0, fail = 0;
@@ -115,6 +115,23 @@ const SCOUT = 'TFBot { Class Scout }';
   const without = simulateWave(mis(MI).waves[0], {});
   check('a wave with no missions passed is unchanged', without.missions.length === 0 && peakBots(without) <= without.robotLimit, String(without.missions.length));
   check('missions add robots the wave alone does not have', peakBots(sim) > peakBots(without), `${peakBots(sim)} vs ${peakBots(without)}`);
+}
+
+{
+  const model = buildModel(parse(`WaveSchedule\n{\n Wave\n {\n  WaveSpawn { Name a TotalCount 2 SpawnCount 1 MaxActive 2 WaitBetweenSpawns 3 ${SCOUT} }\n }\n}\n`), []);
+  const eng = probeWaveSpawn({ cls: 'engineer' }, model.templates);
+  check('a spawned test robot parses as a real wavespawn', eng && eng.bots.length === 1 && eng.bots[0].bot.cls === 'engineer', String(eng && eng.bots.length));
+  check('a spawned test robot is marked as a probe', !!eng.isProbe);
+  const giant = probeWaveSpawn({ cls: 'heavyweapons', giant: true }, model.templates);
+  check('a giant test robot gets giant scale and health', giant.bots[0].bot.isGiant && giant.bots[0].bot.health === 3000,
+    `${giant.bots[0].bot.isGiant} ${giant.bots[0].bot.health}`);
+  const withProbe = simulateWave(model.waves[0], { probes: [eng] });
+  const without = simulateWave(model.waves[0], {});
+  check('a spawned test robot reaches the simulation', withProbe.probes.length === 1 && withProbe.probes[0].result.events.length === 1,
+    String(withProbe.probes.length));
+  check('the wave without probes is untouched', without.probes.length === 0);
+  check('a spawned test robot counts against the robot limit', withProbe.probes[0].ws.bots.length === 1 && peakBots(withProbe) > peakBots(without),
+    `${peakBots(withProbe)} vs ${peakBots(without)}`);
 }
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'vanilla');
