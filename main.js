@@ -49,7 +49,7 @@ function createWindow() {
   });
   setWindow(win);
   win.loadFile(path.join(appRoot, 'renderer', 'index.html'));
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => { if (!process.argv.includes('--headless')) win.show(); });
 
   win.on('close', e => {
     if (closeConfirmed) return;

@@ -196,6 +196,10 @@ const LM_OVERBRIGHT = 2.0;
 const BOMB_MODEL = 'models/props_td/atom_bomb';
 const TANK_HULL_MODEL = 'models/bots/boss_bot/boss_tank';
 const TANK_BOMB_MODEL = 'models/bots/boss_bot/bomb_mechanism';
+const TANK_TRACKS = [
+  ['models/bots/boss_bot/tank_track_l', 'tank_track_l'],
+  ['models/bots/boss_bot/tank_track_r', 'tank_track_r']
+];
 const WORLD_VS = `attribute vec3 aPos;attribute vec2 aUV;attribute vec2 aLmUV;
 uniform mat4 uMVP;uniform vec2 uTexSize;uniform float uFogStart;uniform float uFogEnd;
 varying vec2 vUV;varying vec2 vLmUV;varying float vFog;
@@ -666,7 +670,7 @@ export function createMap3D(scene) {
         const texName = m.textures[texIdx] ?? m.textures[me.material];
         resolveMat(texName, m.cdtextures, tfPath).then(mat => { if (!disposed) { mats.set(me.material, mat); schedule(); } });
       }
-      Object.assign(rec, { loading: false, loaded: true, posBuf, nrmBuf, uvBuf, idxBuf, meshes: m.meshes, mats });
+      Object.assign(rec, { loading: false, loaded: true, posBuf, nrmBuf, uvBuf, idxBuf, meshes: m.meshes, mats, boneOrigins: m.boneOrigins || null });
       schedule();
     })();
   }
@@ -1248,7 +1252,11 @@ export function createMap3D(scene) {
       }
       if (a.kind === 'tank') {
         const hull = props.get(TANK_HULL_MODEL);
-        if (!hull) { ensureProp(TANK_HULL_MODEL); ensureProp(TANK_BOMB_MODEL); }
+        if (!hull) {
+          ensureProp(TANK_HULL_MODEL);
+          ensureProp(TANK_BOMB_MODEL);
+          for (const [m] of TANK_TRACKS) ensureProp(m);
+        }
         if (hull && hull.loaded) { tankActors.push(a); continue; }
       }
       pts.push(a);
@@ -1315,6 +1323,16 @@ export function createMap3D(scene) {
         gl.uniformMatrix4fv(mA.model, false, new Float32Array(M));
         drawStatic(hull);
         if (mech && mech.loaded) drawStatic(mech);
+        const bo = hull.boneOrigins;
+        if (bo) for (const [model, bone] of TANK_TRACKS) {
+          const pool = props.get(model);
+          const o = bo[bone];
+          if (!pool || !pool.loaded || !o) continue;
+          const TM = mul(M, mTranslate(o[0], o[1], o[2]));
+          gl.uniformMatrix4fv(mA.mvp, false, new Float32Array(mul(mvp, TM)));
+          gl.uniformMatrix4fv(mA.model, false, new Float32Array(TM));
+          drawStatic(pool);
+        }
       }
     }
 

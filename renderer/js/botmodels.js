@@ -178,9 +178,20 @@ export async function loadPropModel(base, bsp = null) {
     const posed = skinPose(pos, nrm, f32(payload.boneWeights), u8(payload.boneIds), skin);
     pos = posed.pos; nrm = posed.nrm;
   }
+  let boneOrigins = null;
+  if (bones && bones.length) {
+    const w = [];
+    boneOrigins = {};
+    for (let b = 0; b < bones.length; b++) {
+      const local = quatMat(bones[b].quat, bones[b].pos);
+      const m = bones[b].parent >= 0 && w[bones[b].parent] ? matMul(w[bones[b].parent], local) : local;
+      w.push(m);
+      boneOrigins[String(bones[b].name || '').toLowerCase()] = [m[12], m[13], m[14]];
+    }
+  }
   return {
     positions: pos, normals: nrm, uv: f32(payload.uvs), idx: u32(payload.indices),
-    meshes: payload.meshes || [],
+    meshes: payload.meshes || [], boneOrigins,
     textures: payload.textures || [], cdtextures: payload.cdtextures || [], skins: payload.skins || []
   };
 }
