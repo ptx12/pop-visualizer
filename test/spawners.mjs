@@ -262,6 +262,16 @@ check('no robot enters the map during the spawn pause',
   !gateAI.actors.some(a => a.spawnT > gateAI.gates[0].capturedAt && a.spawnT < gateAI.spawnPauseUntil - 1e-6),
   gateAI.actors.map(a => a.spawnT.toFixed(1)).join(','));
 
+const tankKeys = body => buildModel(parse(wrap(body)), []).waves[0].wavespawns[0].bots.find(b => b.tank).tank;
+const customTank = tankKeys('TotalCount 1 SpawnCount 1 MaxActive 1 Tank { Health 5000 Speed 75 Model "models/bots/boss_bot/boss_blimp.mdl" Skin 1 DisableSmokestack 1 Scale 1.5 }');
+check('a Tank Model override is parsed', customTank.model === 'models/bots/boss_bot/boss_blimp.mdl', String(customTank.model));
+check('a Tank Skin is parsed', customTank.skin === 1, String(customTank.skin));
+check('DisableSmokestack is parsed', customTank.disableSmokestack === true, String(customTank.disableSmokestack));
+check('a Tank Scale is parsed', customTank.scale === 1.5, String(customTank.scale));
+const stockTank = tankKeys('TotalCount 1 SpawnCount 1 MaxActive 1 Tank { Health 5000 Speed 75 }');
+check('a stock tank keeps its defaults', stockTank.model === null && stockTank.skin === 0 && stockTank.disableSmokestack === false,
+  JSON.stringify([stockTank.model, stockTank.skin, stockTank.disableSmokestack]));
+
 const sniperMap = { ...mapData, hints: [{ kind: 'bot_hint_sniper_spot', origin: AT(N - 3) }] };
 const sniperAI = (() => {
   const model = buildModel(parse(wrap('TotalCount 1 SpawnCount 1 MaxActive 1 TFBot { Class Sniper ' + IGNORE + ' }')), []);

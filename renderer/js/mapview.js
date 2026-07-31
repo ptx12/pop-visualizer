@@ -488,6 +488,10 @@ function buildBombHUD(ai) {
   return hud;
 }
 
+function cleanTankModel(m) {
+  return String(m || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\.mdl$/i, '').toLowerCase().trim() || null;
+}
+
 function gateLetter(g, i) {
   const m = String(g.label || '').match(/\b([A-Z])\s*$/);
   return m ? m[1] : String.fromCharCode(65 + i);
@@ -1776,14 +1780,17 @@ export function renderMapView(container, file, waveIndex) {
         activity = botActivity(a.bot);
         attachments = [...weps, ...cos];
         loadoutKey = modelBase + '|' + activity + '|' + attachments.join('|');
-      } else if (a.kind === 'tank' && a.tank && Number.isFinite(a.tank.scale) && a.tank.scale > 0) {
-        scale = a.tank.scale;
+      } else if (a.kind === 'tank' && a.tank) {
+        if (Number.isFinite(a.tank.scale) && a.tank.scale > 0) scale = a.tank.scale;
+        modelBase = a.tank.model ? cleanTankModel(a.tank.model) : null;
       }
       out.push({
         x: p[0], y: p[1], z: actorZAt(a, t), size: cs.s, r: cs.c[0], g: cs.c[1], b: cs.c[2],
         kind: a.kind, cls: a.kind === 'bot' ? a.bot.cls : null,
         crit: a.kind === 'bot' && !!a.bot.alwaysCrit,
         ubered: !!(a.uberUntil > t),
+        tankSkin: a.kind === 'tank' && a.tank ? (a.tank.skin || 0) : 0,
+        tankSmoke: !(a.kind === 'tank' && a.tank && a.tank.disableSmokestack),
         probe: !!(a.ws && a.ws.isProbe),
         viaTeleporter: !!a.viaTeleporter,
         modelBase, attachments, loadoutKey, activity, moving, carrying: false, speed, dist: actorDistAt(a, t),

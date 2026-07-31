@@ -1257,11 +1257,14 @@ export function createMap3D(scene) {
         if (pool && pool.loading) { pts.push(a); continue; }
       }
       if (a.kind === 'tank') {
-        const hull = props.get(TANK_HULL_MODEL);
+        const base = a.modelBase || TANK_HULL_MODEL;
+        const hull = props.get(base);
         if (!hull) {
-          ensureProp(TANK_HULL_MODEL);
-          ensureProp(TANK_BOMB_MODEL);
-          for (const [m] of TANK_TRACKS) ensureProp(m);
+          ensureProp(base);
+          if (!a.modelBase) {
+            ensureProp(TANK_BOMB_MODEL);
+            for (const [m] of TANK_TRACKS) ensureProp(m);
+          }
         }
         if (hull && hull.loaded) { tankActors.push(a); continue; }
       }
@@ -1313,7 +1316,6 @@ export function createMap3D(scene) {
     }
 
     if (tankActors.length) {
-      const hull = props.get(TANK_HULL_MODEL);
       const mech = props.get(TANK_BOMB_MODEL);
       gl.useProgram(modelProg);
       gl.uniform1f(mA.mExposure, worldExposure);
@@ -1330,7 +1332,10 @@ export function createMap3D(scene) {
         const M = mul(mul(mul(mTranslate(a.x, gy, -a.y), mRotY(a.heading || 0)), ZUP2YUP), mScale(a.scale || 1));
         gl.uniformMatrix4fv(mA.mvp, false, new Float32Array(mul(mvp, M)));
         gl.uniformMatrix4fv(mA.model, false, new Float32Array(M));
+        const hull = props.get(a.modelBase || TANK_HULL_MODEL);
+        if (!hull || !hull.loaded) continue;
         drawStatic(hull);
+        if (a.modelBase) continue;
         if (mech && mech.loaded) drawStatic(mech);
         const bo = hull.boneOrigins;
         if (bo) for (const [model, bone] of TANK_TRACKS) {
@@ -1412,7 +1417,8 @@ export function createMap3D(scene) {
       const live = [];
       for (const a of actors) {
         if (a.kind === 'tank') {
-          const hull = props.get(TANK_HULL_MODEL);
+          if (a.tankSmoke === false) continue;
+          const hull = props.get(a.modelBase || TANK_HULL_MODEL);
           const at = hull && hull.loaded && hull.attachOrigins ? hull.attachOrigins[TANK_SMOKE_ATTACH] : null;
           if (!at) continue;
           const gy0 = Number.isFinite(a.z) ? a.z : sampleHeight(a.x, a.y);

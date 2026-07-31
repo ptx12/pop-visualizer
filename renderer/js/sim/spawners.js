@@ -26,6 +26,9 @@ spawners.registerAll([
         icon: api.getValue(node, 'ClassIcon', null),
         startNode: api.getValue(node, 'StartingPathTrackNode', null),
         immobile: String(api.getValue(node, 'Immobile', '0')) !== '0',
+        model: api.getValue(node, 'Model', null),
+        skin: api.getNumber(node, 'Skin', 0),
+        disableSmokestack: String(api.getValue(node, 'DisableSmokestack', '0')) !== '0',
         scale: api.getNumber(node, 'Scale', 1)
       };
     }
