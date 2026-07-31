@@ -196,11 +196,14 @@ check('a squad with no medic never ubers', !plainAI.actors.some(a => a.uberUntil
 const runSlow = body => {
   const model = buildModel(parse(wrap(body)), []);
   const wave = model.waves[0];
-  return simulateBotAI(wave, simulateWave(wave, { robotLimit: 99, teamDPS: 20 }), mapData, { deathModel: 'hatch', robotLimit: 99 });
+  return simulateBotAI(wave, simulateWave(wave, { robotLimit: 99, teamDPS: 20 }), mapData, { deathModel: 'hatch', robotLimit: 99, teleporterBuildTime: 9.97 });
 };
 const teleAI = runSlow('TotalCount 1 SpawnCount 1 MaxActive 1 TFBot { Class Engineer TeleportWhere spawnbot ' + IGNORE + ' }');
 check('an engineer with TeleportWhere builds a teleporter', (teleAI.teleporters || []).length === 1, String((teleAI.teleporters || []).length));
 check('a teleporter is tagged with the spawn it serves', (teleAI.teleporters[0] || { where: new Set() }).where.has('spawnbot'));
+check('a teleporter is ready after the build time it was given, not a baked-in one',
+  teleAI.teleporters.length === 1 && Math.abs(teleAI.teleporters[0].readyAt - (teleAI.teleporters[0].by.builtAtT ?? 0) - 9.97) < 1.01,
+  String(teleAI.teleporters[0] && teleAI.teleporters[0].readyAt));
 const noTele = runSlow('TotalCount 1 SpawnCount 1 MaxActive 1 TFBot { Class Engineer ' + IGNORE + ' }');
 check('an engineer without TeleportWhere builds none', (noTele.teleporters || []).length === 0);
 

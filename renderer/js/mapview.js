@@ -7,7 +7,7 @@ import { createBotSim, actorPosAt, actorZAt, actorDistAt, actorYawAt, botMaxSpee
 import { setStatus, clearStatus, clearStatusPrefix } from './statusbar.js';
 import { startTask } from './tasks.js';
 import { createMap3D } from './map3d.js';
-import { botModelBase, botWeaponModels, botCosmeticModels, resolveBotItems, resolveWeaponRoles, botWeaponClass, botActivity } from './botmodels.js';
+import { botModelBase, botWeaponModels, botCosmeticModels, resolveBotItems, resolveWeaponRoles, botWeaponClass, botActivity , animDurationSync, resolveAnimDuration } from './botmodels.js';
 import { initNavWasm } from './navwasm.js';
 import { primaryColor } from './timeline.js';
 import { simOptsPanel } from './inspector.js';
@@ -487,6 +487,8 @@ function buildBombHUD(ai) {
   hud.update = update;
   return hud;
 }
+
+const TELEPORTER_MODEL = 'models/buildables/teleporter';
 
 function cleanTankModel(m) {
   return String(m || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\.mdl$/i, '').toLowerCase().trim() || null;
@@ -1323,7 +1325,9 @@ export function renderMapView(container, file, waveIndex) {
   const perWavePath = bombPathRerollsFor(file, mapData);
   const bombPath = bombPathFor(mapData.map, pathGroups, waveIndex, perWavePath);
   const toggles = navTogglesFor(file, wave);
-  const aiKey = [waveIndex, model, dps, zMode, paintV, objIdx, bombPath, JSON.stringify(killPts),
+  const teleBuild = animDurationSync(TELEPORTER_MODEL, 'build');
+  if (teleBuild === null) resolveAnimDuration(TELEPORTER_MODEL, 'build').then(v => { if (v) emit('map'); });
+  const aiKey = [waveIndex, model, dps, zMode, paintV, objIdx, bombPath, teleBuild || 0, JSON.stringify(killPts),
     toggles.enabled.join(','), toggles.disabled.join(',')].join('|');
   const aiOpts = {
     teamDPS: dps, deathModel: model, zonesMode: zMode, killPoints: killPts, objectiveIdx: objIdx, bombPath,
@@ -1333,7 +1337,8 @@ export function renderMapView(container, file, waveIndex) {
     botPushaway: file.model.botPushaway,
     flagCarrierPenalty: file.model.flagCarrierPenalty,
     maxSpeedLimit: file.model.maxSpeedLimit,
-    templateEntities: file.model.templateEntities
+    templateEntities: file.model.templateEntities,
+    teleporterBuildTime: teleBuild || 0
   };
   if (zMode === 'custom') aiOpts.zoneWeights = paint;
   const run = aiRunFor(file, wave, sim, mapData, aiKey, aiOpts);

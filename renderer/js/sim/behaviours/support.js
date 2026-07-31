@@ -94,8 +94,6 @@ export const engineerToNest = {
   }
 };
 
-const TELEPORTER_BUILD_TIME = 10;
-
 export const engineerBuild = {
   id: 'engineerBuild',
   step(a, ctx, t) {
@@ -111,7 +109,7 @@ export const engineerBuild = {
     ctx.teleporters.push({
       pos: [pos[0], pos[1], Number.isFinite(pos[2]) ? pos[2] : (a.z || 0)],
       where: new Set(where.map(w => String(w).toLowerCase())),
-      readyAt: t + TELEPORTER_BUILD_TIME,
+      readyAt: t + (ctx.teleporterBuildTime || 0),
       by: a
     });
   }

@@ -991,7 +991,8 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     maxSpeed: Number.isFinite(opts.maxSpeedLimit) ? opts.maxSpeedLimit : TF_MAX_SPEED,
     actors, live, bomb, bombSamples, squadLeaders,
     nav, hasNav, navOf, graphFor, objective, objArea, chains,
-    nests, teleExits, sniperSpots, teleporters, gates, gateOpen, nextGate, captureGate, redSpawns, spawnsByName, namedPoints,
+    nests, teleExits, sniperSpots, teleporters, gates,
+    teleporterBuildTime: Number.isFinite(opts.teleporterBuildTime) ? opts.teleporterBuildTime : 0, gateOpen, nextGate, captureGate, redSpawns, spawnsByName, namedPoints,
     clsOf, eligible, zoneW, sameArea, killActor, nudge, areaOf, holds, placeActor,
     hatchFieldOf, bombFieldOf, resolvePoint,
     moveAlong, moveField, takeBomb, dropBomb, upgradeOverTime

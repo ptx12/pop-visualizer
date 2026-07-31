@@ -425,3 +425,27 @@ export async function loadAttachment(itemBase, pose) {
     numframes: nf
   };
 }
+
+const animDurations = new Map();
+
+export function animDurationSync(base, anim) {
+  const k = base + '|' + anim;
+  return animDurations.has(k) ? animDurations.get(k) : null;
+}
+
+export async function resolveAnimDuration(base, anim) {
+  const k = base + '|' + anim;
+  if (animDurations.has(k)) return animDurations.get(k);
+  animDurations.set(k, 0);
+  const tfPath = await getTFPath();
+  let seconds = 0;
+  try {
+    const payload = await window.popnative.modelLoad({ kind: 'vpk', base, tfPath, animMatch: [anim] });
+    for (const a of (payload && payload.anims) || []) {
+      if (!String(a.name).toLowerCase().includes(anim) || a.numframes < 2) continue;
+      seconds = Math.max(seconds, (a.numframes - 1) / (a.fps || 30));
+    }
+  } catch {}
+  animDurations.set(k, seconds);
+  return seconds;
+}
