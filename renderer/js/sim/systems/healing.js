@@ -4,6 +4,9 @@ const MAX_HEAL_RANGE = 600;
 const HEAL_RATE = 24;
 const HEAL_RAMP = 3;
 const RAMP_DELAY = 10;
+const UBER_DURATION = 8;
+const UBER_BUILD_TIME = 40;
+const UBER_TRIGGER_HP = 0.5;
 
 export const RANGES = { STOP_FOLLOW_RANGE, START_FOLLOW_RANGE, MAX_HEAL_RANGE };
 
@@ -31,6 +34,7 @@ export const healing = {
     a.patient = null;
     a.following = false;
     a.healed = 0;
+    a.uber = a.bot && a.bot.knownFlags && a.bot.knownFlags.has('spawnwithfullcharge') ? 1 : 0;
   },
   step(ctx, t, dt) {
     for (const a of ctx.live) {
@@ -46,6 +50,12 @@ export const healing = {
       const rate = HEAL_RATE * ramp * (p.bot.healRateMult ?? 1);
       p.hp = Math.min(max, p.hp + rate * dt);
       a.healed += rate * dt;
+      a.uber = Math.min(1, (a.uber || 0) + dt / UBER_BUILD_TIME);
+      if (a.uber >= 1 && p.hp / max <= UBER_TRIGGER_HP && !(p.uberUntil > t)) {
+        p.uberUntil = t + UBER_DURATION;
+        a.uberUntil = t + UBER_DURATION;
+        a.uber = 0;
+      }
     }
   }
 };

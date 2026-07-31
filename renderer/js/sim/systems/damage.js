@@ -12,6 +12,7 @@ export const damageZones = {
       if (a.kind !== 'bot' && a.kind !== 'tank') continue;
       const w = ctx.zoneW(a) * (a.kind === 'tank' ? 1.5 : 1);
       if (w <= 0) continue;
+      if (a.uberUntil > t) continue;
       parts.push([a, w]);
       W += w;
     }

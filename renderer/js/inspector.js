@@ -247,7 +247,7 @@ export function simOptsPanel(file) {
   wrap.append(field('Death model', selectInput(model, [
     { value: 'hatch', label: 'Despawn at hatch' },
     { value: 'damage', label: 'Damage zones' },
-    { value: 'lifetime', label: 'Fixed lifetimes' }
+    { value: 'lifetime', label: 'Follow the wave schedule' }
   ], v => {
     setDeathModel(v);
     invalidateSims();

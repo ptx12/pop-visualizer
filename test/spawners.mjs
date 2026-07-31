@@ -180,6 +180,17 @@ check('FlagCarrierMovementPenalty defaults to 0.5', runRoot('').model.flagCarrie
 check('MaxSpeedLimit overrides the speed cap', runRoot('MaxSpeedLimit 800').model.maxSpeedLimit === 800);
 check('MaxSpeedLimit defaults to 520', runRoot('').model.maxSpeedLimit === 520);
 
+
+const runDamage = body => {
+  const model = buildModel(parse(wrap(body)), []);
+  const wave = model.waves[0];
+  return simulateBotAI(wave, simulateWave(wave, { robotLimit: 99 }), mapData, { deathModel: 'damage', robotLimit: 99, teamDPS: 400 });
+};
+const uberAI = runDamage('TotalCount 2 SpawnCount 2 MaxActive 2 Squad { TFBot { Class Heavyweapons } TFBot { Class Medic Attributes SpawnWithFullCharge } }');
+check('a medic with a full charge ubers its patient when it is hurt', uberAI.actors.some(a => a.uberUntil > 0));
+const plainAI = runDamage('TotalCount 2 SpawnCount 2 MaxActive 2 Squad { TFBot { Class Heavyweapons } TFBot { Class Scout } }');
+check('a squad with no medic never ubers', !plainAI.actors.some(a => a.uberUntil > 0));
+
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');
 if (fail) process.exit(1);
