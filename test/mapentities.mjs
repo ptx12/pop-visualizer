@@ -139,6 +139,8 @@ check('a logic_case unrelated to nav volumes is not a route',
   !relayOnly.bombPaths.some(p => p.key === 'subway_random'));
 
 const gateEnts = [
+  { classname: 'info_player_teamspawn', targetname: 'spawnbot_main1', origin: '1 2 3', teamnum: '3' },
+  { classname: 'info_player_teamspawn', targetname: 'spawnbot_main2', origin: '4 5 6', teamnum: '3' },
   { classname: 'team_control_point', targetname: 'gate1_point_a', origin: '10 20 30', point_index: '1', point_printname: 'Loading Gate A', team_previouspoint_3_0: 'gate1_point_a' },
   { classname: 'team_control_point', targetname: 'gate2_point_b', origin: '40 50 60', point_index: '3', point_printname: 'Loading Gate B', team_previouspoint_3_0: 'gate1_point_a' },
   { classname: 'logic_relay', targetname: 'gate1_relay', outputs: [out('OnTrigger', 'spawnbot_main1', 'Enable'), out('OnTrigger', 'pop_interface', 'PauseBotSpawning'), { key: 'OnTrigger', value: ['pop_interface', 'UnpauseBotSpawning', '', '22'].join(ESC) }] },
@@ -157,6 +159,7 @@ eq('the relay fired on capture is recorded', gr.gates.map(g => g.relay), ['gate1
 check('a control point that is its own previous point has no prerequisite', gr.gates[0].previous === null, String(gr.gates[0].previous));
 eq('a later gate keeps its prerequisite', gr.gates[1].previous, 'gate1_point_a');
 check('a trigger with no matching capture point is ignored', !gr.gates.some(g => g.trigger === 'orphan_trigger'));
+check('a relay output naming a non-spawn entity is not a spawn move', gr.gates[1].effects.spawnsOff.length === 0, JSON.stringify(gr.gates[1].effects.spawnsOff));
 check('gate capture effects record the spawn pause window', gr.gates[0].effects.pauseFor === 22, String(gr.gates[0].effects.pauseFor));
 eq('gate capture effects list the spawn points that switch on', gr.gates[0].effects.spawnsOn.map(x => x.name), ['spawnbot_main1']);
 eq('a gate with no relay has no effects', gr.gates.filter(g => !g.relay).map(g => g.effects), []);

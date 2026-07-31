@@ -118,14 +118,14 @@ function prevPoint(cp) {
   return p && p !== self ? p : null;
 }
 
-function gateEffects(graph, relay) {
+function gateEffects(graph, relay, spawnNames) {
   const outs = graph.get(relay) || [];
   let pauseAt = null, resumeAt = null;
   const spawnsOn = [], spawnsOff = [];
   for (const o of outs) {
     if (o.input === 'pausebotspawning') pauseAt = pauseAt === null ? o.delay : Math.min(pauseAt, o.delay);
     if (o.input === 'unpausebotspawning') resumeAt = resumeAt === null ? o.delay : Math.max(resumeAt, o.delay);
-    if (!/^spawnbot/i.test(o.target)) continue;
+    if (!spawnNames.has(o.target)) continue;
     if (o.input === 'enable' && !spawnsOn.some(x => x.name === o.target)) spawnsOn.push({ name: o.target, delay: o.delay });
     if (o.input === 'disable' && !spawnsOff.some(x => x.name === o.target)) spawnsOff.push({ name: o.target, delay: o.delay });
   }
@@ -135,8 +135,9 @@ function gateEffects(graph, relay) {
   };
 }
 
-export function buildGates(ents) {
+export function buildGates(ents, spawns) {
   const graph = entityOutputs(ents);
+  const spawnNames = new Set((spawns || []).map(s => String(s.name || '').toLowerCase()).filter(Boolean));
   const points = new Map();
   const relays = new Set();
   for (const e of ents) {
@@ -169,7 +170,7 @@ export function buildGates(ents) {
       startsLocked: String(e.startdisabled) === '1',
       previous: prevPoint(cp),
       relay,
-      effects: relay ? gateEffects(graph, relay) : null
+      effects: relay ? gateEffects(graph, relay, spawnNames) : null
     });
   }
   out.sort((a, b) => a.index - b.index);
@@ -279,5 +280,5 @@ export function extractMapEntities(ents, models) {
     }
   }
 
-  return { spawns, flags, capzones, tracks, redSpawns, hints, navVolumes, spawnRooms, pathProps, bombPaths: buildBombPaths(ents, navVolumes), gates: buildGates(ents) };
+  return { spawns, flags, capzones, tracks, redSpawns, hints, navVolumes, spawnRooms, pathProps, bombPaths: buildBombPaths(ents, navVolumes), gates: buildGates(ents, spawns) };
 }
