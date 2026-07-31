@@ -496,7 +496,8 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   let jitterSeq = 0;
   let capHit = false;
   let intendedActors = 0;
-  for (const ws of wave.wavespawns) {
+  const simEntries = wave.wavespawns.concat((sim.missions || []).map(m => m.ws));
+  for (const ws of simEntries) {
     if (ws.isLogic) continue;
     const r = sim.results.get(ws);
     if (!r || !r.events.length) continue;
@@ -553,6 +554,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
         const spawn = pendingSpawn;
         actors.push({
           kind: 'bot', ws, bot: entry.bot, spawnT: ev.t, simDieT: ev.dieT != null ? ev.dieT : ev.t + r.life,
+          mission: ws.mission || null,
           spawnPos: spawn.origin.slice(0, 3),
           squadId: pendingSquadId, squadRole: pendingSquadId ? (pendingIdx === 0 ? 'leader' : 'member') : null,
           memberIdx: pendingIdx
