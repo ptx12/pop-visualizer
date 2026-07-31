@@ -2,12 +2,23 @@ import { PARK_WAIT } from './gating.js';
 import { missionWaveSpawn } from './popmodel.js';
 
 export const DEFAULT_SIM_OPTS = {
-  botLifetime: 12,
-  giantLifetime: 35,
-  tankLifetime: 80,
+  teamDPS: 1000,
   robotLimit: 22,
   step: 0.5
 };
+
+const MIN_HEALTH = 1;
+
+export function wavespawnHealth(ws) {
+  if (!ws.bots || !ws.bots.length) return 0;
+  let weighted = 0, mults = 0;
+  for (const e of ws.bots) {
+    const hp = e.bot ? e.bot.health : e.tank ? e.tank.health : (e.other && e.other.health) || 0;
+    weighted += hp * e.mult;
+    mults += e.mult;
+  }
+  return mults ? Math.max(MIN_HEALTH, weighted / mults) : 0;
+}
 
 const countsTowardLimit = ws => ws.bots.length > 0 && !ws.isTank;
 
@@ -25,17 +36,12 @@ export function simulateWave(wave, opts = {}) {
   }
   const issues = [];
 
-  function lifetimeFor(ws) {
-    if (ws.isTank) {
-      if (o.tankTimeFor) {
-        const measured = o.tankTimeFor(ws);
-        if (measured && Number.isFinite(measured)) return measured;
-      }
-      return o.tankLifetime;
-    }
-    if (ws.hasBoss) return Math.max(o.giantLifetime, o.tankLifetime * 0.75);
-    if (ws.hasGiant) return o.giantLifetime;
-    return o.botLifetime;
+  const teamDPS = Math.max(1, Number.isFinite(o.teamDPS) ? o.teamDPS : DEFAULT_SIM_OPTS.teamDPS);
+
+  function reachesGoalAt(ws) {
+    if (!ws.isTank || !o.tankTimeFor) return Infinity;
+    const measured = o.tankTimeFor(ws);
+    return measured && Number.isFinite(measured) ? measured : Infinity;
   }
 
   const gateStateFor = o.gateStateFor || (() => null);
@@ -50,7 +56,9 @@ export function simulateWave(wave, opts = {}) {
       gated: !!(gs && gs.gated) || parkedSelf,
       parked: !!(gs && gs.parked) || parkedSelf,
       triggerAt: gs && Number.isFinite(gs.triggerAt) ? Math.max(0, gs.triggerAt) : null,
-      life: lifetimeFor(ws),
+      hp: wavespawnHealth(ws),
+      goalAt: reachesGoalAt(ws),
+      cohorts: [],
       batch: Math.max(1, ws.squadSize > 1 ? Math.ceil(ws.spawnCount / ws.squadSize) * ws.squadSize : ws.spawnCount),
       total: hasBots ? (unlimited ? Infinity : Math.max(0, ws.totalCount)) : 0,
       countsGlobal: countsTowardLimit(ws),
@@ -146,59 +154,124 @@ export function simulateWave(wave, opts = {}) {
 
   let globalActive = 0;
   let t = 0;
-  let dynamicEnd = 10;
   let guard = 0;
   resolveGates();
 
-  while (guard++ < 200000) {
-    for (const s of st) {
-      while (s.deaths.length && s.deaths[0][0] <= t) {
-        const d = s.deaths.shift();
-        s.active -= d[1];
-        if (s.countsGlobal) globalActive -= d[1];
-        s.lastDeath = d[0];
+  const waveStillRunning = () => st.some(s => !s.unlimited && !s.ws.support && s.ws.bots.length && !s.ws.isLogic && (s.spawned < s.total || s.cohorts.length));
+
+  const liveCount = () => {
+    let n = 0;
+    for (const s of st) for (const c of s.cohorts) n += c.n;
+    return n;
+  };
+
+  function advanceDamage(from, to) {
+    let cur = from;
+    let spins = 0;
+    while (cur < to - 1e-9 && spins++ < 500) {
+      const alive = liveCount();
+      if (!alive) return;
+      const share = teamDPS / alive;
+      let step = to - cur;
+      for (const s of st) {
+        for (const c of s.cohorts) {
+          const byHp = c.hp / share;
+          const byGoal = Number.isFinite(s.goalAt) ? (c.born + s.goalAt) - cur : Infinity;
+          step = Math.min(step, Math.max(0, Math.min(byHp, byGoal)));
+        }
+      }
+      if (!(step > 1e-9)) step = Math.min(to - cur, 1e-6);
+      cur += step;
+      for (const s of st) {
+        const keep = [];
+        for (const c of s.cohorts) {
+          c.hp -= share * step;
+          const reachedGoal = Number.isFinite(s.goalAt) && cur >= c.born + s.goalAt - 1e-9;
+          if (c.hp <= 1e-9 || reachedGoal) {
+            c.ev.dieT = cur;
+            s.active -= c.n;
+            if (s.countsGlobal) globalActive -= c.n;
+            s.lastDeath = cur;
+          } else keep.push(c);
+        }
+        s.cohorts = keep;
       }
     }
+  }
+
+  function nextDeathAfter(now) {
+    const alive = liveCount();
+    if (!alive) return Infinity;
+    const share = teamDPS / alive;
+    let best = Infinity;
+    for (const s of st) {
+      for (const c of s.cohorts) {
+        const byHp = now + c.hp / share;
+        const byGoal = Number.isFinite(s.goalAt) ? c.born + s.goalAt : Infinity;
+        best = Math.min(best, byHp, byGoal);
+      }
+    }
+    return best;
+  }
+
+  while (guard++ < 200000) {
     let progress = true;
     while (progress) {
       progress = resolveGates();
       for (const s of st) {
         if (s.startTime === null || s.stuck || s.spawned >= s.total) continue;
         if (t < s.nextAllowed) continue;
-        if (s.unlimited && t > dynamicEnd) continue;
+        if (s.unlimited && !waveStillRunning()) continue;
         if (s.batch > s.ws.maxActive || (s.countsGlobal && s.batch > robotLimit)) { s.stuck = true; continue; }
         if (s.active + s.batch > s.ws.maxActive) { s.throttled = true; continue; }
         if (s.countsGlobal && globalActive + s.batch > robotLimit) { s.throttled = true; continue; }
         const count = Math.min(s.batch, s.total - s.spawned);
-        s.events.push({ t, count });
-        s.deaths.push([t + s.life, count]);
-        s.deaths.sort((a, b) => a[0] - b[0]);
+        const ev = { t, count, dieT: null };
+        s.events.push(ev);
+        s.cohorts.push({ n: count, hp: s.hp, born: t, ev });
         s.active += count;
         if (s.countsGlobal) globalActive += count;
         s.spawned += count;
+        s.pendingAfterDeath = s.ws.waitBetweenSpawnsAfterDeath > 0 ? ev : null;
         s.nextAllowed = s.ws.waitBetweenSpawnsAfterDeath > 0
-          ? t + s.life + s.ws.waitBetweenSpawnsAfterDeath
+          ? Infinity
           : t + Math.max(0.05, s.ws.waitBetweenSpawns);
         if (s.spawned >= s.total) s.finishedAt = t;
-        if (!s.unlimited && !s.ws.support && s.ws.bots.length && !s.ws.isLogic) dynamicEnd = Math.max(dynamicEnd, t + s.life);
         if (s.events.length > 4000) s.stuck = true;
         progress = true;
       }
     }
-    let next = Infinity;
     for (const s of st) {
-      if (s.deaths.length) next = Math.min(next, s.deaths[0][0]);
-      if (s.startTime !== null && !s.stuck && s.spawned < s.total) {
-        const cand = Math.max(s.nextAllowed, s.startTime);
-        if (cand > t && !(s.unlimited && cand > dynamicEnd)) next = Math.min(next, cand);
+      if (s.pendingAfterDeath && s.pendingAfterDeath.dieT !== null) {
+        s.nextAllowed = s.pendingAfterDeath.dieT + s.ws.waitBetweenSpawnsAfterDeath;
+        s.pendingAfterDeath = null;
       }
     }
-    if (!Number.isFinite(next) || next <= t) break;
+    let next = nextDeathAfter(t);
+    for (const s of st) {
+      if (s.startTime !== null && !s.stuck && s.spawned < s.total) {
+        const cand = Math.max(s.nextAllowed, s.startTime);
+        if (cand > t) next = Math.min(next, cand);
+      }
+    }
+    if (!Number.isFinite(next) || next <= t) {
+      if (liveCount()) { advanceDamage(t, nextDeathAfter(t)); t = nextDeathAfter(t) > t ? t : t; }
+      break;
+    }
+    advanceDamage(t, next);
     t = next;
+  }
+  while (liveCount() && guard++ < 400000) {
+    const nd = nextDeathAfter(t);
+    if (!Number.isFinite(nd) || nd <= t) break;
+    advanceDamage(t, nd);
+    t = nd;
   }
 
   let waveEnd = 0;
-  const deathEndOf = s => s.events.length ? s.events[s.events.length - 1].t + s.life : (s.startTime ?? 0);
+  const dieOf = ev => (ev.dieT !== null ? ev.dieT : ev.t);
+  const meanLife = s => s.events.length ? s.events.reduce((a, e) => a + (dieOf(e) - e.t), 0) / s.events.length : 0;
+  const deathEndOf = s => s.events.length ? Math.max(...s.events.map(dieOf)) : (s.startTime ?? 0);
   for (const s of st) {
     if (s.ws.support || !s.ws.bots.length) continue;
     waveEnd = Math.max(waveEnd, deathEndOf(s));
@@ -213,7 +286,7 @@ export function simulateWave(wave, opts = {}) {
       gate: s.gate,
       firstSpawn: 0, lastSpawn: 0, deathEnd: 0,
       events: s.events,
-      life: s.life,
+      life: meanLife(s),
       gated: s.gated,
       triggerAt: s.triggerAt,
       untriggered: !!(s.gated && s.triggerAt === null),
@@ -225,7 +298,7 @@ export function simulateWave(wave, opts = {}) {
     if (s.events.length) {
       r.firstSpawn = s.events[0].t;
       r.lastSpawn = s.events[s.events.length - 1].t;
-      r.deathEnd = r.lastSpawn + s.life;
+      r.deathEnd = deathEndOf(s);
     } else {
       r.firstSpawn = r.lastSpawn = r.deathEnd = r.start;
     }
@@ -265,7 +338,7 @@ function buildCurve(entries, results, waveEnd, step) {
     const counts = countsTowardLimit(ws) ? 1 : 0;
     for (const ev of r.events) {
       deltas.push([ev.t, ev.count, counts]);
-      deltas.push([ev.t + r.life, -ev.count, counts]);
+      deltas.push([ev.dieT !== null ? ev.dieT : ev.t + r.life, -ev.count, counts]);
     }
   }
   deltas.sort((a, b) => a[0] - b[0]);

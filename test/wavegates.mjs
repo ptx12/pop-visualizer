@@ -56,7 +56,11 @@ const near = (x, y) => Math.abs(x - y) < 1e-6;
   const spawned = run(`${tank}\n ${b.replace('Name b', 'Name b WaitForAllSpawned tank')}`, opts).by.b;
   const dead = run(`${tank}\n ${b.replace('Name b', 'Name b WaitForAllDead tank')}`, opts).by.b;
   check('WaitForAllSpawned on a tank does not wait for the tank', near(spawned.firstSpawn, 0), `first=${spawned.firstSpawn}`);
-  check('WaitForAllDead on a tank waits for the tank lifetime', near(dead.firstSpawn, 107), `first=${dead.firstSpawn}`);
+  check('WaitForAllDead on a tank waits for the tank to be killed', near(dead.firstSpawn, 30), `first=${dead.firstSpawn}`);
+
+  const tough = 'WaveSpawn { Name tank TotalCount 1 SpawnCount 1 MaxActive 1 Tank { Health 300000 Speed 75 Name tankboss } }';
+  const late = run(`${tough}\n ${b.replace('Name b', 'Name b WaitForAllDead tank')}`, opts).by.b;
+  check('a tank that cannot be killed in time dies when it reaches the hatch', near(late.firstSpawn, 107), `first=${late.firstSpawn}`);
 }
 
 console.log(`${pass} passed, ${fail} failed`);

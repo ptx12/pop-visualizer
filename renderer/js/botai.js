@@ -506,7 +506,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       const chain = chains.chainFor(tankEntry.tank.startNode);
       for (const ev of r.events) {
         for (let c = 0; c < ev.count; c++) {
-          actors.push({ kind: 'tank', ws, tank: tankEntry.tank, spawnT: ev.t, simDieT: ev.t + r.life, chain, speed: tankEntry.tank.speed || 75 });
+          actors.push({ kind: 'tank', ws, tank: tankEntry.tank, spawnT: ev.t, simDieT: ev.dieT != null ? ev.dieT : ev.t + r.life, chain, speed: tankEntry.tank.speed || 75 });
         }
       }
       continue;
@@ -542,7 +542,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
           const prop = entry.prop;
           const at = prop.origin || (prop.where && prop.where.length ? null : null) || pickSpawn(ws.where).origin;
           actors.push({
-            kind: 'prop', ws, prop, spawnT: ev.t, simDieT: ev.t + r.life,
+            kind: 'prop', ws, prop, spawnT: ev.t, simDieT: ev.dieT != null ? ev.dieT : ev.t + r.life,
             spawnPos: (prop.origin || at).slice(0, 3)
           });
           pendingIdx++;
@@ -552,7 +552,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
         if (!pendingSpawn || !pendingSquadId) pendingSpawn = pickSpawn(ws.where);
         const spawn = pendingSpawn;
         actors.push({
-          kind: 'bot', ws, bot: entry.bot, spawnT: ev.t, simDieT: ev.t + r.life,
+          kind: 'bot', ws, bot: entry.bot, spawnT: ev.t, simDieT: ev.dieT != null ? ev.dieT : ev.t + r.life,
           spawnPos: spawn.origin.slice(0, 3),
           squadId: pendingSquadId, squadRole: pendingSquadId ? (pendingIdx === 0 ? 'leader' : 'member') : null,
           memberIdx: pendingIdx

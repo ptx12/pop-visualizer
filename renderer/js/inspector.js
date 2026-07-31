@@ -253,13 +253,7 @@ export function simOptsPanel(file) {
     invalidateSims();
     emit();
   })));
-  if (model === 'lifetime') {
-    wrap.append(
-      mk('Common bot lifetime', 'botLifetime', 2, 60),
-      mk('Giant lifetime', 'giantLifetime', 5, 120),
-      mk('Tank lifetime', 'tankLifetime', 15, 240, 'Ignored when the map has a measured tank path.')
-    );
-  }
+  wrap.append(mk('Team damage per second', 'teamDPS', 100, 6000, 'Robots die when this damage has chewed through their health. Damage is shared across everything alive.'));
   return wrap;
 }
 

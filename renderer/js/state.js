@@ -71,7 +71,7 @@ export function tankTimeFor(file) {
   const o = rawTankOverride(file);
   if (o !== null) return o;
   const d = defaultTankTime(file);
-  return d !== null ? d : state.simOpts.tankLifetime;
+  return d;
 }
 
 export function setTankTime(file, v) {
@@ -299,7 +299,6 @@ export function simFor(file, wave) {
       ...state.simOpts,
       missions: (file.model.missions || []).filter(m => m.bots && m.bots.length && missionActiveOn(m, wave.index)),
       robotLimit: file.model.robotLimit || 22,
-      tankLifetime: tankTimeFor(file),
       tankTimeFor: ws => override !== null ? override : measuredTankTime(file, ws),
       gateStateFor: ws => {
         const g = gates.get(ws);

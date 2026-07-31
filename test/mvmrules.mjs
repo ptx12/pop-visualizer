@@ -43,7 +43,8 @@ const SCOUT = 'TFBot { Class Scout }';
 }
 {
   const { by } = run(` WaveSpawn { Name a TotalCount 3 SpawnCount 1 MaxActive 3 WaitBetweenSpawnsAfterDeath 5 ${SCOUT} }`);
-  check('WaitBetweenSpawnsAfterDeath waits for the batch to die then delays', times(by.a) === '0x1 17x1 34x1', times(by.a));
+  const gaps = by.a.events.slice(1).every((e, i) => Math.abs(e.t - (by.a.events[i].dieT + 5)) < 1e-6);
+  check('WaitBetweenSpawnsAfterDeath waits for the batch to die then delays', gaps && by.a.events.length === 3, times(by.a));
 }
 {
   const { by } = run(` WaveSpawn { Name a TotalCount 6 SpawnCount 4 MaxActive 2 WaitBetweenSpawns 1 ${SCOUT} }`);
@@ -65,7 +66,7 @@ const SCOUT = 'TFBot { Class Scout }';
   check('tanks still register as something alive', withTanks === 26, `active peak=${withTanks}`);
 }
 {
-  const { by, sim } = run(` WaveSpawn { Name a TotalCount 4 SpawnCount 1 MaxActive 4 WaitBetweenSpawns 2 ${SCOUT} }
+  const { by, sim } = run(` WaveSpawn { Name a TotalCount 40 SpawnCount 1 MaxActive 4 WaitBetweenSpawns 2 ${SCOUT} }
  WaveSpawn { Name s Support 1 TotalCount 99 SpawnCount 1 MaxActive 2 WaitBetweenSpawns 3 ${SCOUT} }`);
   check('unlimited support does not extend the wave', sim.waveEnd === by.a.deathEnd, `${sim.waveEnd} vs ${by.a.deathEnd}`);
   check('unlimited support respawns through the wave', by.s.events.length > 1, `${by.s.events.length} spawns`);
@@ -107,7 +108,7 @@ const SCOUT = 'TFBot { Class Scout }';
   check('a mission is reported on the wave it runs in', sim.missions.length === 1, String(sim.missions.length));
   check('the first mission group waits InitialCooldown', mr.events[0].t === 5, String(mr.events[0].t));
   check('a mission spawns DesiredCount per group', mr.events.every(e => e.count === 2), times(mr));
-  check('a mission regroups CooldownTime after the group dies', mr.events[1].t === mr.events[0].t + mr.life + 20, times(mr));
+  check('a mission regroups CooldownTime after the group dies', Math.abs(mr.events[1].t - (mr.events[0].dieT + 20)) < 1e-6, times(mr));
   check('a mission keeps regrouping while the wave runs', mr.events.length > 2, String(mr.events.length));
   check('mission robots count against the robot limit', peakBots(sim) <= sim.robotLimit, `${peakBots(sim)} > ${sim.robotLimit}`);
 
@@ -142,7 +143,7 @@ for (const f of fs.readdirSync(dir).filter(x => x.endsWith('.pop'))) {
       }
       let act = 0, own = 0;
       const ev = [];
-      for (const e of r.events) { ev.push([e.t, e.count]); ev.push([e.t + r.life, -e.count]); }
+      for (const e of r.events) { ev.push([e.t, e.count]); ev.push([e.dieT != null ? e.dieT : e.t + r.life, -e.count]); }
       ev.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
       for (const [, d] of ev) { act += d; own = Math.max(own, act); }
       if (own > ws.maxActive + EPS) bad('no wavespawn exceeds its own MaxActive', `${tag} ${n}: ${own} > ${ws.maxActive}`);
