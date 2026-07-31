@@ -17,6 +17,7 @@ const MAX_STEPS = 6000;
 const GOAL_TOLERANCE = 25;
 export const ACTOR_CAP = 2500;
 export const RNG_SEED_BASE = 0x7f4a7c15;
+const BOMB_MAX_LEVEL = 3;
 const BOMB_UPGRADE_1 = 5;
 const BOMB_UPGRADE_2 = 15;
 const BOMB_UPGRADE_3 = 15;
@@ -617,6 +618,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     }
   }
 
+  const bombLog = [];
   const bomb = { pos: flagHome ? flagHome.slice(0, 2) : objective.slice(0, 2), home: flagHome ? flagHome.slice(0, 2) : null, carrier: null, deliveredAt: null, areaId: null };
   if (hasNav) {
     const a = nav.nearestArea(flagHome || objective);
@@ -772,10 +774,11 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     }
   }
 
-  function takeBomb(a) {
+  function takeBomb(a, t) {
     bomb.carrier = a;
     a.state = 'deliverFlag';
     a.bombLevel = 0;
+    bombLog.push({ t: t ?? endT, kind: 'pickup', level: 0, cls: a.bot ? a.bot.cls : null, tauntUntil: 0 });
     a.bombUpgradeAt = null;
     a.tauntUntil = 0;
     if (hasNav && a.kind === 'bot') a.nav = graphFor(profileOf(a.bot, true));
@@ -890,6 +893,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   function dropBomb() {
     if (!bomb.carrier) return;
     const prev = bomb.carrier;
+    bombLog.push({ t: endT, kind: 'drop', level: prev.bombLevel || 0, cls: prev.bot ? prev.bot.cls : null, tauntUntil: 0 });
     bomb.pos = prev.pos.slice();
     bomb.carrier = null;
     if (hasNav && prev.kind === 'bot') prev.nav = graphFor(profileOf(prev.bot, false));
@@ -925,6 +929,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     a.bombLevel++;
     const taunt = BOMB_TAUNT_MIN + rng() * (BOMB_TAUNT_MAX - BOMB_TAUNT_MIN);
     a.tauntUntil = t + taunt;
+    bombLog.push({ t, kind: 'upgrade', level: a.bombLevel, cls: a.bot ? a.bot.cls : null, tauntUntil: a.tauntUntil });
     a.bombUpgradeAt = a.bombLevel === 1 ? t + BOMB_UPGRADE_2 + taunt
       : a.bombLevel === 2 ? t + BOMB_UPGRADE_3 + taunt : Infinity;
   }
@@ -1139,7 +1144,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     finalized = {
       actors, objective, chains, nav, end: Math.max(endT, 10), teamDPS, deathModel, teleporters, gates,
       spawnPauseUntil,
-      bomb: { samples: bombSamples, deliveredAt: bomb.deliveredAt, home: bomb.home },
+      bomb: { samples: bombSamples, deliveredAt: bomb.deliveredAt, home: bomb.home, log: bombLog, maxLevel: BOMB_MAX_LEVEL },
       hatchDist: hatchField ? hatchField.dist : null, hatchMaxDist,
       navVolumes, route: buildBombRoute(),
       truncation: capHit || endedEarly ? {

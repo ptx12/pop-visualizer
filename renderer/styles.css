@@ -1640,3 +1640,15 @@ body.no-file .splitter { display: none; }
 .opt-row.probe-giant { gap: 6px; cursor: pointer; }
 .opt-row.probe-giant input { margin: 0; }
 .tl-row.row-probe .mission-spawn { background: repeating-linear-gradient(135deg, #2f6b3a 0 5px, #24512d 5px 10px); border-color: #4c9a5e; }
+
+.bomb-hud { position: absolute; top: 8px; left: 10px; z-index: 6; display: flex; align-items: center; gap: 8px; padding: 5px 10px 5px 6px; border-radius: 5px; background: #12161ccc; border: 1px solid #3a4657; backdrop-filter: blur(3px); opacity: .55; }
+.bomb-hud.held { opacity: 1; border-color: #b07a34; }
+.bomb-hud.taunting { border-color: #d9a441; }
+.bomb-hud.delivered { border-color: #a33f3f; opacity: 1; }
+.bomb-icon { width: 26px; height: 24px; border-radius: 3px; display: grid; place-items: center; font-size: 8px; font-weight: 700; letter-spacing: .04em; color: #0d1015; background: #6d7580; }
+.bomb-hud.held .bomb-icon { background: #d59a3f; }
+.bomb-hud.delivered .bomb-icon { background: #d05656; }
+.bomb-label { font-size: 11px; color: #e6ebf2; line-height: 1.2; }
+.bomb-pips { display: flex; gap: 3px; margin-top: 3px; }
+.bomb-pips i { width: 14px; height: 4px; border-radius: 2px; background: #39414d; }
+.bomb-pips i.on { background: #e0b95a; }

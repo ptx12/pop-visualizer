@@ -456,6 +456,38 @@ function saveKillPoints(mapName, list) {
   else localStorage.removeItem('popvis.killpts.' + mapName);
 }
 
+function buildBombHUD(ai) {
+  const b = ai && ai.bomb;
+  if (!b || !b.log) return null;
+  const maxLevel = b.maxLevel || 3;
+  const hud = el('div', { class: 'bomb-hud' });
+  const icon = el('div', { class: 'bomb-icon', text: 'BOMB' });
+  const label = el('div', { class: 'bomb-label' });
+  const pips = el('div', { class: 'bomb-pips' });
+  const pipEls = [];
+  for (let i = 0; i < maxLevel; i++) { const p = el('i'); pipEls.push(p); pips.append(p); }
+  hud.append(icon, el('div', { class: 'bomb-meta' }, label, pips));
+  const update = t => {
+    let cur = null;
+    for (const e of b.log) { if (e.t <= t) cur = e; else break; }
+    const delivered = b.deliveredAt != null && t >= b.deliveredAt;
+    const held = !!cur && cur.kind !== 'drop' && !delivered;
+    const level = held ? cur.level : 0;
+    const taunting = held && cur.tauntUntil > t;
+    hud.classList.toggle('held', held);
+    hud.classList.toggle('taunting', taunting);
+    hud.classList.toggle('delivered', delivered);
+    label.textContent = delivered ? 'deployed ' + fmtTime(b.deliveredAt)
+      : held ? ((CLASS_INFO[cur.cls] || {}).label || 'robot') + ' carrying' + (taunting ? ' — taunting' : '')
+      : 'not picked up';
+    pipEls.forEach((p, i) => p.classList.toggle('on', i < level));
+    pips.title = held ? 'Bomb buff level ' + level + ' of ' + maxLevel : 'No bomb buff';
+  };
+  update(0);
+  hud.update = update;
+  return hud;
+}
+
 function gateLetter(g, i) {
   const m = String(g.label || '').match(/\b([A-Z])\s*$/);
   return m ? m[1] : String.fromCharCode(65 + i);
@@ -1620,11 +1652,14 @@ export function renderMapView(container, file, waveIndex) {
   }
 
   let gateHud = null;
+  let bombHud = null;
   const canvas = el('canvas', { class: 'map-canvas' + (ps.tool ? ' painting' : '') });
   canvas.addEventListener('contextmenu', e => { if (ps.tool) e.preventDefault(); });
   const canvasWrap = el('div', { class: 'map-canvaswrap' }, canvas);
   gateHud = buildGateHUD(mapData, wave, ai);
   if (gateHud) canvasWrap.append(gateHud);
+  bombHud = buildBombHUD(ai);
+  if (bombHud) canvasWrap.append(bombHud);
   if (resimulating) canvasWrap.append(el('div', { class: 'map-resim', text: 'Re-simulating…' }));
   const approx = mapData.nav.approx && !approxDismissed.has(mapData.map)
     ? buildApproxBanner(file, mapData)
@@ -1812,6 +1847,7 @@ export function renderMapView(container, file, waveIndex) {
       },
       onTime: tt => {
         if (gateHud) gateHud.update(tt);
+        if (bombHud) bombHud.update(tt);
         const alive = countActiveAt(tt);
         timeLbl.textContent = fmtTime(tt) + ' / ' + fmtTime(waveEnd) + ' — ' + alive + ' active';
         if (!ps.playing) setPlayLabel(false);
@@ -1832,6 +1868,8 @@ export function renderMapView(container, file, waveIndex) {
     wrap3d.append(el('div', { class: 'map-3d-hint', text: 'left-drag orbit · right-drag pan · wheel zoom · Fit resets' }));
     gateHud = buildGateHUD(mapData, wave, ai);
     if (gateHud) wrap3d.append(gateHud);
+    bombHud = buildBombHUD(ai);
+    if (bombHud) wrap3d.append(bombHud);
     timeLbl.textContent = fmtTime(ps.t) + ' / ' + fmtTime(waveEnd) + ' — ' + countActiveAt(ps.t) + ' active';
   }
 
