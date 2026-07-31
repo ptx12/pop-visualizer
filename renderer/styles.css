@@ -1639,3 +1639,4 @@ body.no-file .splitter { display: none; }
 .gate-note.paused { color: #e0b95a; }
 .opt-row.probe-giant { gap: 6px; cursor: pointer; }
 .opt-row.probe-giant input { margin: 0; }
+.tl-row.row-probe .mission-spawn { background: repeating-linear-gradient(135deg, #2f6b3a 0 5px, #24512d 5px 10px); border-color: #4c9a5e; }

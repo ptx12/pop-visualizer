@@ -319,6 +319,7 @@ export function createMap3D(scene) {
   const FX = { carrier: 'mvm_hatch_destroy_smolderembers', crit: 'critgun_weaponmodel_blu', tanksmoke: 'smoke_train' };
   const CRIT_GLOW = (() => { const v = [5, 20, 80]; const m = Math.max(...v); return v.map(c => c / m * 0.62); })();
   const UBER_GLOW = [0.72, 0.74, 0.78];
+  const PROBE_GLOW = [0.10, 0.42, 0.14];
 
   function fxFor(key) {
     const name = FX[key];
@@ -1289,9 +1290,10 @@ export function createMap3D(scene) {
         gl.uniformMatrix4fv(mA.model, false, new Float32Array(M));
         const { f0, f1, blend } = animFrame(pool, a);
         a.frame = f0;
-        if (a.ubered) gl.uniform3f(mA.glow, UBER_GLOW[0], UBER_GLOW[1], UBER_GLOW[2]);
+        const glow = a.ubered ? UBER_GLOW : (a.probe ? PROBE_GLOW : null);
+        if (glow) gl.uniform3f(mA.glow, glow[0], glow[1], glow[2]);
         drawRenderable(pool, f0, f1, blend);
-        if (a.ubered) gl.uniform3f(mA.glow, 0, 0, 0);
+        if (glow) gl.uniform3f(mA.glow, 0, 0, 0);
         if (pool.attachments && pool.attachments.length) {
           if (a.crit) gl.uniform3f(mA.glow, CRIT_GLOW[0], CRIT_GLOW[1], CRIT_GLOW[2]);
           for (const att of pool.attachments) drawRenderable(att, f0, f1, blend);

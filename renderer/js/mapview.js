@@ -1749,6 +1749,7 @@ export function renderMapView(container, file, waveIndex) {
         kind: a.kind, cls: a.kind === 'bot' ? a.bot.cls : null,
         crit: a.kind === 'bot' && !!a.bot.alwaysCrit,
         ubered: !!(a.uberUntil > t),
+        probe: !!(a.ws && a.ws.isProbe),
         viaTeleporter: !!a.viaTeleporter,
         modelBase, attachments, loadoutKey, activity, moving, carrying: false, speed, dist: actorDistAt(a, t),
         heading, scale, phase: (Math.floor(a.spawnT * 13) + (a.memberIdx || 0) * 5) % 128

@@ -363,6 +363,11 @@ function buildRuler(span, pps, sim) {
 
 const MISSION_LABEL = { destroysentries: 'Sentry busters', sniper: 'Snipers', spy: 'Spies', engineer: 'Engineers', seekanddestroy: 'Seek and destroy' };
 
+function probeLabel(ws) {
+  const b = ws.bots.find(x => x.bot);
+  return b ? botDisplayName(b.bot) : 'test robot';
+}
+
 function missionLabel(m) {
   const k = String(m.objective || '').toLowerCase().replace(/[^a-z]/g, '');
   return MISSION_LABEL[k] || m.objective || 'mission';
@@ -370,16 +375,19 @@ function missionLabel(m) {
 
 function buildMissionRows(sim, pps) {
   const live = (sim.missions || []).filter(m => m.result && m.result.events.length);
-  if (!live.length) return null;
+  const probes = (sim.probes || []).filter(p => p.result && p.result.events.length)
+    .map(p => ({ ws: p.ws, mission: null, result: p.result, probe: true }));
+  if (!live.length && !probes.length) return null;
   const wrap = el('div', { class: 'tl-missions' });
-  wrap.append(el('div', { class: 'tl-missions-title', text: 'MISSIONS' }));
-  for (const m of live) {
+  if (live.length) wrap.append(el('div', { class: 'tl-missions-title', text: 'MISSIONS' }));
+  for (const m of live.concat(probes)) {
+    if (m.probe && m === probes[0]) wrap.append(el('div', { class: 'tl-missions-title', text: 'SPAWNED FOR TESTING' }));
     const r = m.result;
-    const row = el('div', { class: 'tl-row row-mission' });
+    const row = el('div', { class: 'tl-row row-mission' + (m.probe ? ' row-probe' : '') });
     const bot = m.ws.bots.find(b => b.bot);
     const label = el('div', { class: 'mission-label' });
     if (bot) label.append(botVisual(bot.bot, { size: 'sm' }));
-    label.append(el('span', { text: missionLabel(m.mission) }));
+    label.append(el('span', { text: m.probe ? probeLabel(m.ws) : missionLabel(m.mission) }));
     row.append(label);
     const track = el('div', { class: 'tl-track' });
     for (const ev of r.events) {
