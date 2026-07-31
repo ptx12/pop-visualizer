@@ -261,6 +261,18 @@ check('no robot enters the map during the spawn pause',
   !gateAI.actors.some(a => a.spawnT > gateAI.gates[0].capturedAt && a.spawnT < gateAI.spawnPauseUntil - 1e-6),
   gateAI.actors.map(a => a.spawnT.toFixed(1)).join(','));
 
+const sniperMap = { ...mapData, hints: [{ kind: 'bot_hint_sniper_spot', origin: AT(N - 3) }] };
+const sniperAI = (() => {
+  const model = buildModel(parse(wrap('TotalCount 1 SpawnCount 1 MaxActive 1 TFBot { Class Sniper ' + IGNORE + ' }')), []);
+  return simulateBotAI(model.waves[0], simulateWave(model.waves[0], { robotLimit: 99, teamDPS: 20 }), sniperMap, { deathModel: 'hatch', robotLimit: 99 });
+})();
+check('a sniper takes a sniper spot instead of the bomb route',
+  sniperAI.actors.some(a => a.sniperSpot || a.state === 'sniperToSpot' || a.state === 'sniperLurk'),
+  sniperAI.actors.map(a => a.state).join(','));
+const noSpotAI = run('TotalCount 1 SpawnCount 1 MaxActive 1 TFBot { Class Sniper ' + IGNORE + ' }');
+check('a sniper on a map with no sniper spots falls back to normal behaviour',
+  !noSpotAI.actors.some(a => a.state === 'sniperToSpot'), noSpotAI.actors.map(a => a.state).join(','));
+
 const uberAttr = body => buildModel(parse(wrap(body)), []).waves[0].wavespawns[0].bots.find(b => b.bot && b.bot.cls === 'medic').bot;
 const fastMed = uberAttr('TotalCount 1 SpawnCount 1 MaxActive 1 TFBot { Class Medic ItemAttributes { ItemName "TF_WEAPON_MEDIGUN" "ubercharge rate bonus" 5 "uber duration bonus" -3 } }');
 check('ubercharge rate bonus is read off the medigun', fastMed.uberRateMult === 5, String(fastMed.uberRateMult));

@@ -169,3 +169,30 @@ export const gatebotToGate = {
     if (a.gate.progress >= a.gate.def.capTime) ctx.captureGate(a.gate, t);
   }
 };
+
+const SNIPER_ARRIVE_RANGE = 120;
+
+export const sniperToSpot = {
+  id: 'sniperToSpot',
+  order: 26,
+  selects(a, ctx) { return ctx.clsOf(a) === 'sniper' && (ctx.sniperSpots || []).length > 0; },
+  enter(a, ctx) {
+    const spots = ctx.sniperSpots;
+    let best = null, bestD = Infinity;
+    for (const h of spots) {
+      const d = (h.origin[0] - ctx.bomb.pos[0]) ** 2 + (h.origin[1] - ctx.bomb.pos[1]) ** 2;
+      if (d < bestD) { bestD = d; best = h; }
+    }
+    a.sniperSpot = best ? best.origin : (a.spawnPos || ctx.objective);
+    a.sniperField = ctx.hasNav ? ctx.navOf(a).flowField((ctx.navOf(a).nearestArea(a.sniperSpot) || { id: -1 }).id) : null;
+  },
+  step(a, ctx, t, dt, speed) {
+    const d = ctx.moveField(a, a.sniperField, a.sniperSpot, dt, speed);
+    if (d < SNIPER_ARRIVE_RANGE) a.state = 'sniperLurk';
+  }
+};
+
+export const sniperLurk = {
+  id: 'sniperLurk',
+  step() {}
+};

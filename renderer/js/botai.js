@@ -491,6 +491,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
   const nests = mapData.hints.filter(h => h.kind === 'bot_hint_engineer_nest');
   const teleExits = mapData.hints.filter(h => h.kind === 'bot_hint_teleporter_exit');
+  const sniperSpots = mapData.hints.filter(h => h.kind === 'bot_hint_sniper_spot');
   const gates = (mapData.gates || []).filter(g => g.origin).map(g => ({
     def: g, pos: g.origin, progress: 0, capturedAt: null,
     open: !g.startsLocked, holders: 0
@@ -980,7 +981,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     maxSpeed: Number.isFinite(opts.maxSpeedLimit) ? opts.maxSpeedLimit : TF_MAX_SPEED,
     actors, live, bomb, bombSamples, squadLeaders,
     nav, hasNav, navOf, graphFor, objective, objArea, chains,
-    nests, teleExits, teleporters, gates, gateOpen, nextGate, captureGate, redSpawns, spawnsByName, namedPoints,
+    nests, teleExits, sniperSpots, teleporters, gates, gateOpen, nextGate, captureGate, redSpawns, spawnsByName, namedPoints,
     clsOf, eligible, zoneW, killActor, nudge, areaOf, holds, placeActor,
     hatchFieldOf, bombFieldOf, resolvePoint,
     moveAlong, moveField, takeBomb, dropBomb, upgradeOverTime
