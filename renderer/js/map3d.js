@@ -194,6 +194,8 @@ gl_FragColor=vec4(c+uGlow*(0.5+0.5*t.rgb),1.0);}`;
 const MODEL_DISPLAY_SCALE = 1;
 const LM_OVERBRIGHT = 2.0;
 const BOMB_MODEL = 'models/props_td/atom_bomb';
+const TANK_HULL_MODEL = 'models/bots/boss_bot/boss_tank';
+const TANK_BOMB_MODEL = 'models/bots/boss_bot/bomb_mechanism';
 const WORLD_VS = `attribute vec3 aPos;attribute vec2 aUV;attribute vec2 aLmUV;
 uniform mat4 uMVP;uniform vec2 uTexSize;uniform float uFogStart;uniform float uFogEnd;
 varying vec2 vUV;varying vec2 vLmUV;varying float vFog;
@@ -1235,6 +1237,7 @@ export function createMap3D(scene) {
     const actors = scene.actorsAt ? scene.actorsAt(scene.ps.t) : [];
     const pts = [];
     const modelActors = [];
+    const tankActors = [];
     for (const a of actors) {
       if (a.kind === 'bot' && a.modelBase && a.loadoutKey) {
         const pool = models.get(a.loadoutKey);
@@ -1242,6 +1245,11 @@ export function createMap3D(scene) {
         if (pool && pool.loaded) { modelActors.push(a); continue; }
         if (pool && pool.error) { pts.push(a); continue; }
         if (pool && pool.loading) { pts.push(a); continue; }
+      }
+      if (a.kind === 'tank') {
+        const hull = props.get(TANK_HULL_MODEL);
+        if (!hull) { ensureProp(TANK_HULL_MODEL); ensureProp(TANK_BOMB_MODEL); }
+        if (hull && hull.loaded) { tankActors.push(a); continue; }
       }
       pts.push(a);
     }
@@ -1285,6 +1293,29 @@ export function createMap3D(scene) {
         }
       }
       gl.disable(gl.CULL_FACE);
+    }
+
+    if (tankActors.length) {
+      const hull = props.get(TANK_HULL_MODEL);
+      const mech = props.get(TANK_BOMB_MODEL);
+      gl.useProgram(modelProg);
+      gl.uniform1f(mA.mExposure, worldExposure);
+      gl.uniform3fv(mA.fogColor, FOG_COLOR);
+      gl.uniform1f(mA.fogStart, fogStart);
+      gl.uniform1f(mA.fogEnd, fogEnd);
+      gl.uniform1f(mA.blend, 0);
+      gl.uniform3f(mA.glow, 0, 0, 0);
+      gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
+      gl.disable(gl.CULL_FACE);
+      for (const a of tankActors) {
+        const gy = Number.isFinite(a.z) ? a.z : sampleHeight(a.x, a.y);
+        applyModelLight(a.x, a.y, gy + 80);
+        const M = mul(mul(mul(mTranslate(a.x, gy, -a.y), mRotY(a.heading || 0)), ZUP2YUP), mScale(a.scale || 1));
+        gl.uniformMatrix4fv(mA.mvp, false, new Float32Array(mul(mvp, M)));
+        gl.uniformMatrix4fv(mA.model, false, new Float32Array(M));
+        drawStatic(hull);
+        if (mech && mech.loaded) drawStatic(mech);
+      }
     }
 
     if (pts.length) {

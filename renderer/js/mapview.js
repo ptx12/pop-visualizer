@@ -1644,6 +1644,8 @@ export function renderMapView(container, file, waveIndex) {
         activity = botActivity(a.bot);
         attachments = [...weps, ...cos];
         loadoutKey = modelBase + '|' + activity + '|' + attachments.join('|');
+      } else if (a.kind === 'tank' && a.tank && Number.isFinite(a.tank.scale) && a.tank.scale > 0) {
+        scale = a.tank.scale;
       }
       out.push({
         x: p[0], y: p[1], z: actorZAt(a, t), size: cs.s, r: cs.c[0], g: cs.c[1], b: cs.c[2],
