@@ -138,6 +138,27 @@ check('a reset relay that only disables is not a route',
 check('a logic_case unrelated to nav volumes is not a route',
   !relayOnly.bombPaths.some(p => p.key === 'subway_random'));
 
+const gateEnts = [
+  { classname: 'team_control_point', targetname: 'gate1_point_a', origin: '10 20 30', point_index: '1', point_printname: 'Loading Gate A', team_previouspoint_3_0: 'gate1_point_a' },
+  { classname: 'team_control_point', targetname: 'gate2_point_b', origin: '40 50 60', point_index: '3', point_printname: 'Loading Gate B', team_previouspoint_3_0: 'gate1_point_a' },
+  { classname: 'logic_relay', targetname: 'gate1_relay', outputs: [out('OnTrigger', 'spawnbot_main1', 'Enable')] },
+  { classname: 'logic_relay', targetname: 'gate2_relay', outputs: [out('OnTrigger', 'spawnbot_main2', 'Enable')] },
+  { classname: 'trigger_timer_door', targetname: 'gate1_door_trigger', area_cap_point: 'gate1_point_a', area_time_to_cap: '10', team_numcap_3: '1', startdisabled: '0', outputs: [out('OnCapTeam2', 'gate1_relay', 'Trigger')] },
+  { classname: 'trigger_timer_door', targetname: 'gate2_door_trigger', area_cap_point: 'gate2_point_b', area_time_to_cap: '12', team_numcap_3: '1', startdisabled: '1', outputs: [out('OnCapTeam2', 'gate2_relay', 'Trigger')] },
+  { classname: 'trigger_timer_door', targetname: 'orphan_trigger', area_cap_point: 'nosuch', area_time_to_cap: '5' }
+];
+const gr = extractMapEntities(gateEnts, models);
+eq('gates come from trigger_timer_door paired with its capture point', gr.gates.map(g => g.point), ['gate1_point_a', 'gate2_point_b']);
+eq('gates are ordered by point index', gr.gates.map(g => g.index), [1, 3]);
+eq('gate capture time and count come from the trigger', [gr.gates[0].capTime, gr.gates[0].capCount], [10, 1]);
+eq('gate labels come from the control point print name', gr.gates.map(g => g.label), ['Loading Gate A', 'Loading Gate B']);
+eq('a gate locked at round start is flagged', gr.gates.map(g => g.startsLocked), [false, true]);
+eq('the relay fired on capture is recorded', gr.gates.map(g => g.relay), ['gate1_relay', 'gate2_relay']);
+check('a control point that is its own previous point has no prerequisite', gr.gates[0].previous === null, String(gr.gates[0].previous));
+eq('a later gate keeps its prerequisite', gr.gates[1].previous, 'gate1_point_a');
+check('a trigger with no matching capture point is ignored', !gr.gates.some(g => g.trigger === 'orphan_trigger'));
+eq('a map with no gates yields none', extractMapEntities([], models).gates, []);
+
 const oneRelayEnts = [
   { classname: 'func_nav_avoid', targetname: 'avoid_a', model: '*2' },
   { classname: 'logic_relay', targetname: 'lone_relay', outputs: [

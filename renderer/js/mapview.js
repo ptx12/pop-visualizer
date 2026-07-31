@@ -1,4 +1,4 @@
-import { el, clear, showTip, hideTip, fmtTime, loader, botVisual, tankVisual } from './ui.js';
+import { el, clear, showTip, hideTip, fmtTime, fmtNum, loader, botVisual, tankVisual } from './ui.js';
 import { simFor, emit, onChange, deathModel, navTogglesFor, bombPathRerollsFor, mapQueryName } from './state.js';
 import { CLASS_INFO, botDisplayName } from './popmodel.js';
 import { getTFPath, iconURL, iconNameFor, classIconName, tankIconName } from './icons.js';
@@ -454,6 +454,35 @@ function killPointsFor(mapName) {
 function saveKillPoints(mapName, list) {
   if (list.length) localStorage.setItem('popvis.killpts.' + mapName, JSON.stringify(list));
   else localStorage.removeItem('popvis.killpts.' + mapName);
+}
+
+function gateLetter(g, i) {
+  const m = String(g.label || '').match(/\b([A-Z])\s*$/);
+  return m ? m[1] : String.fromCharCode(65 + i);
+}
+
+function buildGateHUD(mapData, wave) {
+  const gates = (mapData && mapData.gates) || [];
+  if (!gates.length) return null;
+  const gatebots = wave ? (wave.gatebotCount || 0) : 0;
+  const hud = el('div', { class: 'gate-hud' });
+  const strip = el('div', { class: 'gate-strip' });
+  gates.forEach((g, i) => {
+    const cell = el('div', {
+      class: 'gate-cell' + (g.startsLocked ? ' locked' : '') + (gatebots ? '' : ' idle'),
+      title: `${g.label}\ncaptured in ${fmtNum(g.capTime)}s by ${g.capCount} gatebot${g.capCount > 1 ? 's' : ''}`
+        + (g.startsLocked ? '\nlocked until the previous gate is captured' : '\nopen from the start of the wave')
+        + (g.relay ? `\nfires ${g.relay} on capture` : '')
+    });
+    cell.append(el('div', { class: 'gate-icon', text: gateLetter(g, i) }));
+    cell.append(el('div', { class: 'gate-meta' },
+      el('div', { class: 'gate-name', text: g.label }),
+      el('div', { class: 'gate-time', text: g.startsLocked ? 'locked · ' + fmtNum(g.capTime) + 's' : fmtNum(g.capTime) + 's to cap' })));
+    strip.append(cell);
+  });
+  hud.append(strip);
+  hud.append(el('div', { class: 'gate-note' + (gatebots ? '' : ' muted'), text: gatebots ? gatebots + ' gatebots this wave' : 'no gatebots this wave' }));
+  return hud;
 }
 
 function bombPathKey(mapName, waveIndex, perWave) {
@@ -1528,6 +1557,7 @@ export function renderMapView(container, file, waveIndex) {
   const canvas = el('canvas', { class: 'map-canvas' + (ps.tool ? ' painting' : '') });
   canvas.addEventListener('contextmenu', e => { if (ps.tool) e.preventDefault(); });
   const canvasWrap = el('div', { class: 'map-canvaswrap' }, canvas);
+  { const h = buildGateHUD(mapData, wave); if (h) canvasWrap.append(h); }
   if (resimulating) canvasWrap.append(el('div', { class: 'map-resim', text: 'Re-simulating…' }));
   const approx = mapData.nav.approx && !approxDismissed.has(mapData.map)
     ? buildApproxBanner(file, mapData)
@@ -1729,6 +1759,7 @@ export function renderMapView(container, file, waveIndex) {
       wrap3d.append(active3D.canvas);
     }
     wrap3d.append(el('div', { class: 'map-3d-hint', text: 'left-drag orbit · right-drag pan · wheel zoom · Fit resets' }));
+    { const h = buildGateHUD(mapData, wave); if (h) wrap3d.append(h); }
     timeLbl.textContent = fmtTime(ps.t) + ' / ' + fmtTime(waveEnd) + ' — ' + countActiveAt(ps.t) + ' active';
   }
 

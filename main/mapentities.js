@@ -111,6 +111,51 @@ function complementaryRoutes(ents, graph, volumeNames) {
   return routes.length > 1 ? routes : [];
 }
 
+function prevPoint(cp) {
+  const p = (cp.team_previouspoint_3_0 || '').toLowerCase();
+  const self = (cp.targetname || '').toLowerCase();
+  return p && p !== self ? p : null;
+}
+
+export function buildGates(ents) {
+  const points = new Map();
+  const relays = new Set();
+  for (const e of ents) {
+    const n = (e.targetname || '').toLowerCase();
+    if (!n) continue;
+    if (e.classname === 'team_control_point') points.set(n, e);
+    if (e.classname === 'logic_relay') relays.add(n);
+  }
+  const out = [];
+  for (const e of ents) {
+    if (e.classname !== 'trigger_timer_door') continue;
+    const cp = points.get(String(e.area_cap_point || '').toLowerCase());
+    if (!cp) continue;
+    let relay = null;
+    for (const o of e.outputs || []) {
+      if (!/^oncapteam/i.test(o.key)) continue;
+      const target = (splitOutput(o.value)[0] || '').toLowerCase();
+      if (relays.has(target)) { relay = target; break; }
+    }
+    const capTime = parseFloat(e.area_time_to_cap);
+    const capCount = parseInt(e.team_numcap_3, 10);
+    out.push({
+      trigger: (e.targetname || '').toLowerCase(),
+      point: (cp.targetname || '').toLowerCase(),
+      label: cp.point_printname || cp.targetname || '',
+      index: parseInt(cp.point_index, 10) || 0,
+      origin: vec(cp.origin),
+      capTime: Number.isFinite(capTime) ? capTime : 0,
+      capCount: Number.isFinite(capCount) && capCount > 0 ? capCount : 1,
+      startsLocked: String(e.startdisabled) === '1',
+      previous: prevPoint(cp),
+      relay
+    });
+  }
+  out.sort((a, b) => a.index - b.index);
+  return out;
+}
+
 const HINT_CLASSES = /^(bot_hint_sniper_spot|bot_hint_engineer_nest|bot_hint_sentrygun|bot_hint_teleporter_exit|func_tfbot_hint)$/;
 
 function vec(s) {
@@ -214,5 +259,5 @@ export function extractMapEntities(ents, models) {
     }
   }
 
-  return { spawns, flags, capzones, tracks, redSpawns, hints, navVolumes, spawnRooms, pathProps, bombPaths: buildBombPaths(ents, navVolumes) };
+  return { spawns, flags, capzones, tracks, redSpawns, hints, navVolumes, spawnRooms, pathProps, bombPaths: buildBombPaths(ents, navVolumes), gates: buildGates(ents) };
 }

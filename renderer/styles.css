@@ -1621,3 +1621,15 @@ body.no-file .splitter { display: none; }
 .tl-row.row-mission .mission-label { position: absolute; left: 10px; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); z-index: 2; pointer-events: none; }
 .mission-spawn { position: absolute; top: 7px; height: 12px; border-radius: 3px; background: repeating-linear-gradient(135deg, #6b5a3a 0 5px, #4e4230 5px 10px); border: 1px solid #8a7448; }
 .mission-count { position: absolute; left: 3px; top: -1px; font-size: 9px; color: #f0e2c0; }
+
+.gate-hud { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 6; pointer-events: none; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.gate-strip { display: flex; gap: 6px; pointer-events: auto; }
+.gate-cell { display: flex; align-items: center; gap: 7px; padding: 5px 10px 5px 6px; border-radius: 5px; background: #12161ccc; border: 1px solid #3a4657; backdrop-filter: blur(3px); }
+.gate-cell.locked { opacity: .62; border-style: dashed; }
+.gate-cell.idle { opacity: .45; }
+.gate-icon { width: 24px; height: 24px; border-radius: 3px; display: grid; place-items: center; font-weight: 700; font-size: 13px; color: #0d1015; background: #d94a4a; }
+.gate-cell.locked .gate-icon { background: #6d7580; }
+.gate-name { font-size: 11px; color: #e6ebf2; line-height: 1.15; }
+.gate-time { font-size: 10px; color: var(--muted); line-height: 1.15; }
+.gate-note { font-size: 10px; letter-spacing: .06em; color: #d0d8e2; background: #12161caa; padding: 2px 7px; border-radius: 3px; }
+.gate-note.muted { color: var(--muted); }

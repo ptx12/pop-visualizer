@@ -237,6 +237,22 @@ export function flattenBots(spawner, out = [], mult = 1) {
   return out;
 }
 
+export const GATEBOT_TAG = 'bot_gatebot';
+
+export function botHasTag(bot, tag) {
+  if (!bot) return false;
+  if (bot.tags && bot.tags.includes(tag)) return true;
+  for (const st of bot.eventAttributes || []) {
+    if (!st.node) continue;
+    for (const n of findAll(st.node, 'Tag')) {
+      if (n.type === 'kv' && String(n.value).trim().toLowerCase() === tag) return true;
+    }
+  }
+  return false;
+}
+
+export const isGatebot = bot => botHasTag(bot, GATEBOT_TAG);
+
 export function parseWaveSpawn(node, templates, wsTemplates) {
   const ws = {
     node,
@@ -279,6 +295,7 @@ export function parseWaveSpawn(node, templates, wsTemplates) {
   ws.bots = flattenBots(ws.spawner);
   ws.squadSize = ws.spawner && (ws.spawner.kind === 'squad') ? Math.max(1, ws.spawner.count) : 1;
   ws.isTank = ws.bots.some(b => b.tank);
+  ws.hasGatebot = ws.bots.some(b => isGatebot(b.bot));
   ws.hasBoss = ws.bots.some(b => b.bot && b.bot.isBoss);
   ws.hasGiant = ws.bots.some(b => b.bot && b.bot.isGiant);
   ws.outputs = node.children
@@ -326,6 +343,7 @@ export function parseWave(node, index, templates, wsTemplates) {
   wave.totalCurrency = wave.wavespawns.reduce((s, w) => s + (w.totalCurrency > 0 ? w.totalCurrency : 0), 0);
   wave.totalBots = wave.wavespawns.reduce((s, w) => s + (w.support || w.isLogic ? 0 : Math.max(0, w.totalCount)), 0);
   wave.supportBots = wave.wavespawns.reduce((s, w) => s + (w.support === 'limited' ? Math.max(0, w.totalCount) : 0), 0);
+  wave.gatebotCount = wave.wavespawns.reduce((s, w) => s + (w.hasGatebot ? Math.max(0, w.totalCount) : 0), 0);
   wave.tankCount = wave.wavespawns.reduce((s, w) => s + (w.isTank && !w.support ? Math.max(1, w.totalCount) : 0), 0);
   wave.totalHP = wave.wavespawns.reduce((s, w) => s + (w.support || w.isLogic ? 0 : wsEffectiveHP(w)), 0);
   return wave;
