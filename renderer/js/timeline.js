@@ -543,6 +543,7 @@ function buildRow(container, file, wave, waveIndex, ws, sim, pps, index, isColla
     if (!ws.outputs.length && !ws.sounds.length) metaBits.push('timer / chain anchor');
   } else {
     if (ws.support) metaBits.push(ws.support === 'unlimited' ? 'support ∞' : 'support (limited)');
+    if (ws.hasGatebot) metaBits.push('gatebots');
     metaBits.push(`${ws.totalCount || 0}×`);
   }
 

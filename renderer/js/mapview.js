@@ -461,12 +461,15 @@ function gateLetter(g, i) {
   return m ? m[1] : String.fromCharCode(65 + i);
 }
 
-function buildGateHUD(mapData, wave) {
+function buildGateHUD(mapData, wave, ai) {
   const gates = (mapData && mapData.gates) || [];
   if (!gates.length) return null;
   const gatebots = wave ? (wave.gatebotCount || 0) : 0;
+  const live = (ai && ai.gates) || [];
+  const stateOf = g => live.find(x => x.def && x.def.point === g.point) || null;
   const hud = el('div', { class: 'gate-hud' });
   const strip = el('div', { class: 'gate-strip' });
+  const cells = [];
   gates.forEach((g, i) => {
     const cell = el('div', {
       class: 'gate-cell' + (g.startsLocked ? ' locked' : '') + (gatebots ? '' : ' idle'),
@@ -486,12 +489,40 @@ function buildGateHUD(mapData, wave) {
     const meta = el('div', { class: 'gate-meta' },
       el('div', { class: 'gate-name', text: g.label }),
       el('div', { class: 'gate-time', text: g.startsLocked ? 'locked · ' + fmtNum(g.capTime) + 's' : fmtNum(g.capTime) + 's to cap' }));
+    const timeEl = meta.lastChild;
     if (fx && fx.pauseFor) meta.append(el('div', { class: 'gate-fx', text: '+' + fmtNum(fx.pauseFor) + 's spawn pause' }));
     cell.append(meta);
     strip.append(cell);
+    cells.push({ g, cell, timeEl, state: stateOf(g), baseText: timeEl.textContent });
   });
   hud.append(strip);
-  hud.append(el('div', { class: 'gate-note' + (gatebots ? '' : ' muted'), text: gatebots ? gatebots + ' gatebots this wave' : 'no gatebots this wave' }));
+  const note = el('div', { class: 'gate-note' + (gatebots ? '' : ' muted'), text: gatebots ? gatebots + ' gatebots this wave' : 'no gatebots this wave' });
+  hud.append(note);
+
+  const update = t => {
+    let pausedUntil = 0;
+    for (const c of cells) {
+      const st = c.state;
+      const capped = st && st.capturedAt !== null && t >= st.capturedAt;
+      c.cell.classList.toggle('captured', !!capped);
+      if (capped) {
+        c.cell.classList.remove('locked');
+        c.timeEl.textContent = 'captured ' + fmtTime(st.capturedAt);
+        const fx = c.g.effects;
+        if (fx && fx.pauseFor) pausedUntil = Math.max(pausedUntil, st.capturedAt + fx.pauseFor);
+      } else {
+        c.cell.classList.toggle('locked', !!c.g.startsLocked && !(st && st.open));
+        c.timeEl.textContent = c.baseText;
+      }
+    }
+    const paused = pausedUntil > t;
+    note.classList.toggle('paused', paused);
+    note.textContent = paused
+      ? 'spawning paused — ' + fmtNum(pausedUntil - t) + 's'
+      : (gatebots ? gatebots + ' gatebots this wave' : 'no gatebots this wave');
+  };
+  update(0);
+  hud.update = update;
   return hud;
 }
 
@@ -1564,10 +1595,12 @@ export function renderMapView(container, file, waveIndex) {
     return panel;
   }
 
+  let gateHud = null;
   const canvas = el('canvas', { class: 'map-canvas' + (ps.tool ? ' painting' : '') });
   canvas.addEventListener('contextmenu', e => { if (ps.tool) e.preventDefault(); });
   const canvasWrap = el('div', { class: 'map-canvaswrap' }, canvas);
-  { const h = buildGateHUD(mapData, wave); if (h) canvasWrap.append(h); }
+  gateHud = buildGateHUD(mapData, wave, ai);
+  if (gateHud) canvasWrap.append(gateHud);
   if (resimulating) canvasWrap.append(el('div', { class: 'map-resim', text: 'Re-simulating…' }));
   const approx = mapData.nav.approx && !approxDismissed.has(mapData.map)
     ? buildApproxBanner(file, mapData)
@@ -1691,6 +1724,8 @@ export function renderMapView(container, file, waveIndex) {
         x: p[0], y: p[1], z: actorZAt(a, t), size: cs.s, r: cs.c[0], g: cs.c[1], b: cs.c[2],
         kind: a.kind, cls: a.kind === 'bot' ? a.bot.cls : null,
         crit: a.kind === 'bot' && !!a.bot.alwaysCrit,
+        ubered: !!(a.uberUntil > t),
+        viaTeleporter: !!a.viaTeleporter,
         modelBase, attachments, loadoutKey, activity, moving, carrying: false, speed, dist: actorDistAt(a, t),
         heading, scale, phase: (Math.floor(a.spawnT * 13) + (a.memberIdx || 0) * 5) % 128
       });
@@ -1751,6 +1786,7 @@ export function renderMapView(container, file, waveIndex) {
         emit('map');
       },
       onTime: tt => {
+        if (gateHud) gateHud.update(tt);
         const alive = countActiveAt(tt);
         timeLbl.textContent = fmtTime(tt) + ' / ' + fmtTime(waveEnd) + ' — ' + alive + ' active';
         if (!ps.playing) setPlayLabel(false);
@@ -1769,7 +1805,8 @@ export function renderMapView(container, file, waveIndex) {
       wrap3d.append(active3D.canvas);
     }
     wrap3d.append(el('div', { class: 'map-3d-hint', text: 'left-drag orbit · right-drag pan · wheel zoom · Fit resets' }));
-    { const h = buildGateHUD(mapData, wave); if (h) wrap3d.append(h); }
+    gateHud = buildGateHUD(mapData, wave, ai);
+    if (gateHud) wrap3d.append(gateHud);
     timeLbl.textContent = fmtTime(ps.t) + ' / ' + fmtTime(waveEnd) + ' — ' + countActiveAt(ps.t) + ' active';
   }
 
