@@ -265,6 +265,19 @@ check('no robot enters the map during the spawn pause',
   !gateAI.actors.some(a => a.spawnT > gateAI.gates[0].capturedAt && a.spawnT < gateAI.spawnPauseUntil - 1e-6),
   gateAI.actors.map(a => a.spawnT.toFixed(1)).join(','));
 
+const deployAI = (() => {
+  const model = buildModel(parse(wrap('TotalCount 1 SpawnCount 1 MaxActive 1 TFBot { Class Scout }')), []);
+  const wave = model.waves[0];
+  const bombMap = { ...mapData, flags: [AT(0)] };
+  return simulateBotAI(wave, simulateWave(wave, { robotLimit: 99, teamDPS: 20 }), bombMap,
+    { deathModel: 'hatch', robotLimit: 99, deployBombTime: 4.5 });
+})();
+check('the bomb is delivered, not lost', deployAI.bomb.deliveredAt != null, String(deployAI.bomb.deliveredAt));
+const deployEv = deployAI.actors.find(a => a.deployUntil != null);
+check('the deploy hold uses the duration it was given, not a baked-in one',
+  deployEv && Math.abs(deployAI.bomb.deliveredAt - deployEv.deployUntil) < 0.2,
+  deployEv ? (deployEv.deployUntil + ' vs ' + deployAI.bomb.deliveredAt) : 'no deploy');
+
 const tankKeys = body => buildModel(parse(wrap(body)), []).waves[0].wavespawns[0].bots.find(b => b.tank).tank;
 const customTank = tankKeys('TotalCount 1 SpawnCount 1 MaxActive 1 Tank { Health 5000 Speed 75 Model "models/bots/boss_bot/boss_blimp.mdl" Skin 1 DisableSmokestack 1 Scale 1.5 }');
 check('a Tank Model override is parsed', customTank.model === 'models/bots/boss_bot/boss_blimp.mdl', String(customTank.model));

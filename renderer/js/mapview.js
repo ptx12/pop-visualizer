@@ -489,6 +489,7 @@ function buildBombHUD(ai) {
 }
 
 const TELEPORTER_MODEL = 'models/buildables/teleporter';
+const DEPLOY_ANIM_MODEL = 'models/bots/scout/bot_scout_animations';
 
 function cleanTankModel(m) {
   return String(m || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\.mdl$/i, '').toLowerCase().trim() || null;
@@ -1327,7 +1328,9 @@ export function renderMapView(container, file, waveIndex) {
   const toggles = navTogglesFor(file, wave);
   const teleBuild = animDurationSync(TELEPORTER_MODEL, 'build');
   if (teleBuild === null) resolveAnimDuration(TELEPORTER_MODEL, 'build').then(v => { if (v) emit('map'); });
-  const aiKey = [waveIndex, model, dps, zMode, paintV, objIdx, bombPath, teleBuild || 0, JSON.stringify(killPts),
+  const deployAnim = animDurationSync(DEPLOY_ANIM_MODEL, 'deploybomb');
+  if (deployAnim === null) resolveAnimDuration(DEPLOY_ANIM_MODEL, 'deploybomb').then(v => { if (v) emit('map'); });
+  const aiKey = [waveIndex, model, dps, zMode, paintV, objIdx, bombPath, teleBuild || 0, deployAnim || 0, JSON.stringify(killPts),
     toggles.enabled.join(','), toggles.disabled.join(',')].join('|');
   const aiOpts = {
     teamDPS: dps, deathModel: model, zonesMode: zMode, killPoints: killPts, objectiveIdx: objIdx, bombPath,
@@ -1338,7 +1341,8 @@ export function renderMapView(container, file, waveIndex) {
     flagCarrierPenalty: file.model.flagCarrierPenalty,
     maxSpeedLimit: file.model.maxSpeedLimit,
     templateEntities: file.model.templateEntities,
-    teleporterBuildTime: teleBuild || 0
+    teleporterBuildTime: teleBuild || 0,
+    deployBombTime: deployAnim || 0
   };
   if (zMode === 'custom') aiOpts.zoneWeights = paint;
   const run = aiRunFor(file, wave, sim, mapData, aiKey, aiOpts);

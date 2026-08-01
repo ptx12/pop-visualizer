@@ -1,4 +1,3 @@
-const DEPLOY_TIME = 1.9;
 const PICKUP_RANGE = 64;
 const AUTO_FLAG_AGE = 1.0;
 const FLAG_ESCORT_RANGE = 500;
@@ -41,7 +40,7 @@ export const deliverFlag = {
     ctx.bomb.pos = a.pos.slice();
     if (d < DEPLOY_RANGE) {
       a.state = 'deployBomb';
-      a.deployUntil = t + DEPLOY_TIME;
+      a.deployUntil = t + (ctx.deployBombTime || 0);
     }
   }
 };
