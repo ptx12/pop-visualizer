@@ -5,6 +5,7 @@ import { parse, serialize } from '../renderer/js/kv.js';
 import { buildModel, ACTION_BLOCK_KEYS } from '../renderer/js/popmodel.js';
 import { knownBotKeys, traitForBlock } from '../renderer/js/sim/traits.js';
 import { extractTemplateEntities, collectTemplates, collectSpawnTemplateRefs } from '../renderer/js/sim/pointtemplates.js';
+import { botModelBase } from '../renderer/js/botmodels.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 let pass = 0, fail = 0;
@@ -116,6 +117,21 @@ check('a named InterruptAction target stays a name, not a point',
   iaBot.interrupts[2].point === null && iaBot.interrupts[2].target === 'controlpoint');
 check('InterruptAction flag fields are read',
   iaBot.interrupts[2].waitUntilDone === true && iaBot.interrupts[2].killAimTarget === true && iaBot.interrupts[2].alwaysLook === true);
+
+const modelBot = body => botModelBase(buildModel(parse(
+  'WaveSchedule { Wave { WaveSpawn { TFBot { ' + body + ' } } } }'), []).waves[0].wavespawns[0].bots[0].bot);
+check('UseCustomModel still overrides the giant model the game would pick',
+  modelBot('Class Soldier Attributes MiniBoss UseCustomModel "models/raf/thing.mdl"') === 'models/raf/thing',
+  modelBot('Class Soldier Attributes MiniBoss UseCustomModel "models/raf/thing.mdl"'));
+check('UseHumanModel still overrides the giant model',
+  modelBot('Class Soldier Attributes MiniBoss UseHumanModel 1') === 'models/player/soldier',
+  modelBot('Class Soldier Attributes MiniBoss UseHumanModel 1'));
+check('a RafMod giant with no model override still gets the giant model',
+  modelBot('Class Soldier Attributes MiniBoss BehaviorModifiers push') === 'models/bots/soldier_boss/bot_soldier_boss',
+  modelBot('Class Soldier Attributes MiniBoss BehaviorModifiers push'));
+check('UseCustomModel pointing at an empty model falls back rather than rendering nothing',
+  modelBot('Class Soldier Attributes MiniBoss UseCustomModel "models/empty.mdl"') === 'models/bots/soldier_boss/bot_soldier_boss',
+  modelBot('Class Soldier Attributes MiniBoss UseCustomModel "models/empty.mdl"'));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

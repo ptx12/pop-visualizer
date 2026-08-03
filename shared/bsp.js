@@ -179,7 +179,7 @@ export function readDynamicProps(bspPath) {
       let model = e.model;
       if (!model || model[0] === '*' || DYN_PROP_SKIP.test(model)) continue;
       model = model.replace(/\\/g, '/').replace(/\.mdl$/i, '').toLowerCase();
-      if (String(e.startdisabled || '').trim() === '1') continue;
+      const startDisabled = String(e.startdisabled || '').trim() === '1';
       if (String(e.rendermode || '').trim() === '10') continue;
       if (String(e.renderamt || '').trim() === '0') continue;
       const origin = (e.origin || '0 0 0').split(/\s+/).map(parseFloat);
@@ -188,7 +188,9 @@ export function readDynamicProps(bspPath) {
       const angles = [ang[0] || 0, ang[1] || 0, ang[2] || 0];
       let scale = parseFloat(e.modelscale);
       if (!(scale > 0.02 && scale < 64)) scale = 1;
-      out.push({ model, origin: [origin[0], origin[1], origin[2]], angles, scale, dynamic: true });
+      const name = String(e.targetname || '').trim().toLowerCase() || null;
+      const parent = String(e.parentname || '').trim().toLowerCase() || null;
+      out.push({ model, origin: [origin[0], origin[1], origin[2]], angles, scale, dynamic: true, name, parent, startDisabled });
     }
     return skyPropFilter(bspPath, out);
   } catch { return []; }
@@ -350,11 +352,27 @@ const NODRAW_CLASS = new Set([
   'func_nobuild', 'func_nogrenades', 'func_occluder', 'func_passtime_goal',
   'func_passtime_goalie_zone', 'func_passtime_no_ball_zone', 'func_powerupvolume',
   'func_precipitation', 'func_proprrespawnzone', 'func_regenerate', 'func_respawnflag',
-  'func_respawnroom', 'func_smokevolume', 'func_suggested_build', 'func_tfbot_hint',
+  'func_respawnroom', 'func_respawnroomvisualizer', 'func_smokevolume', 'func_suggested_build', 'func_tfbot_hint',
   'func_upgradestation', 'func_useableladder', 'func_viscluster', 'func_water',
   'env_bubbles'
 ]);
 const BLEND_RENDERMODE = new Set(['1', '2', '3', '4', '5', '9']);
+const DOOR_LINEAR = new Set(['func_door', 'func_movelinear']);
+const DOOR_ROTATING = new Set(['func_door_rotating']);
+const SF_DOOR_START_OPEN = 1;
+const SF_DOOR_ROTATE_BACKWARDS = 2;
+const SF_DOOR_NONSOLID_TO_PLAYER = 4;
+const SF_DOOR_PASSABLE = 8;
+const SF_DOOR_TOGGLE = 32;
+const SF_DOOR_TOUCH_OPENS = 1024;
+const SF_DOOR_ROTATE_X = 64;
+const SF_DOOR_ROTATE_Y = 128;
+const SF_MOVELINEAR_NOT_SOLID = 8;
+const DOOR_DEFAULT_SPEED = 100;
+const DOOR_DEFAULT_WAIT = 4;
+const DOOR_ROTATE_DEFAULT_DEGREES = 90;
+const MOVELINEAR_DEFAULT_DISTANCE = 100;
+const OUTPUT_SEP = String.fromCharCode(27);
 
 const DEG = Math.PI / 180;
 function angleRotation(pitch, yaw, roll) {
@@ -379,19 +397,131 @@ export function applyBrushXform(xf, p) {
   ];
 }
 
+export function composeBrushXform(outer, inner) {
+  if (!outer) return inner;
+  if (!inner) return outer;
+  const o = applyBrushXform(outer, inner.o);
+  if (!outer.m) return { o, m: inner.m };
+  if (!inner.m) return { o, m: outer.m };
+  const a = outer.m, b = inner.m, m = new Array(9);
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      m[r * 3 + c] = a[r * 3] * b[c] + a[r * 3 + 1] * b[3 + c] + a[r * 3 + 2] * b[6 + c];
+    }
+  }
+  return { o, m };
+}
+
+function axisRotation(axis, deg) {
+  const t = deg * DEG, c = Math.cos(t), s = Math.sin(t), k = 1 - c;
+  const [x, y, z] = axis;
+  return [
+    c + x * x * k, x * y * k - z * s, x * z * k + y * s,
+    y * x * k + z * s, c + y * y * k, y * z * k - x * s,
+    z * x * k - y * s, z * y * k + x * s, c + z * z * k
+  ];
+}
+
+export function doorPoseXform(door, frac) {
+  const f = Math.max(0, Math.min(1, frac));
+  if (!door || !f) return null;
+  if (door.kind === 'rotate') {
+    const m = axisRotation(door.axis, door.degrees * f);
+    const p = door.hinge;
+    return {
+      m,
+      o: [
+        p[0] - (p[0] * m[0] + p[1] * m[1] + p[2] * m[2]),
+        p[1] - (p[0] * m[3] + p[1] * m[4] + p[2] * m[5]),
+        p[2] - (p[0] * m[6] + p[1] * m[7] + p[2] * m[8])
+      ]
+    };
+  }
+  const d = door.travel * f;
+  if (!d) return null;
+  return { m: null, o: [door.dir[0] * d, door.dir[1] * d, door.dir[2] * d] };
+}
+
+function moveDirVector(s) {
+  const v = String(s ?? '').trim().split(/\s+/).map(parseFloat);
+  const p = Number.isFinite(v[0]) ? v[0] : 0;
+  const y = Number.isFinite(v[1]) ? v[1] : 0;
+  const r = Number.isFinite(v[2]) ? v[2] : 0;
+  if (p === -1 && y === 0 && r === 0) return [0, 0, 1];
+  if (p === -2 && y === 0 && r === 0) return [0, 0, -1];
+  const pr = p * DEG, yr = y * DEG;
+  return [Math.cos(pr) * Math.cos(yr), Math.cos(pr) * Math.sin(yr), -Math.sin(pr)];
+}
+
+function num(v, fallback) {
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function defaultVec3(s) {
+  const v = String(s ?? '').trim().split(/\s+/).map(parseFloat);
+  return [0, 1, 2].map(i => (Number.isFinite(v[i]) ? v[i] : 0));
+}
+
+export function doorRecord(e, model, mi, vec3 = defaultVec3) {
+  const cls = String(e.classname || '').toLowerCase();
+  const linear = DOOR_LINEAR.has(cls);
+  if (!linear && !DOOR_ROTATING.has(cls)) return null;
+  const flags = parseInt(e.spawnflags, 10) || 0;
+  const name = String(e.targetname || '').toLowerCase() || null;
+  const speed = Math.max(1, num(e.speed, DOOR_DEFAULT_SPEED));
+  const wait = num(e.wait, DOOR_DEFAULT_WAIT);
+  const base = {
+    model: mi, name, cls, speed, wait,
+    autoReturn: !(flags & SF_DOOR_TOGGLE) && wait >= 0,
+    touchOpens: !!(flags & SF_DOOR_TOUCH_OPENS)
+  };
+  if (linear) {
+    const dir = moveDirVector(e.movedir);
+    let travel, spawnFrac;
+    if (cls === 'func_movelinear') {
+      travel = num(e.movedistance, MOVELINEAR_DEFAULT_DISTANCE);
+      spawnFrac = Math.max(0, Math.min(1, num(e.startposition, 0)));
+      base.autoReturn = false;
+      base.touchOpens = false;
+      base.solid = !(flags & SF_MOVELINEAR_NOT_SOLID);
+    } else {
+      const size = [model.maxs[0] - model.mins[0], model.maxs[1] - model.mins[1], model.maxs[2] - model.mins[2]];
+      travel = Math.abs(dir[0] * size[0]) + Math.abs(dir[1] * size[1]) + Math.abs(dir[2] * size[2]) - num(e.lip, 0);
+      spawnFrac = (flags & SF_DOOR_START_OPEN) || String(e.spawnpos ?? '').trim() === '1' ? 1 : 0;
+      base.solid = !(flags & SF_DOOR_PASSABLE) && !(flags & SF_DOOR_NONSOLID_TO_PLAYER);
+    }
+    if (!(travel > 0)) return null;
+    return { ...base, kind: 'linear', dir, travel, spawnFrac, duration: travel / speed };
+  }
+  const axis = (flags & SF_DOOR_ROTATE_X) ? [1, 0, 0] : (flags & SF_DOOR_ROTATE_Y) ? [0, 1, 0] : [0, 0, 1];
+  let degrees = num(e.distance, DOOR_ROTATE_DEFAULT_DEGREES);
+  if (flags & SF_DOOR_ROTATE_BACKWARDS) degrees = -degrees;
+  if (!degrees) return null;
+  return {
+    ...base, kind: 'rotate', axis, degrees, hinge: vec3(e.origin),
+    spawnFrac: (flags & SF_DOOR_START_OPEN) || String(e.spawnpos ?? '').trim() === '1' ? 1 : 0,
+    solid: !(flags & SF_DOOR_PASSABLE) && !(flags & SF_DOOR_NONSOLID_TO_PLAYER),
+    duration: Math.abs(degrees) / speed
+  };
+}
+
 export function brushModelDrawn(bspPath) {
   const models = readModels(bspPath);
   const drawn = new Uint8Array(models.length);
   const xform = new Array(models.length).fill(null);
-  if (!models.length) return { models, drawn, xform };
+  const doors = [];
+  const doorOf = new Int32Array(models.length).fill(-1);
+  if (!models.length) return { models, drawn, xform, doors, doorOf };
   drawn[0] = 1;
   const text = readEntityLump(bspPath);
-  if (!text) return { models, drawn, xform };
+  if (!text) return { models, drawn, xform, doors, doorOf };
   const vec3 = (s, d = 0) => {
     const v = String(s ?? '').trim().split(/\s+/).map(parseFloat);
     return [0, 1, 2].map(i => (Number.isFinite(v[i]) ? v[i] : d));
   };
-  for (const e of parseEntities(text)) {
+  const ents = parseEntities(text);
+  for (const e of ents) {
     if (!e.model || e.model[0] !== '*') continue;
     const mi = parseInt(e.model.slice(1), 10);
     if (!Number.isInteger(mi) || mi <= 0 || mi >= models.length) continue;
@@ -406,8 +536,10 @@ export function brushModelDrawn(bspPath) {
     const a = vec3(e.angles);
     const m = angleRotation(a[0], a[1], a[2]);
     if (m || o[0] || o[1] || o[2]) xform[mi] = { o, m };
+    const door = doorRecord(e, models[mi], mi, vec3);
+    if (door) { doorOf[mi] = doors.length; doors.push(door); }
   }
-  return { models, drawn, xform };
+  return { models, drawn, xform, doors, doorOf };
 }
 
 export function pakEntries(bspPath) {

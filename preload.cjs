@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld('popnative', {
   fsxList: (dir) => ipcRenderer.invoke('fsx:list', dir),
   matRead: (rel, tfPath, bspPath) => ipcRenderer.invoke('mat:read', rel, tfPath, bspPath),
   matTexture: (rel, tfPath, bspPath) => ipcRenderer.invoke('mat:texture', rel, tfPath, bspPath),
+  matIcon: (mat, tfPath, bspPath) => ipcRenderer.invoke('mat:icon', mat, tfPath, bspPath),
+  buildTimes: tfPath => ipcRenderer.invoke('game:buildtimes', tfPath),
   modelLoad: (src) => ipcRenderer.invoke('model:load', src),
   itemsResolve: (names, tfPath) => ipcRenderer.invoke('items:resolve', names, tfPath),
   itemsWeaponRole: (itemClass, tfPath) => ipcRenderer.invoke('items:weaponrole', itemClass, tfPath),

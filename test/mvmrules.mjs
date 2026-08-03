@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { parse } from '../renderer/js/kv.js';
 import { buildModel, missionActiveOn, probeWaveSpawn } from '../renderer/js/popmodel.js';
 import { simulateWave } from '../renderer/js/sim.js';
+import { KILL_RADIUS, killPointAt, inKillZone } from '../renderer/js/killzones.js';
 
 let pass = 0, fail = 0;
 const check = (name, cond, detail) => {
@@ -119,18 +120,18 @@ const SCOUT = 'TFBot { Class Scout }';
 
 {
   const model = buildModel(parse(`WaveSchedule\n{\n Wave\n {\n  WaveSpawn { Name a TotalCount 2 SpawnCount 1 MaxActive 2 WaitBetweenSpawns 3 ${SCOUT} }\n }\n}\n`), []);
-  const eng = probeWaveSpawn({ cls: 'engineer' }, model.templates);
-  check('a spawned test robot parses as a real wavespawn', eng && eng.bots.length === 1 && eng.bots[0].bot.cls === 'engineer', String(eng && eng.bots.length));
-  check('a spawned test robot is marked as a probe', !!eng.isProbe);
-  const giant = probeWaveSpawn({ cls: 'heavyweapons', giant: true }, model.templates);
-  check('a giant test robot gets giant scale and health', giant.bots[0].bot.isGiant && giant.bots[0].bot.health === 3000,
-    `${giant.bots[0].bot.isGiant} ${giant.bots[0].bot.health}`);
+  const eng = probeWaveSpawn({ where: 'spawnbot_left', teleportWhere: ['spawnbot_left', 'spawnbot_right'] }, model.templates);
+  check('a spawned test engineer parses as a real wavespawn', eng && eng.bots.length === 1 && eng.bots[0].bot.cls === 'engineer', String(eng && eng.bots.length));
+  check('a spawned test engineer is marked as a probe', !!eng.isProbe);
+  check('a spawned test engineer uses the requested spawn point', eng.where.length === 1 && eng.where[0] === 'spawnbot_left', String(eng.where));
+  check('a spawned test engineer carries every TeleportWhere it was given',
+    eng.bots[0].bot.teleportWhere.join(',') === 'spawnbot_left,spawnbot_right', String(eng.bots[0].bot.teleportWhere));
   const withProbe = simulateWave(model.waves[0], { probes: [eng] });
   const without = simulateWave(model.waves[0], {});
-  check('a spawned test robot reaches the simulation', withProbe.probes.length === 1 && withProbe.probes[0].result.events.length === 1,
+  check('a spawned test engineer reaches the simulation', withProbe.probes.length === 1 && withProbe.probes[0].result.events.length === 1,
     String(withProbe.probes.length));
   check('the wave without probes is untouched', without.probes.length === 0);
-  check('a spawned test robot counts against the robot limit', withProbe.probes[0].ws.bots.length === 1 && peakBots(withProbe) > peakBots(without),
+  check('a spawned test engineer counts against the robot limit', withProbe.probes[0].ws.bots.length === 1 && peakBots(withProbe) > peakBots(without),
     `${peakBots(withProbe)} vs ${peakBots(without)}`);
 }
 
@@ -197,6 +198,17 @@ for (const id of [
 ]) {
   const v = V.get(id) || [];
   check(`${id} (${waves} vanilla waves)`, v.length === 0, v.slice(0, 3).join('; '));
+}
+
+{
+  const pts = [[0, 0, 600], [100, 0, 80], [5000, 0, 200]];
+  check('a click inside no zone removes nothing', killPointAt(pts, -4000, -4000) === -1, String(killPointAt(pts, -4000, -4000)));
+  check('a click picks the zone whose centre is nearest, not the first that contains it',
+    killPointAt(pts, 100, 0) === 1, String(killPointAt(pts, 100, 0)));
+  check('a click only inside the wide zone still picks it', killPointAt(pts, 400, 0) === 0, String(killPointAt(pts, 400, 0)));
+  check('a zone with no stored radius falls back to the default',
+    killPointAt([[0, 0]], KILL_RADIUS - 1, 0) === 0 && killPointAt([[0, 0]], KILL_RADIUS + 1, 0) === -1);
+  check('a bot inside any zone is culled', inKillZone(pts, 5010, 10) && !inKillZone(pts, 5010, 400));
 }
 
 console.log(`${pass} passed, ${fail} failed`);

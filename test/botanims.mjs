@@ -1,7 +1,7 @@
 import { existsSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
-import { parseMDL } from '../shared/mdl.js';
+import { parseMDL, sampleAnim } from '../shared/mdl.js';
 import { resolveActivities, includeBases } from '../shared/modelanims.js';
 import { indexVPK, readVPKEntry } from '../shared/vpk.js';
 import { parseVDF, vdfGet } from '../shared/vdf.js';
@@ -157,6 +157,27 @@ for (const [cls, base] of Object.entries(BOTS)) {
   for (const n of runs) if (/_?run_?(s|e|w|se|sw|ne|nw)(?![a-z])/i.test(n)) notForward.push(cls + ' ' + n);
 }
 check('every bot class resolves run and stand for its default weapon', noDefault.length === 0, noDefault.join('; '));
+
+const BOSS_BOTS = {
+  scout: 'models/bots/scout_boss/bot_scout_boss',
+  soldier: 'models/bots/soldier_boss/bot_soldier_boss',
+  pyro: 'models/bots/pyro_boss/bot_pyro_boss',
+  demoman: 'models/bots/demo_boss/bot_demo_boss',
+  heavyweapons: 'models/bots/heavy_boss/bot_heavy_boss'
+};
+const bossMissing = [], bossNoAnim = [];
+for (const [cls, base] of Object.entries(BOSS_BOTS)) {
+  if (!mdlIndex.get(base + '.mdl')) { bossMissing.push(cls); continue; }
+  const map = activityMap(base, wanted);
+  const act = activityForRole(await weaponRole(CLASS_DEFAULT[cls], tfPath));
+  if (!map || !map['ACT_MP_RUN_' + act] || !map['ACT_MP_STAND_' + act]) bossNoAnim.push(cls + ' wants ' + act);
+}
+check('the five giant models CTFBotSpawner picks for minibosses are all present',
+  bossMissing.length === 0, bossMissing.join(', '));
+check('every giant model resolves run and stand like its normal counterpart',
+  bossNoAnim.length === 0, bossNoAnim.join('; '));
+check('the sentry buster model the game assigns in code is present',
+  !!mdlIndex.get('models/bots/demo/bot_sentry_buster.mdl'));
 check('each bot class gets at least 3 distinct run and stand animations', notDistinct.length === 0, notDistinct.join('; '));
 check('run animations are the forward blend cell, never a strafe cell', notForward.length === 0, notForward.slice(0, 4).join('; '));
 
@@ -175,6 +196,52 @@ check('player hitboxes parse off the bot model', !!scoutBase && scoutBase.hitbox
   scoutBase ? scoutBase.hitboxes.length + ' hitboxes' : 'no model');
 const badBox = scoutBase ? scoutBase.hitboxes.filter(h => !(h.bone >= 0 && h.bone < scoutBase.bones.length) || !h.max.every((v, i) => v >= h.min[i])) : [];
 check('every hitbox names a real bone and has a non-inverted extent', badBox.length === 0, badBox.length + ' bad');
+
+const moving = [
+  ['models/bots/boss_bot/tank_track_l', 'forward'],
+  ['models/bots/boss_bot/boss_tank', 'movement'],
+  ['models/props_medieval/barricade_pikes', 'break'],
+  ['models/props_medieval/tank_entrance_rottenburg', 'break2']
+];
+for (const [base, want] of moving) {
+  const entry = mdlIndex.get(base + '.mdl');
+  if (!entry) { check('animation ' + want + ' is present', false, base + ' missing'); continue; }
+  const mdl = parseMDL(readVPKEntry(VPK, entry));
+  const anim = mdl.anims.find(a => a.name.toLowerCase().includes(want));
+  if (!anim || anim.numframes < 2) { check('animation ' + want + ' is present', false, base); continue; }
+  const poses = new Set();
+  for (let f = 0; f < anim.numframes; f++) {
+    const s = sampleAnim(mdl, anim, f);
+    if (!s.ok) continue;
+    poses.add(s.bones.map(b => [...b.pos, ...b.quat].map(v => v.toFixed(3)).join()).join('|'));
+  }
+  check(want + ' actually moves — every frame is not the same pose (' + anim.numframes + ' frames)',
+    poses.size > anim.numframes * 0.5, poses.size + ' distinct poses across ' + anim.numframes + ' frames');
+}
+
+const sectioned = [
+  ['models/bots/boss_bot/tank_track_l', 'forward'],
+  ['models/bots/boss_bot/boss_tank', 'movement']
+];
+for (const [base, want] of sectioned) {
+  const entry = mdlIndex.get(base + '.mdl');
+  if (!entry) { check('sectioned animation ' + want + ' is present', false, base + ' missing'); continue; }
+  const mdl = parseMDL(readVPKEntry(VPK, entry));
+  const anim = mdl.anims.find(a => a.name.toLowerCase().includes(want));
+  if (!anim) { check('sectioned animation ' + want + ' is present', false, base); continue; }
+  let bad = 0;
+  let sampled = 0;
+  for (let f = 0; f < anim.numframes; f++) {
+    const s = sampleAnim(mdl, anim, f);
+    if (!s.ok) { bad++; continue; }
+    sampled++;
+    for (const b of s.bones) {
+      if (!b.pos.every(Number.isFinite) || b.pos.some(v => Math.abs(v) > 400)) { bad++; break; }
+    }
+  }
+  check(want + ' decodes every frame without running off its section (' + anim.numframes + ' frames, sectionframes '
+    + anim.sectionframes + ')', bad === 0 && sampled === anim.numframes, bad + ' bad of ' + anim.numframes);
+}
 
 console.log('');
 console.log(failures === 0 ? 'all bot animation checks passed' : failures + ' failed');

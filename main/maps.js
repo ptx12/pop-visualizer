@@ -312,7 +312,8 @@ export function register() {
           lmUpBright: w.lmUpBright,
           ambient: skyAmbientOf(best.full),
           tonemap: tonemapWithDefaults(tonemap),
-          materials: w.materials.map(m => ({ name: m.name, count: m.count, positions: buf(m.positions), uvs: buf(m.uvs), normals: buf(m.normals), lm: buf(m.lm) })),
+          materials: w.materials.map(m => ({ name: m.name, mover: m.mover, count: m.count, positions: buf(m.positions), uvs: buf(m.uvs), normals: buf(m.normals), lm: buf(m.lm) })),
+          movers: w.movers || [],
           lightmap: w.lightmap ? { width: w.lightmap.width, height: w.lightmap.height, range: w.lightmap.range, rgba: buf(w.lightmap.rgba) } : null
         };
       }

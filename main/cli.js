@@ -10,6 +10,13 @@ export function argValue(flag) {
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
+async function capture(win, shot) {
+  win.webContents.invalidate();
+  await wait(700);
+  const img = await win.webContents.capturePage();
+  await fs.writeFile(shot, img.toPNG());
+}
+
 async function runDock(win, dockHandle) {
   sendCmd({ type: 'nosession' });
   await wait(900);
@@ -28,8 +35,7 @@ async function runDock(win, dockHandle) {
   console.log('[dock] alwaysOnTop:', win.isAlwaysOnTop(), 'visible:', win.isVisible());
   if (shot) {
     try {
-      const img = await win.webContents.capturePage();
-      await fs.writeFile(shot, img.toPNG());
+      await capture(win, shot);
       console.log('[dock] screenshot written');
     } catch (err) { console.error('[dock] shot failed', err); }
   }
@@ -50,7 +56,35 @@ async function runExport(exportOut) {
   setTimeout(() => app.quit(), 15000);
 }
 
+const INPUT_STEPS = {
+  click: () => 't.click()',
+  move: (x, y) => `t.dispatchEvent(new MouseEvent('mousemove', { clientX: ${x}, clientY: ${y}, bubbles: true }))`,
+  down: (x, y) => `t.dispatchEvent(new MouseEvent('mousedown', { clientX: ${x}, clientY: ${y}, button: 0, bubbles: true }))`,
+  up: (x, y) => `window.dispatchEvent(new MouseEvent('mouseup', { clientX: ${x}, clientY: ${y}, button: 0, bubbles: true }))`,
+  drag: (x, y) => `window.dispatchEvent(new MouseEvent('mousemove', { clientX: ${x}, clientY: ${y}, bubbles: true }))`,
+  right: (x, y) => `t.dispatchEvent(new MouseEvent('mousedown', { clientX: ${x}, clientY: ${y}, button: 2, bubbles: true }))`,
+  wheel: (x, y, arg) => `t.dispatchEvent(new WheelEvent('wheel', { clientX: ${x}, clientY: ${y}, deltaY: ${arg || -100}, bubbles: true, cancelable: true }))`
+};
+
+async function runInput(win, spec) {
+  for (const step of spec.split(';').filter(Boolean)) {
+    const [kind, at] = step.split('@');
+    if (kind === 'wait') { await wait(parseInt(at, 10) || 0); continue; }
+    const [x, y, arg] = String(at || '').split(',').map(n => parseInt(n, 10));
+    if (!INPUT_STEPS[kind] || !Number.isFinite(x) || !Number.isFinite(y)) {
+      console.error('[shot] bad input step ' + step);
+      continue;
+    }
+    await win.webContents.executeJavaScript(
+      `(() => { const t = document.elementFromPoint(${x}, ${y}); if (!t) return 'nothing at point';`
+      + ` ${INPUT_STEPS[kind](x, y, arg)}; return t.tagName + '.' + (t.className || ''); })()`
+    ).then(r => console.log('[shot] ' + kind + ' ' + r)).catch(err => console.error('[shot] failed', err));
+    await wait(1500);
+  }
+}
+
 async function runScreenshot(win, shot) {
+  win.webContents.on('console-message', (e, level, msg) => console.log('[page] ' + (msg ?? e.message)));
   sendCmd({ type: 'nosession' });
   await wait(800);
   const openPop = argValue('--open');
@@ -68,8 +102,9 @@ async function runScreenshot(win, shot) {
     sendCmd({ type: 'view', view: viewArg });
     await wait(6000);
   }
-  const img = await win.webContents.capturePage();
-  await fs.writeFile(shot, img.toPNG());
+  const input = argValue('--input');
+  if (input) await runInput(win, input);
+  await capture(win, shot);
   app.quit();
 }
 

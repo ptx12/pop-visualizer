@@ -6,7 +6,6 @@ const SPY_RING_MAX = 6000;
 const SPY_ATTEMPTS = 9;
 const SPY_LURK_RANGE = 350;
 const SPY_LURK_SPEED = 0.6;
-const NEST_ARRIVE_RANGE = 40;
 
 export const medicHeal = {
   id: 'medicHeal',
@@ -75,24 +74,81 @@ export const spyLurk = {
   }
 };
 
+const NEST_ARRIVE_RANGE = 25;
+const HINT_TELEPORT_DELAY = 0.1;
+const FIND_NEST_RETRY_MIN = 1;
+const FIND_NEST_RETRY_MAX = 2;
+const HINT_BOMB_FORWARD_RANGE = 0;
+const HINT_BOMB_BACKWARD_RANGE = 3000;
+const HINT_MIN_DISTANCE_FROM_BOMB = 1300;
+
+export function findEngineerNest(ctx, rng, t = 0, outOfRangeOk = true) {
+  const all = ctx.nests || [];
+  const nests = ctx.hintLive ? all.filter(n => ctx.hintLive(n, t)) : all;
+  if (!nests.length) return null;
+  const bombDist = ctx.hatchDistAt(ctx.bomb.pos);
+  const outside = ctx.hatchDistOutsideSpawns();
+  if (bombDist == null || outside == null) return nests[Math.floor(rng() * nests.length)] || null;
+  const hatchDist = Math.min(outside, bombDist);
+  const back = hatchDist + HINT_BOMB_BACKWARD_RANGE;
+  const fwd = hatchDist - HINT_BOMB_FORWARD_RANGE;
+  const inBand = [], beyond = [], ahead = [];
+  for (const n of nests) {
+    const d = ctx.hatchDistAt(n.origin);
+    if (d == null) continue;
+    if (d > fwd && d < back) {
+      const away = Math.hypot(n.origin[0] - ctx.bomb.pos[0], n.origin[1] - ctx.bomb.pos[1]);
+      if (away >= HINT_MIN_DISTANCE_FROM_BOMB) inBand.push(n);
+    } else if (d > back) beyond.push(n);
+    else ahead.push(n);
+  }
+  const pick = list => (list.length ? list[Math.floor(rng() * list.length)] : null);
+  const chosen = pick(inBand);
+  if (chosen || !outOfRangeOk) return chosen;
+  return pick(beyond) || pick(ahead);
+}
+
 export const engineerToNest = {
   id: 'engineerToNest',
   order: 30,
   selects(a, ctx) { return ctx.clsOf(a) === 'engineer'; },
-  enter(a, ctx) {
-    let best = null, bestD = Infinity;
-    for (const n of ctx.nests) {
-      const d = (n.origin[0] - ctx.bomb.pos[0]) ** 2 + (n.origin[1] - ctx.bomb.pos[1]) ** 2;
-      if (d < bestD) { bestD = d; best = n; }
-    }
-    a.nest = best ? best.origin : (a.spawnPos || ctx.objective);
-    a.nestField = ctx.hasNav ? ctx.navOf(a).flowField((ctx.navOf(a).nearestArea(a.nest) || { id: -1 }).id) : null;
+  enter(a, ctx, t) {
+    a.nestRetryAt = t;
+    takeNest(a, ctx, t);
   },
   step(a, ctx, t, dt, speed) {
+    if (a.nestWaiting) {
+      if (t < a.nestRetryAt) return;
+      takeNest(a, ctx, t);
+      if (a.nestWaiting) return;
+    }
+    if (a.hintTeleportAt != null) {
+      if (t < a.hintTeleportAt) return;
+      a.hintTeleportAt = null;
+      a.viaTeleporter = true;
+      ctx.placeActor(a, a.nest);
+      a.state = 'engineerBuild';
+      return;
+    }
     const d = ctx.moveField(a, a.nestField, a.nest, dt, speed);
-    if (d < NEST_ARRIVE_RANGE) a.state = 'engineerBuild';
+    if (d <= NEST_ARRIVE_RANGE || d <= speed * dt) a.state = 'engineerBuild';
   }
 };
+
+function takeNest(a, ctx, t) {
+  const toHint = !!(a.bot && a.bot.teleportToHint);
+  const best = findEngineerNest(ctx, ctx.rng, t, !toHint);
+  if (!best && toHint && (ctx.nests || []).length) {
+    a.nestWaiting = true;
+    a.nestRetryAt = t + FIND_NEST_RETRY_MIN + ctx.rng() * (FIND_NEST_RETRY_MAX - FIND_NEST_RETRY_MIN);
+    return;
+  }
+  a.nestWaiting = false;
+  a.nestHint = best;
+  a.nest = best ? best.origin : (a.spawnPos || ctx.objective);
+  a.nestField = ctx.hasNav ? ctx.navOf(a).flowField((ctx.navOf(a).nearestArea(a.nest) || { id: -1 }).id) : null;
+  a.hintTeleportAt = toHint && best ? t + HINT_TELEPORT_DELAY : null;
+}
 
 export const engineerBuild = {
   id: 'engineerBuild',
@@ -101,10 +157,16 @@ export const engineerBuild = {
     if (!where.length || a.builtTeleporter) return;
     a.builtTeleporter = true;
     let pos = a.nest || a.pos;
-    let bestD = Infinity;
-    for (const h of ctx.teleExits || []) {
-      const d = (h.origin[0] - a.pos[0]) ** 2 + (h.origin[1] - a.pos[1]) ** 2;
-      if (d < bestD) { bestD = d; pos = h.origin; }
+    const nestName = a.nestHint && a.nestHint.name;
+    const live = (ctx.teleExits || []).filter(h => !ctx.hintLive || ctx.hintLive(h, t));
+    const owned = nestName ? live.filter(h => h.name === nestName) : [];
+    if (owned.length) pos = owned[Math.floor(ctx.rng() * owned.length)].origin;
+    else {
+      let bestD = Infinity;
+      for (const h of live) {
+        const d = (h.origin[0] - a.pos[0]) ** 2 + (h.origin[1] - a.pos[1]) ** 2;
+        if (d < bestD) { bestD = d; pos = h.origin; }
+      }
     }
     ctx.teleporters.push({
       pos: [pos[0], pos[1], Number.isFinite(pos[2]) ? pos[2] : (a.z || 0)],
@@ -125,9 +187,10 @@ export const busterToSentry = {
   id: 'busterToSentry',
   order: 25,
   selects(a, ctx) { return isSentryBuster(a) && (ctx.nests || []).length > 0; },
-  enter(a, ctx) {
+  enter(a, ctx, t) {
+    const nests = ctx.hintLive ? (ctx.nests || []).filter(n => ctx.hintLive(n, t)) : (ctx.nests || []);
     let best = null, bestD = Infinity;
-    for (const n of ctx.nests) {
+    for (const n of nests) {
       const d = (n.origin[0] - a.pos[0]) ** 2 + (n.origin[1] - a.pos[1]) ** 2;
       if (d < bestD) { bestD = d; best = n; }
     }
@@ -165,12 +228,30 @@ export const gatebotToGate = {
       a.gate = g;
       a.gateField = ctx.hasNav ? ctx.navOf(a).flowField((ctx.navOf(a).nearestArea(g.pos) || { id: -1 }).id) : null;
     }
-    ctx.moveField(a, a.gateField, a.gate.pos, dt, speed);
+    const order = ctx.navOrder ? ctx.navOrder(a, t) : null;
+    if (order && order.prereq !== a.navOrderFrom) {
+      a.navOrderFrom = order.prereq;
+      a.navOrderDest = order.dest || null;
+      a.navWaitUntil = order.wait != null ? t + order.wait : null;
+      a.navOrderField = order.dest && ctx.hasNav
+        ? ctx.navOf(a).flowField((ctx.navOf(a).nearestArea(order.dest) || { id: -1 }).id)
+        : null;
+    }
+    if (a.navWaitUntil != null) {
+      if (t < a.navWaitUntil) return;
+      a.navWaitUntil = null;
+    }
+    if (a.navOrderDest) {
+      const od = ctx.moveField(a, a.navOrderField, a.navOrderDest, dt, speed);
+      if (od > NEST_ARRIVE_RANGE && !inGateVolume(a, a.gate)) return;
+      a.navOrderDest = null;
+      a.navOrderFrom = null;
+    } else {
+      ctx.moveField(a, a.gateField, a.gate.pos, dt, speed);
+    }
     if (!inGateVolume(a, a.gate)) return;
+    if (!ctx.gateCappable(a.gate, t)) return;
     a.gate.holders++;
-    if (a.gate.holders < a.gate.def.capCount) return;
-    a.gate.progress += dt;
-    if (a.gate.progress >= a.gate.def.capTime) ctx.captureGate(a.gate, t);
   }
 };
 
@@ -179,8 +260,9 @@ export const sniperToSpot = {
   id: 'sniperToSpot',
   order: 26,
   selects(a, ctx) { return ctx.clsOf(a) === 'sniper' && (ctx.sniperSpots || []).length > 0; },
-  enter(a, ctx) {
-    const spots = ctx.sniperSpots;
+  enter(a, ctx, t) {
+    const all = ctx.sniperSpots || [];
+    const spots = ctx.hintLive ? all.filter(h => ctx.hintLive(h, t)) : all;
     let best = null, bestD = Infinity;
     for (const h of spots) {
       const d = (h.origin[0] - ctx.bomb.pos[0]) ** 2 + (h.origin[1] - ctx.bomb.pos[1]) ** 2;
@@ -194,6 +276,15 @@ export const sniperToSpot = {
     if (ctx.sameArea(a, a.sniperSpot)) a.state = 'sniperLurk';
   }
 };
+
+export const idle = {
+  id: 'idle',
+  order: 5,
+  selects(a) { return !!(a.bot && behaviourIsIdle(a.bot.action)); },
+  step() {}
+};
+
+const behaviourIsIdle = action => /^(idle|passive)$/i.test(String(action || '').trim());
 
 export const sniperLurk = {
   id: 'sniperLurk',

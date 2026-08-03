@@ -253,7 +253,10 @@ export function simOptsPanel(file) {
     invalidateSims();
     emit();
   })));
-  wrap.append(mk('Team damage per second', 'teamDPS', 100, 6000, 'Robots die when this damage has chewed through their health. Damage is shared across everything alive.'));
+  wrap.append(mk('Team damage per second', 'teamDPS', 100, 6000,
+    model === 'damage'
+      ? 'Combined defender damage per second, shared across everything alive. Sets when robots die on the timeline and inside the damage zones on the map.'
+      : 'Combined defender damage per second, shared across everything alive. Sets when robots die on the wave timeline — on the map they follow the death model above.'));
   return wrap;
 }
 

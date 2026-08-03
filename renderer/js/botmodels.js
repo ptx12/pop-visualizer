@@ -13,6 +13,17 @@ export const BOT_MODEL = {
   spy: 'models/bots/spy/bot_spy'
 };
 
+export const BOT_BOSS_MODEL = {
+  scout: 'models/bots/scout_boss/bot_scout_boss',
+  soldier: 'models/bots/soldier_boss/bot_soldier_boss',
+  pyro: 'models/bots/pyro_boss/bot_pyro_boss',
+  demoman: 'models/bots/demo_boss/bot_demo_boss',
+  heavyweapons: 'models/bots/heavy_boss/bot_heavy_boss'
+};
+
+export const MINIBOSS_SCALE = 1.75;
+export const SENTRY_BUSTER_MODEL = 'models/bots/demo/bot_sentry_buster';
+
 const HUMAN_MODEL = {
   scout: 'models/player/scout', soldier: 'models/player/soldier', pyro: 'models/player/pyro',
   demoman: 'models/player/demo', heavyweapons: 'models/player/heavy', engineer: 'models/player/engineer',
@@ -157,49 +168,56 @@ export async function loadPropModel(base, bsp = null) {
   let pos = f32(payload.positions), nrm = f32(payload.normals);
   const bones = payload.bones;
   const anim = (payload.anims && payload.anims.length) ? payload.anims[0] : null;
-  if (bones && bones.length && anim && anim.numframes > 0 && payload.boneWeights && payload.boneIds) {
-    const nb = bones.length;
+  let world = null;
+  if (bones && bones.length) {
     const bindWorld = [], invBind = [];
-    for (let b = 0; b < nb; b++) {
+    for (let b = 0; b < bones.length; b++) {
       const local = quatMat(bones[b].quat, bones[b].pos);
       const w = bones[b].parent >= 0 ? matMul(bindWorld[bones[b].parent], local) : local;
       bindWorld.push(w);
       invBind.push(matInvertRigid(w));
     }
-    const af = f32(anim.frames);
-    const world = [], skin = [];
-    for (let b = 0; b < nb; b++) {
-      const o = b * 7;
-      const local = quatMat([af[o + 3], af[o + 4], af[o + 5], af[o + 6]], [af[o], af[o + 1], af[o + 2]]);
-      const w = bones[b].parent >= 0 ? matMul(world[bones[b].parent], local) : local;
-      world.push(w);
-      skin.push(matMul(w, invBind[b]));
+    world = bindWorld;
+    if (anim && anim.numframes > 0 && payload.boneWeights && payload.boneIds) {
+      const af = f32(anim.frames);
+      const posedWorld = [], skin = [];
+      for (let b = 0; b < bones.length; b++) {
+        const o = b * 7;
+        const local = quatMat([af[o + 3], af[o + 4], af[o + 5], af[o + 6]], [af[o], af[o + 1], af[o + 2]]);
+        const w = bones[b].parent >= 0 ? matMul(posedWorld[bones[b].parent], local) : local;
+        posedWorld.push(w);
+        skin.push(matMul(w, invBind[b]));
+      }
+      const posed = skinPose(pos, nrm, f32(payload.boneWeights), u8(payload.boneIds), skin);
+      pos = posed.pos; nrm = posed.nrm;
+      world = posedWorld;
     }
-    const posed = skinPose(pos, nrm, f32(payload.boneWeights), u8(payload.boneIds), skin);
-    pos = posed.pos; nrm = posed.nrm;
   }
+  let boneMatrices = null;
+  let attachMatrices = null;
   let boneOrigins = null;
   let attachOrigins = null;
-  if (bones && bones.length) {
-    const w = [];
+  if (world) {
+    boneMatrices = {};
     boneOrigins = {};
     for (let b = 0; b < bones.length; b++) {
-      const local = quatMat(bones[b].quat, bones[b].pos);
-      const m = bones[b].parent >= 0 && w[bones[b].parent] ? matMul(w[bones[b].parent], local) : local;
-      w.push(m);
-      boneOrigins[String(bones[b].name || '').toLowerCase()] = [m[12], m[13], m[14]];
+      const key = String(bones[b].name || '').toLowerCase();
+      boneMatrices[key] = world[b];
+      boneOrigins[key] = [world[b][12], world[b][13], world[b][14]];
     }
     for (const at of payload.attachments || []) {
-      const b = w[at.localbone];
-      if (!b || !at.local) continue;
-      const m = matMul(b, at.local);
-      if (!attachOrigins) attachOrigins = {};
-      attachOrigins[String(at.name || '').toLowerCase()] = [m[12], m[13], m[14]];
+      const b = world[at.localbone];
+      if (!b) continue;
+      const m = at.local ? matMul(b, at.local) : b;
+      if (!attachMatrices) { attachMatrices = {}; attachOrigins = {}; }
+      const key = String(at.name || '').toLowerCase();
+      attachMatrices[key] = m;
+      attachOrigins[key] = [m[12], m[13], m[14]];
     }
   }
   return {
     positions: pos, normals: nrm, uv: f32(payload.uvs), idx: u32(payload.indices),
-    meshes: payload.meshes || [], boneOrigins, attachOrigins,
+    meshes: payload.meshes || [], boneOrigins, attachOrigins, boneMatrices, attachMatrices,
     textures: payload.textures || [], cdtextures: payload.cdtextures || [], skins: payload.skins || []
   };
 }
@@ -211,6 +229,8 @@ export function botModelBase(bot) {
     if (m && !EMPTY_RE.test(m)) return m;
   }
   if (bot.useHumanModel && HUMAN_MODEL[bot.cls]) return HUMAN_MODEL[bot.cls];
+  const boss = BOT_BOSS_MODEL[bot.cls];
+  if (boss && (bot.isMiniBoss || (bot.scale != null && bot.scale >= MINIBOSS_SCALE))) return boss;
   return BOT_MODEL[bot.cls] || null;
 }
 
@@ -225,25 +245,30 @@ export async function resolveBotItems(names) {
   return true;
 }
 
-function botItemRecs(bot) {
+function botItemRecs(bot, styles) {
   const out = [];
+  const want = styles || bot.itemStyles || null;
   for (const it of (bot.items || [])) {
-    const rec = itemCache.get(String(it).toLowerCase());
+    const key = String(it).toLowerCase();
+    const rec = itemCache.get(key);
     if (!rec) continue;
-    const model = (rec.modelPerClass && rec.modelPerClass[bot.cls]) || rec.model;
+    let model = (rec.modelPerClass && rec.modelPerClass[bot.cls]) || rec.model;
+    const idx = want ? want[key] : undefined;
+    const style = idx !== undefined && rec.styles ? rec.styles[String(idx)] : null;
+    if (style && style.model) model = style.model;
     if (model && !EMPTY_RE.test(model)) out.push({ ...rec, model });
   }
   return out;
 }
 
-export function botCosmeticModels(bot) {
+export function botCosmeticModels(bot, styles) {
   if (!bot) return [];
-  return botItemRecs(bot).filter(r => !r.isWeapon && !r.wearable).map(r => r.model);
+  return botItemRecs(bot, styles).filter(r => !r.isWeapon && !r.wearable).map(r => r.model);
 }
 
 const SLOT_INDEX = { primary: 0, secondary: 1, melee: 2 };
 
-export function botLoadout(bot) {
+export function botLoadout(bot, styles) {
   if (!bot) return { models: [], role: null, itemClass: null };
   const stripped = new Set(bot.stripSlots || []);
   const restriction = String(bot.restriction || '').toLowerCase().replace(/[^a-z]/g, '');
@@ -260,7 +285,7 @@ export function botLoadout(bot) {
     role = pick.slot === SLOT_INDEX.melee ? 'melee' : pick.slot === SLOT_INDEX.secondary ? 'secondary' : 'primary';
   }
 
-  const recs = botItemRecs(bot);
+  const recs = botItemRecs(bot, styles);
   const wearables = recs.filter(r => r.wearable);
   if (!out.length) {
     const active = recs.find(r => r.isWeapon && !r.wearable && r.slot === activeSlot)
@@ -275,8 +300,8 @@ export function botLoadout(bot) {
   return { models: [...new Set(out.filter(Boolean))], role, itemClass };
 }
 
-export function botWeaponModels(bot) {
-  return botLoadout(bot).models;
+export function botWeaponModels(bot, styles) {
+  return botLoadout(bot, styles).models;
 }
 
 const roleCache = new Map();
@@ -306,6 +331,55 @@ export function botWeaponClass(bot) {
 export function botWeaponModel(bot) {
   const list = botWeaponModels(bot);
   return list.length ? list[0] : null;
+}
+
+export async function loadPropAnim(base, animName, bsp = null) {
+  if (!base || !animName) return null;
+  const want = String(animName).toLowerCase().replace(/^@/, '');
+  const tfPath = await getTFPath();
+  const payload = await window.popnative.modelLoad({ kind: 'vpk', base, tfPath, bsp, animMatch: [want] });
+  if (!payload || payload.error || !payload.positions) return null;
+  const bones = payload.bones;
+  if (!bones || !bones.length || !payload.boneWeights || !payload.boneIds) return null;
+  const anim = (payload.anims || []).find(a => String(a.name || '').toLowerCase().replace(/^@/, '') === want)
+    || (payload.anims || []).find(a => String(a.name || '').toLowerCase().includes(want));
+  if (!anim || !(anim.numframes > 0)) return null;
+
+  const pos = f32(payload.positions), nrm = f32(payload.normals), uv = f32(payload.uvs);
+  const bw = f32(payload.boneWeights), bi = u8(payload.boneIds), idx = u32(payload.indices);
+  const nb = bones.length;
+  const bindWorld = [], invBind = [];
+  for (let b = 0; b < nb; b++) {
+    const local = quatMat(bones[b].quat, bones[b].pos);
+    const world = bones[b].parent >= 0 ? matMul(bindWorld[bones[b].parent], local) : local;
+    bindWorld.push(world);
+    invBind.push(matInvertRigid(world));
+  }
+  const af = f32(anim.frames);
+  const frames = [];
+  const boneWorldFrames = [];
+  for (let f = 0; f < anim.numframes; f++) {
+    const world = [], skin = [];
+    for (let b = 0; b < nb; b++) {
+      const o = (f * nb + b) * 7;
+      const local = quatMat([af[o + 3], af[o + 4], af[o + 5], af[o + 6]], [af[o], af[o + 1], af[o + 2]]);
+      const w = bones[b].parent >= 0 ? matMul(world[bones[b].parent], local) : local;
+      world.push(w);
+      skin.push(matMul(w, invBind[b]));
+    }
+    boneWorldFrames.push(world);
+    frames.push(skinPose(pos, nrm, bw, bi, skin));
+  }
+  return {
+    frames, uv, idx,
+    meshes: payload.meshes || [],
+    textures: payload.textures || [], cdtextures: payload.cdtextures || [], skins: payload.skins || [],
+    numframes: frames.length, fps: anim.fps || 30,
+    runCount: frames.length, standCount: 0, standFps: anim.fps || 30,
+    moveDist: anim.moveDist || 0,
+    boneWorldFrames, boneNames: bones.map(b => String(b.name || '').toLowerCase()),
+    flagFrames: null, hitboxes: [], bbox: payload.bbox
+  };
 }
 
 export async function loadBotPose(base, activity) {

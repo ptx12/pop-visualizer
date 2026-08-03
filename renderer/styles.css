@@ -1,3 +1,4 @@
+[hidden] { display: none !important; }
 :root {
   --bg0: #101214;
   --bg1: #16181b;
@@ -1623,32 +1624,51 @@ body.no-file .splitter { display: none; }
 .mission-count { position: absolute; left: 3px; top: -1px; font-size: 9px; color: #f0e2c0; }
 
 .gate-hud { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 6; pointer-events: none; display: flex; flex-direction: column; align-items: center; gap: 3px; }
-.gate-strip { display: flex; gap: 6px; pointer-events: auto; }
+.gate-strip { display: flex; flex-direction: column; gap: 4px; pointer-events: auto; align-items: flex-start; }
 .gate-cell { display: flex; align-items: center; gap: 7px; padding: 5px 10px 5px 6px; border-radius: 5px; background: #12161ccc; border: 1px solid #3a4657; backdrop-filter: blur(3px); }
 .gate-cell.locked { opacity: .62; border-style: dashed; }
 .gate-cell.idle { opacity: .45; }
-.gate-icon { width: 24px; height: 24px; border-radius: 3px; display: grid; place-items: center; font-weight: 700; font-size: 13px; color: #0d1015; background: #d94a4a; }
-.gate-cell.locked .gate-icon { background: #6d7580; }
+.gate-icon { width: 32px; height: 32px; position: relative; display: grid; place-items: center; }
+.gate-cap { position: absolute; inset: 0; overflow: hidden; display: flex; align-items: flex-end; pointer-events: none; }
+.gate-cap-fill { width: 100%; height: 0; background: linear-gradient(to top, #ffffff40, #ffffff14); border-top: 1px solid #ffffff9c; }
+.gate-count { position: absolute; right: -3px; bottom: -3px; min-width: 13px; height: 13px; padding: 0 2px; border-radius: 7px; background: #12161c; border: 1px solid #d0b070; color: #f2e3bd; font-size: 9px; line-height: 11px; text-align: center; font-weight: 700; }
+.gate-cell.capping { border-color: #d0b070; }
+.gate-icon-base, .gate-icon-overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; image-rendering: auto; }
+.gate-icon-letter { width: 24px; height: 24px; border-radius: 3px; display: grid; place-items: center; font-weight: 700; font-size: 13px; color: #0d1015; background: #d94a4a; }
+.gate-cell.locked .gate-icon-letter { background: #6d7580; }
+.gate-cell.locked .gate-icon { filter: grayscale(.7); }
 .gate-name { font-size: 11px; color: #e6ebf2; line-height: 1.15; }
 .gate-time { font-size: 10px; color: var(--muted); line-height: 1.15; }
 .gate-note { font-size: 10px; letter-spacing: .06em; color: #d0d8e2; background: #12161caa; padding: 2px 7px; border-radius: 3px; }
 .gate-note.muted { color: var(--muted); }
 .gate-fx { font-size: 10px; color: #c9a45e; line-height: 1.2; }
 .gate-cell.captured { border-color: #4f7fd0; }
-.gate-cell.captured .gate-icon { background: #4f8fe0; }
+.gate-cell.captured .gate-icon-letter { background: #4f8fe0; }
 .gate-note.paused { color: #e0b95a; }
-.opt-row.probe-giant { gap: 6px; cursor: pointer; }
-.opt-row.probe-giant input { margin: 0; }
 .tl-row.row-probe .mission-spawn { background: repeating-linear-gradient(135deg, #2f6b3a 0 5px, #24512d 5px 10px); border-color: #4c9a5e; }
 
-.bomb-hud { position: absolute; top: 8px; left: 10px; z-index: 6; display: flex; align-items: center; gap: 8px; padding: 5px 10px 5px 6px; border-radius: 5px; background: #12161ccc; border: 1px solid #3a4657; backdrop-filter: blur(3px); opacity: .55; }
+.map-status { position: absolute; top: 8px; left: 10px; z-index: 6; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.bomb-hud { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 5px; background: #12161ccc; border: 1px solid #3a4657; backdrop-filter: blur(3px); opacity: .6; }
 .bomb-hud.held { opacity: 1; border-color: #b07a34; }
 .bomb-hud.taunting { border-color: #d9a441; }
 .bomb-hud.delivered { border-color: #a33f3f; opacity: 1; }
-.bomb-icon { width: 26px; height: 24px; border-radius: 3px; display: grid; place-items: center; font-size: 8px; font-weight: 700; letter-spacing: .04em; color: #0d1015; background: #6d7580; }
-.bomb-hud.held .bomb-icon { background: #d59a3f; }
-.bomb-hud.delivered .bomb-icon { background: #d05656; }
-.bomb-label { font-size: 11px; color: #e6ebf2; line-height: 1.2; }
-.bomb-pips { display: flex; gap: 3px; margin-top: 3px; }
-.bomb-pips i { width: 14px; height: 4px; border-radius: 2px; background: #39414d; }
-.bomb-pips i.on { background: #e0b95a; }
+.bomb-icon { width: 32px; height: 32px; object-fit: contain; }
+.bomb-hud.delivered .bomb-icon { opacity: .5; }
+.bomb-upgrades { display: flex; flex-direction: column-reverse; gap: 1px; }
+.bomb-upgrade { width: 19px; height: 19px; object-fit: contain; opacity: .75; }
+.bomb-upgrade.on { opacity: 1; }
+.bomb-meter { position: relative; width: 96px; height: 24px; }
+.bomb-meter-base, .bomb-meter-frame { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; }
+.bomb-meter-frame { pointer-events: none; }
+.bomb-meter-clip { position: absolute; top: 0; bottom: 0; left: 0; width: 0; overflow: hidden; }
+.bomb-meter-fill { width: 96px; height: 24px; background-size: 96px 24px; background-repeat: no-repeat; }
+
+.tank-hud { display: flex; flex-direction: column; gap: 2px; }
+.tank-panel { position: relative; width: 200px; height: 24px; }
+.tank-panel::before { content: ''; position: absolute; inset: 0; border: 5px solid transparent; border-image: var(--tank-panel) 22 fill / 5px; }
+.tank-icon { position: absolute; left: 10px; top: 3px; width: 18px; height: 18px; object-fit: contain; }
+.tank-bar { position: absolute; left: 34px; top: 6px; width: 155px; height: 12px; }
+.tank-bar::before { content: ''; position: absolute; inset: 0; border: 5px solid transparent; border-image: var(--tank-track) 22 fill / 5px; }
+.tank-bar-fill { position: absolute; left: 1px; top: 1px; height: 10px; width: 0; }
+.tank-bar-fill::before { content: ''; position: absolute; inset: 0; border: 5px solid transparent; border-image: var(--tank-fill) 22 fill / 5px; }
+

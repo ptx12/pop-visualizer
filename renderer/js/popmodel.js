@@ -130,13 +130,14 @@ function parseInterruptBlock(node) {
 
 export function resolveBot(node, templates, stack = []) {
   const info = {
-    isGiant: false, isBoss: false, alwaysCrit: false, ignoreFlag: false,
+    isGiant: false, isMiniBoss: false, isBoss: false, alwaysCrit: false, ignoreFlag: false,
     aggressive: false, mobber: false, teleportToHint: false, ignoreEnemies: false,
     autoJump: false, parachute: false, airChargeOnly: false, projectileShield: false,
     noBombUpgrades: false, noPushAway: false, healRateMult: 1, healthRegen: 0,
     immune: new Set(), knownFlags: new Set(), loadout: {}, combat: {},
     behaviorModifiers: [], extAttrs: [], spawnTemplates: [], itemNames: [],
     stripItems: [], teleportWhere: [], eventAttributes: [], firedTargets: [],
+    itemStyles: {}, revertItemStyles: {},
     addConds: [], changeAttributes: [], blocks: {},
     suppressFetch: false, neutral: false,
     action: null,
@@ -172,6 +173,18 @@ export function resolveBot(node, templates, stack = []) {
   return info;
 }
 
+const STYLE_ATTR = /^item style override$/i;
+
+function collectItemStyle(block, into) {
+  let name = null, style = null;
+  for (const a of block.children) {
+    if (a.type !== 'kv') continue;
+    if (/^itemname$/i.test(a.key)) name = String(a.value || '').trim().toLowerCase();
+    else if (STYLE_ATTR.test(a.key)) style = parseInt(a.value, 10);
+  }
+  if (name && Number.isFinite(style)) into[name] = style;
+}
+
 function applyBotBlock(node, info, templates, stack) {
   const tmplKV = findFirst(node, 'Template');
   if (tmplKV && tmplKV.type === 'kv' && tmplKV.value) {
@@ -191,6 +204,15 @@ function applyBotBlock(node, info, templates, stack) {
       const blockTrait = traitForBlock(bk);
       if (blockTrait) {
         blockTrait.apply(info, c, TRAIT_API);
+        if (bk === 'eventchangeattributes') {
+          for (const ev of c.children) {
+            if (ev.type !== 'block') continue;
+            if (ev.key.toLowerCase() === 'default') { applyBotBlock(ev, info, templates, stack); continue; }
+            for (const b of ev.children) {
+              if (b.type === 'block' && b.key.toLowerCase() === 'itemattributes') collectItemStyle(b, info.revertItemStyles);
+            }
+          }
+        }
         continue;
       }
       if (ACTION_BLOCK_KEYS.has(bk)) {
@@ -198,6 +220,7 @@ function applyBotBlock(node, info, templates, stack) {
         continue;
       }
       if (bk === 'characterattributes' || bk === 'itemattributes') {
+        if (bk === 'itemattributes') collectItemStyle(c, info.itemStyles);
         for (const a of c.children) {
           if (a.type !== 'kv') continue;
           for (const t of traitsForAttribute(a.key)) t.apply(info, a.value, TRAIT_API);
@@ -370,20 +393,20 @@ export function parseMission(node, templates) {
 }
 
 export function probeWaveSpawn(spec, templates) {
-  const cls = String(spec.cls || 'scout');
-  const where = String(spec.where || 'spawnbot');
+  const where = String((spec && spec.where) || 'spawnbot');
   const lines = [
     'WaveSpawn', '{', '	Name __probe', '	TotalCount 1', '	SpawnCount 1', '	MaxActive 1',
-    '	Where ' + where, '	TFBot', '	{', '		Class ' + cls
+    '	Where ' + where, '	TFBot', '	{', '		Class Engineer'
   ];
-  if (spec.giant) lines.push('		Scale 1.75', '		Health 3000');
-  if (spec.tag) lines.push('		Tag ' + spec.tag);
+  for (const w of (spec && spec.teleportWhere) || []) lines.push('		TeleportWhere ' + w);
+  for (const at of (spec && spec.attrs) || []) lines.push('		Attributes ' + at);
   lines.push('	}', '}');
   const doc = parse(lines.join('\n') + '\n');
   const node = (doc.children || []).find(c => c.type === 'block');
   if (!node) return null;
   const ws = parseWaveSpawn(node, templates || new Map(), null);
   ws.isProbe = true;
+  if (spec && spec.pos) ws.spawnAt = spec.pos.slice(0, 3);
   return ws;
 }
 

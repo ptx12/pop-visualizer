@@ -17,6 +17,20 @@ const BASENAME_KEYS = { ...CLASS_KEYS, demoman: 'demo' };
 
 const cleanModel = m => String(m).replace(/\\/g, '/').replace(/\.mdl$/i, '').toLowerCase();
 
+function styleModels(it, field) {
+  const styles = field(it, 'visuals');
+  const block = styles && typeof styles === 'object' ? vdfGet(styles, 'styles') : null;
+  if (!block || typeof block !== 'object' || Array.isArray(block)) return null;
+  const out = {};
+  for (const [idx, st] of Object.entries(block)) {
+    if (!st || typeof st !== 'object') continue;
+    const m = vdfGet(st, 'model_player');
+    if (typeof m !== 'string' || !m) continue;
+    out[String(parseInt(idx, 10))] = { model: cleanModel(m) };
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 let schemaCache = null;
 async function loadSchema(tfPath) {
   if (schemaCache && schemaCache.tfPath === tfPath) return schemaCache;
@@ -64,6 +78,7 @@ async function loadSchema(tfPath) {
         slot, isWeapon: WEAPON_SLOTS.has(slot),
         wearable: /wearable/.test(itemClass),
         itemClass,
+        styles: styleModels(it, field),
         animSlot: normalizeRole(field(it, 'anim_slot'))
       };
       const name = it.name;

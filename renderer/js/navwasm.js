@@ -43,11 +43,11 @@ export function navWasmReady() {
 
 function upload(areas, weights) {
   const n = areas.length;
-  const flat = new Float64Array(n * 10);
+  const flat = new Float64Array(n * 12);
   const conns = [];
   for (let i = 0; i < n; i++) {
     const a = areas[i];
-    const b = i * 10;
+    const b = i * 12;
     flat[b] = a.id;
     flat[b + 1] = a.nw[0];
     flat[b + 2] = a.nw[1];
@@ -58,6 +58,8 @@ function upload(areas, weights) {
     flat[b + 7] = weights.get(a.id) || 1;
     flat[b + 8] = conns.length;
     flat[b + 9] = a.connect.length;
+    flat[b + 10] = Number.isFinite(a.neZ) ? a.neZ : a.nw[2];
+    flat[b + 11] = Number.isFinite(a.swZ) ? a.swZ : a.se[2];
     for (const c of a.connect) conns.push(c);
   }
   const connArr = new Int32Array(conns);
@@ -115,10 +117,36 @@ export function buildNavGraphWasm(mapData, weights) {
           const v = arr[id];
           return v === undefined || !isFinite(v) ? undefined : v;
         },
+        has(id) {
+          const v = arr[id];
+          return v !== undefined && isFinite(v);
+        },
         values() {
           const vals = [];
           for (const v of arr) if (isFinite(v)) vals.push(v);
           return vals;
+        },
+        keys() {
+          const ids = [];
+          for (let i = 0; i < arr.length; i++) if (isFinite(arr[i])) ids.push(i);
+          return ids;
+        },
+        entries() {
+          const out = [];
+          for (let i = 0; i < arr.length; i++) if (isFinite(arr[i])) out.push([i, arr[i]]);
+          return out;
+        },
+        [Symbol.iterator]() {
+          let i = 0;
+          return {
+            next() {
+              while (i < arr.length && !isFinite(arr[i])) i++;
+              if (i >= arr.length) return { done: true, value: undefined };
+              const pair = [i, arr[i]];
+              i++;
+              return { done: false, value: pair };
+            }
+          };
         }
       }
     };
@@ -158,14 +186,16 @@ export function buildNavGraphWasm(mapData, weights) {
     return ret;
   }
 
+  const standZ = a => (Number.isFinite(a.z) ? a.z : NaN);
+
   function moveAlong(a, targetPt, dt, speed) {
-    const ret = mod.move_along(a.pos[0], a.pos[1], NaN, a.areaId == null ? -1 : a.areaId, targetPt[0], targetPt[1], zOf(targetPt), dt, speed);
+    const ret = mod.move_along(a.pos[0], a.pos[1], standZ(a), a.areaId == null ? -1 : a.areaId, targetPt[0], targetPt[1], zOf(targetPt), dt, speed);
     return applyOut(a, ret);
   }
 
   function moveField(a, field, targetPt, dt, speed) {
     if (!field) return moveAlong(a, targetPt, dt, speed);
-    const ret = mod.move_field(a.pos[0], a.pos[1], NaN, a.areaId == null ? -1 : a.areaId, field.targetId, targetPt[0], targetPt[1], zOf(targetPt), dt, speed);
+    const ret = mod.move_field(a.pos[0], a.pos[1], standZ(a), a.areaId == null ? -1 : a.areaId, field.targetId, targetPt[0], targetPt[1], zOf(targetPt), dt, speed);
     return applyOut(a, ret);
   }
 

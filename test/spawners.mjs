@@ -1,5 +1,5 @@
 import { parse } from '../renderer/js/kv.js';
-import { buildModel, SPAWNER_KEYS, parseSpawner } from '../renderer/js/popmodel.js';
+import { buildModel, SPAWNER_KEYS, parseSpawner, probeWaveSpawn } from '../renderer/js/popmodel.js';
 import { spawners } from '../renderer/js/sim/spawners.js';
 import { simulateBotAI, actorPosAt } from '../renderer/js/botai.js';
 import { simulateWave } from '../renderer/js/sim.js';
@@ -331,6 +331,93 @@ const busters = busterAI.actors.filter(a => a.ws && a.ws.isMission);
 check('sentry busters exist as map actors', busters.length > 0, String(busters.length));
 check('a sentry buster goes for the sentry nest, not the hatch',
   busters.some(a => a.state === 'busterToSentry' || a.reachedSentry), busters.map(a => a.state).join(','));
+
+const engPop = [
+  'WaveSchedule', '{', ' Wave', ' {',
+  '  WaveSpawn { Name a TotalCount 2 SpawnCount 1 MaxActive 2 WaitBetweenSpawns 3 TFBot { Class Scout } }',
+  ' }', '}'
+].join('\n');
+const engWave = buildModel(parse(engPop), []).waves[0];
+const engProbe = probeWaveSpawn({ where: 'spawnbot', teleportWhere: ['spawnbot'] }, new Map());
+const engMap = { ...mapData, hints: [{ kind: 'bot_hint_engineer_nest', origin: AT(N - 2) }] };
+const engAI = simulateBotAI(
+  engWave,
+  simulateWave(engWave, { robotLimit: 99, teamDPS: 20, probes: [engProbe] }),
+  engMap,
+  { deathModel: 'hatch', robotLimit: 99 });
+const eng = engAI.actors.find(a => a.ws && a.ws.isProbe);
+check('a spawned test engineer becomes a map actor', !!eng, engAI.actors.map(a => a.state).join(','));
+check('a spawned test engineer outlives the team damage model', eng && eng.dieT > eng.spawnT + 1, eng && String(eng.dieT));
+check('an engineer walking to a nest hint reaches it and builds its teleporter',
+  engAI.teleporters.length === 1, JSON.stringify(engAI.teleporters.map(t => t.pos)));
+check('the built teleporter serves the spawn points it was given',
+  engAI.teleporters.length === 1 && engAI.teleporters[0].where.has('spawnbot'));
+
+const tpProbe = probeWaveSpawn({ where: 'spawnbot', teleportWhere: ['spawnbot'], attrs: ['TeleportToHint'] }, new Map());
+const tpAI = simulateBotAI(
+  engWave,
+  simulateWave(engWave, { robotLimit: 99, teamDPS: 20, probes: [tpProbe] }),
+  engMap,
+  { deathModel: 'hatch', robotLimit: 99 });
+const tpEng = tpAI.actors.find(a => a.ws && a.ws.isProbe);
+check('a TeleportToHint engineer is spawned for the comparison', !!tpEng);
+check('a TeleportToHint engineer waits instead of taking a nest ahead of the bomb',
+  tpEng && !tpEng.nestHint && tpEng.nestWaiting === true,
+  'nest=' + (tpEng && tpEng.nestHint ? tpEng.nestHint.name || 'unnamed' : 'none') + ' waiting=' + (tpEng && tpEng.nestWaiting));
+check('a walking engineer is not blocked by that rule and still reaches a nest',
+  eng && !eng.nestWaiting && engAI.teleporters.length === 1, 'waiting=' + (eng && eng.nestWaiting));
+check('the waiting engineer keeps retrying on the 1-2s timer the game uses',
+  tpEng && tpEng.nestRetryAt > 0 && tpEng.nestRetryAt <= tpEng.dieT + 2, String(tpEng && tpEng.nestRetryAt));
+
+const noHintMap = { ...mapData, hints: [] };
+const noHintAI = simulateBotAI(
+  engWave,
+  simulateWave(engWave, { robotLimit: 99, teamDPS: 20, probes: [engProbe] }),
+  noHintMap,
+  { deathModel: 'hatch', robotLimit: 99 });
+check('an engineer on a map with no nest hints still builds rather than standing still',
+  noHintAI.teleporters.length === 1, String(noHintAI.teleporters.length));
+
+const noTeleProbe = probeWaveSpawn({ where: 'spawnbot', teleportWhere: [] }, new Map());
+const noTeleAI = simulateBotAI(
+  engWave,
+  simulateWave(engWave, { robotLimit: 99, teamDPS: 20, probes: [noTeleProbe] }),
+  engMap,
+  { deathModel: 'hatch', robotLimit: 99 });
+check('an engineer with no TeleportWhere builds nothing', noTeleAI.teleporters.length === 0,
+  String(noTeleAI.teleporters.length));
+
+const breakMap = {
+  ...mapData,
+  tracks: [
+    { name: 'tpath_1', origin: [200, 450, 0], target: 'tpath_2' },
+    { name: 'tpath_2', origin: [1000, 450, 0], target: 'tpath_3' },
+    { name: 'tpath_3', origin: [1800, 450, 0], target: '' }
+  ],
+  breakables: [
+    { node: 'tpath_2', target: 'barricade_intact', effect: 'kill', delay: 0 },
+    { node: 'tpath_2', target: 'barricade_rubble', effect: 'show', delay: 0 },
+    { node: 'tpath_2', target: 'barricade_rubble', effect: 'kill', delay: 7 },
+    { node: 'never_passed', target: 'other_prop', effect: 'kill', delay: 0 }
+  ]
+};
+const breakPop = `WaveSchedule { Wave { WaveSpawn { Name t TotalCount 1 MaxActive 1 SpawnCount 1 WaitBeforeStarting 3 Tank { Health 40000 Speed 100 StartingPathTrackNode tpath_1 } } } }`;
+const breakWave = buildModel(parse(breakPop), []).waves[0];
+const breakAI = simulateBotAI(breakWave, simulateWave(breakWave, {}), breakMap, { deathModel: 'hatch' });
+const evs = breakAI.propEvents || [];
+const broken = new Map(evs.filter(e => e.effect === 'kill').map(b => [b.name, b.at]));
+check('a tank passing a path_track breaks what its outputs kill', broken.has('barricade_intact'), JSON.stringify(evs));
+check('the break happens when the tank reaches that node, not at spawn',
+  Math.abs(broken.get('barricade_intact') - (3 + 800 / 100)) < 0.6, String(broken.get('barricade_intact')));
+check('an output delay pushes the break later', Math.abs(broken.get('barricade_rubble') - (broken.get('barricade_intact') + 7)) < 1e-6,
+  String(broken.get('barricade_rubble')));
+check('a node the tank never passes breaks nothing', !broken.has('other_prop'));
+
+const noBreakAI = simulateBotAI(breakWave, simulateWave(breakWave, {}), { ...breakMap, breakables: [] }, { deathModel: 'hatch' });
+check('a map with no breakable outputs reports none', (noBreakAI.propEvents || []).length === 0);
+check('the rubble is shown the moment the intact prop dies',
+  evs.some(e => e.effect === 'show' && e.name === 'barricade_rubble' && Math.abs(e.at - broken.get('barricade_intact')) < 1e-6),
+  JSON.stringify(evs));
 
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');

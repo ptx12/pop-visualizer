@@ -1,9 +1,10 @@
-import { readLump, brushModelDrawn, applyBrushXform, skyboxFaceMask, readEntityLump, parseEntities } from './bsp.js';
+import { readLump, brushModelDrawn, applyBrushXform, composeBrushXform, doorPoseXform, skyboxFaceMask, readEntityLump, parseEntities } from './bsp.js';
 import { tonemapWithDefaults } from './tonemap.js';
 import { bakeWasm } from './bakewasm.js';
 
 const SURF_SKY2D = 0x2, SURF_SKY = 0x4, SURF_WARP = 0x8, SURF_TRIGGER = 0x40, SURF_NODRAW = 0x80, SURF_HINT = 0x100, SURF_SKIP = 0x200;
 const SKIP_FLAGS = SURF_SKY2D | SURF_SKY | SURF_TRIGGER | SURF_NODRAW | SURF_HINT | SURF_SKIP;
+const TOOLS_MAT = /(^|\/)(tools|skybox)\/|areaportal/i;
 const LUM = (r, g, b) => r * 0.2126 + g * 0.7152 + b * 0.0722;
 const ROOF_CLEARANCE = 110;
 const SKY_DIM = 0.5;
@@ -121,7 +122,7 @@ export function extractWorldFaces(bspPath, opts = {}) {
   const points = [...(opts.spawns || []).map(s => s.origin), ...(opts.tracks || []).map(t => t.origin)];
   const ceilAt = buildNavCeil(opts.nav, points);
   const cull = ceilAt ? (cx, cy) => !ceilAt.inBounds(cx, cy) : null;
-  const { faces, bounds } = extractFaces(bspPath, cull, { keepAll: true, lightmap: true });
+  const { faces, bounds, movers } = extractFaces(bspPath, cull, { keepAll: true, lightmap: true, movers: true });
   if (!faces.length || !bounds) return null;
 
   const atlas = packLightmaps(faces);
@@ -132,8 +133,10 @@ export function extractWorldFaces(bspPath, opts = {}) {
     const n = f.normal || [0, 0, 1];
     const nx = n[0], ny = n[2], nz = -n[1];
     const lm = f.lm, place = f.lmPlace;
-    let g = groups.get(f.name);
-    if (!g) { g = { pos: [], uv: [], nrm: [], lm: [] }; groups.set(f.name, g); }
+    const mover = Number.isInteger(f.mover) ? f.mover : -1;
+    const key = mover >= 0 ? mover + ':' + f.name : f.name;
+    let g = groups.get(key);
+    if (!g) { g = { name: f.name, mover, pos: [], uv: [], nrm: [], lm: [] }; groups.set(key, g); }
     let dispMap = null;
     if (lm && place && f.st && f.dispCorners && f.dispCorners.length === 4) {
       const S = lm.vecs[0], T = lm.vecs[1];
@@ -174,10 +177,11 @@ export function extractWorldFaces(bspPath, opts = {}) {
   }
 
   const materials = [];
-  for (const [name, g] of groups) {
+  for (const g of groups.values()) {
     if (!g.pos.length) continue;
     materials.push({
-      name,
+      name: g.name,
+      mover: g.mover >= 0 ? g.mover : null,
       positions: Float32Array.from(g.pos),
       uvs: Float32Array.from(g.uv),
       normals: Float32Array.from(g.nrm),
@@ -199,7 +203,7 @@ export function extractWorldFaces(bspPath, opts = {}) {
   if (litCount) { let acc = 0; for (let k = 0; k < 256; k++) { acc += dhist[k]; if (acc >= 0.10 * litCount) { minLight = k / 255; break; } } }
   minLight = Math.max(0.02, Math.min(0.16, minLight));
 
-  return { materials, bounds, lightmap: { rgba: atlas.rgba, width: atlas.width, height: atlas.height, range: LM_RANGE }, exposure, minLight, lmUpBright };
+  return { materials, movers, bounds, lightmap: { rgba: atlas.rgba, width: atlas.width, height: atlas.height, range: LM_RANGE }, exposure, minLight, lmUpBright };
 }
 
 const ALBEDO_REF = 0.25;
@@ -308,15 +312,26 @@ export function extractFaces(bspPath, cull = null, opts = {}) {
 
   const faceDrawn = new Uint8Array(numFaces).fill(1);
   const faceXform = new Array(numFaces).fill(null);
+  const faceMover = new Int32Array(numFaces).fill(-1);
+  let movers = [];
   try {
-    const { models, drawn, xform } = brushModelDrawn(bspPath);
+    const { models, drawn, xform, doors, doorOf } = brushModelDrawn(bspPath);
+    movers = doors;
     if (models.length > 1) {
       faceDrawn.fill(0);
       for (let mi = 0; mi < models.length; mi++) {
         if (!drawn[mi]) continue;
         const m = models[mi];
+        const di = doorOf[mi];
+        const door = di >= 0 ? doors[di] : null;
+        const pose = door && !opts.movers ? doorPoseXform(door, door.spawnFrac) : null;
+        const xf = pose ? composeBrushXform(pose, xform[mi]) : xform[mi];
         const end = Math.min(numFaces, m.firstface + m.numfaces);
-        for (let f = Math.max(0, m.firstface); f < end; f++) { faceDrawn[f] = 1; faceXform[f] = xform[mi]; }
+        for (let f = Math.max(0, m.firstface); f < end; f++) {
+          faceDrawn[f] = 1;
+          faceXform[f] = xf;
+          if (door && opts.movers) faceMover[f] = di;
+        }
       }
     }
   } catch {}
@@ -441,6 +456,7 @@ export function extractFaces(bspPath, cull = null, opts = {}) {
     const flags = texinfoBuf.readInt32LE(ti * 72 + 64);
     if (flags & SKIP_FLAGS) continue;
     const name = matName(ti);
+    if (TOOLS_MAT.test(name)) continue;
     const tv = texVecs(ti);
     const col = matColor(ti);
     const refl = matRefl(ti);
@@ -460,7 +476,7 @@ export function extractFaces(bspPath, cull = null, opts = {}) {
         for (const p of q) { z += p[2]; cx += p[0]; cy += p[1]; }
         z /= q.length; cx /= q.length; cy /= q.length;
         if (cull && cull(cx, cy, z)) continue;
-        faces.push({ pts: q, lpts: toWorld ? e.pts : null, st: e.st, dispCorners: dq.corners, tv, col, refl, name, light, lm, water: isWater, z, normal: keepAll ? triNormal(q) : null });
+        faces.push({ pts: q, lpts: toWorld ? e.pts : null, st: e.st, dispCorners: dq.corners, tv, col, refl, name, light, lm, water: isWater, z, mover: faceMover[fi], normal: keepAll ? triNormal(q) : null });
         grow(q);
       }
       continue;
@@ -495,10 +511,10 @@ export function extractFaces(bspPath, cull = null, opts = {}) {
     for (const p of pts) { z += p[2]; cx += p[0]; cy += p[1]; }
     z /= pts.length; cx /= pts.length; cy /= pts.length;
     if (cull && cull(cx, cy, z)) continue;
-    faces.push({ pts, lpts: toWorld ? lpts : null, tv, col, refl, name, light: faceLight(fi), lm: opts.lightmap ? faceLightmap(fi, ti) : null, water: isWater, z, normal: keepAll ? [pnx, pny, pnz] : null });
+    faces.push({ pts, lpts: toWorld ? lpts : null, tv, col, refl, name, light: faceLight(fi), lm: opts.lightmap ? faceLightmap(fi, ti) : null, water: isWater, z, mover: faceMover[fi], normal: keepAll ? [pnx, pny, pnz] : null });
     grow(pts);
   }
-  return { faces, bounds: faces.length ? bounds : null };
+  return { faces, bounds: faces.length ? bounds : null, movers };
 }
 
 function dispQuads(di, corners, dispInfoBuf, dispVertsBuf) {

@@ -15,7 +15,7 @@ function vpkIcons(vpkPath) {
   if (vpkIndexCache.has(vpkPath)) return vpkIndexCache.get(vpkPath);
   let map = new Map();
   try {
-    const entries = indexVPK(vpkPath, (ext, dir, name) => ext === 'vtf' && dir.startsWith('materials/hud') && name.startsWith('leaderboard_class_'));
+    const entries = indexVPK(vpkPath, (ext, dir) => ext === 'vtf' && dir.startsWith('materials/hud'));
     for (const [key, entry] of entries) {
       const name = key.split('/').pop().replace(/\.vtf$/, '');
       map.set(name, entry);

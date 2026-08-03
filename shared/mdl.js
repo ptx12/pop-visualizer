@@ -166,7 +166,9 @@ export function parseMDL(buf) {
       numframes: buf.readInt32LE(base + 16),
       moveDist,
       animblock: buf.readInt32LE(base + 52),
-      animindex: buf.readInt32LE(base + 56)
+      animindex: buf.readInt32LE(base + 56),
+      sectionindex: buf.readInt32LE(base + 80),
+      sectionframes: buf.readInt32LE(base + 84)
     });
   }
 
@@ -272,8 +274,24 @@ export function sampleAnim(mdl, animDesc, frame) {
   const buf = mdl.buf;
   const bones = mdl.bones;
   const out = bones.map(b => ({ pos: b.pos.slice(), quat: b.quat.slice() }));
-  if (animDesc.animblock !== 0 || animDesc.animindex <= 0) return { bones: out, ok: false };
-  let ofs = animDesc.base + animDesc.animindex;
+  let frameIn = frame;
+  let block = animDesc.animblock;
+  let index = animDesc.animindex;
+  const secFrames = animDesc.sectionframes || 0;
+  if (secFrames > 0 && animDesc.sectionindex > 0) {
+    const plain = Math.floor(frameIn / secFrames);
+    const last = animDesc.numframes > secFrames && frameIn === animDesc.numframes - 1;
+    let section = last ? plain - 1 : plain;
+    if (frameIn - section * secFrames >= secFrames) section = plain;
+    frameIn -= section * secFrames;
+    const so = animDesc.base + animDesc.sectionindex + section * 8;
+    if (so + 8 > buf.length) return { bones: out, ok: false };
+    block = buf.readInt32LE(so);
+    index = buf.readInt32LE(so + 4);
+  }
+  if (block !== 0 || index <= 0) return { bones: out, ok: false };
+  frame = frameIn;
+  let ofs = animDesc.base + index;
   let guard = 0;
   while (ofs + 4 <= buf.length && guard++ < 512) {
     const boneIdx = buf.readUInt8(ofs);

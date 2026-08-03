@@ -1,13 +1,15 @@
 import { el, clear, showTip, hideTip, fmtTime, fmtNum, loader, botVisual, tankVisual } from './ui.js';
-import { simFor, emit, onChange, deathModel, navTogglesFor, bombPathRerollsFor, mapQueryName, probesFor, addProbe, clearProbes } from './state.js';
+import { state, simFor, emit, onChange, deathModel, navTogglesFor, bombPathRerollsFor, mapQueryName, probesFor, addProbe, clearProbes } from './state.js';
 import { CLASS_INFO, botDisplayName } from './popmodel.js';
 import { getTFPath, iconURL, iconNameFor, classIconName, tankIconName } from './icons.js';
 import { native } from './native.js';
 import { createBotSim, actorPosAt, actorZAt, actorDistAt, actorYawAt, botMaxSpeed, buildTrackChains, dpsProfile, objectiveCandidates, bombPathGroups, STEP, RNG_SEED_BASE } from './botai.js';
 import { setStatus, clearStatus, clearStatusPrefix } from './statusbar.js';
 import { startTask } from './tasks.js';
-import { createMap3D } from './map3d.js';
-import { botModelBase, botWeaponModels, botCosmeticModels, resolveBotItems, resolveWeaponRoles, botWeaponClass, botActivity , animDurationSync, resolveAnimDuration } from './botmodels.js';
+import { createMap3D, BLU_SKIN } from './map3d.js';
+import { KILL_RADIUS, killRadiusOf, killPointAt, killPointsFor, saveKillPoints } from './killzones.js';
+import { botModelBase, botWeaponModels, botCosmeticModels, resolveBotItems, resolveWeaponRoles, botWeaponClass, botActivity , animDurationSync, resolveAnimDuration, SENTRY_BUSTER_MODEL } from './botmodels.js';
+import { isSentryBuster } from './sim/behaviours/support.js';
 import { initNavWasm } from './navwasm.js';
 import { primaryColor } from './timeline.js';
 import { simOptsPanel } from './inspector.js';
@@ -30,7 +32,6 @@ const paintVersions = new Map();
 const mapDlActive = new Set();
 const approxDismissed = new Set();
 const WORLD_MAX = 4096;
-const KILL_RADIUS = 200;
 const GIANT_BG = '#c01c00';
 const NORMAL_BG = '#ebe2ca';
 const CRIT_BG = ['#0099c5', '#00ceeb'];
@@ -447,26 +448,46 @@ export function renderMapInspector(container, file, waveIndex) {
   });
 }
 
-function killPointsFor(mapName) {
-  try { return JSON.parse(localStorage.getItem('popvis.killpts.' + mapName) || '[]') || []; } catch { return []; }
+
+function engineerProbeSpec(mapData, wave) {
+  if (!(mapData.hints || []).some(h => h.kind === 'bot_hint_engineer_nest')) return null;
+  const names = [];
+  const push = n => {
+    const s = String(n || '').trim();
+    if (s && !names.some(v => v.toLowerCase() === s.toLowerCase())) names.push(s);
+  };
+  for (const ws of wave.wavespawns) for (const wn of ws.where || []) push(wn);
+  for (const s of mapData.spawns) if (!s.disabled) push(s.name);
+  if (!names.length) return null;
+  return { where: names[0], teleportWhere: names };
 }
 
-function saveKillPoints(mapName, list) {
-  if (list.length) localStorage.setItem('popvis.killpts.' + mapName, JSON.stringify(list));
-  else localStorage.removeItem('popvis.killpts.' + mapName);
-}
+const BOMB_BUFFS = ['Robots near the carrier get a defense buff', 'Robots near the carrier get crit boost', 'Robots near the carrier get rapid healing'];
 
 function buildBombHUD(ai) {
   const b = ai && ai.bomb;
   if (!b || !b.log) return null;
-  const maxLevel = b.maxLevel || 3;
+  const maxLevel = Math.min(3, b.maxLevel || 3);
   const hud = el('div', { class: 'bomb-hud' });
-  const icon = el('div', { class: 'bomb-icon', text: 'BOMB' });
-  const label = el('div', { class: 'bomb-label' });
-  const pips = el('div', { class: 'bomb-pips' });
-  const pipEls = [];
-  for (let i = 0; i < maxLevel; i++) { const p = el('i'); pipEls.push(p); pips.append(p); }
-  hud.append(icon, el('div', { class: 'bomb-meta' }, label, pips));
+  const bomb = el('img', { class: 'bomb-icon', alt: 'Bomb' });
+  const chevrons = el('div', { class: 'bomb-upgrades' });
+  const chevronEls = [];
+  for (let i = 1; i <= maxLevel; i++) {
+    const c = el('img', { class: 'bomb-upgrade', alt: 'Bomb upgrade ' + i, title: BOMB_BUFFS[i - 1] });
+    chevronEls.push(c);
+    chevrons.append(c);
+  }
+  const meterFill = el('div', { class: 'bomb-meter-fill' });
+  const meter = el('div', { class: 'bomb-meter' },
+    el('img', { class: 'bomb-meter-base', alt: '' }),
+    el('div', { class: 'bomb-meter-clip' }, meterFill),
+    el('img', { class: 'bomb-meter-frame', alt: '' }));
+  hud.append(bomb, chevrons, meter);
+  const setSrc = (img, name) => {
+    const url = iconURL(name);
+    img.hidden = !url;
+    if (url) img.src = url;
+  };
   const update = t => {
     let cur = null;
     for (const e of b.log) { if (e.t <= t) cur = e; else break; }
@@ -477,11 +498,86 @@ function buildBombHUD(ai) {
     hud.classList.toggle('held', held);
     hud.classList.toggle('taunting', taunting);
     hud.classList.toggle('delivered', delivered);
-    label.textContent = delivered ? 'deployed ' + fmtTime(b.deliveredAt)
-      : held ? ((CLASS_INFO[cur.cls] || {}).label || 'robot') + ' carrying' + (taunting ? ' — taunting' : '')
-      : 'not picked up';
-    pipEls.forEach((p, i) => p.classList.toggle('on', i < level));
-    pips.title = held ? 'Bomb buff level ' + level + ' of ' + maxLevel : 'No bomb buff';
+    setSrc(bomb, held ? 'bomb_carried' : 'bomb_dropped');
+    hud.title = delivered ? 'Bomb deployed at ' + fmtTime(b.deliveredAt)
+      : held ? ((CLASS_INFO[cur.cls] || {}).label || 'Robot') + ' carrying — upgrade level ' + level
+        + (taunting ? '\ntaunting' : '')
+      : 'Bomb not picked up';
+    chevronEls.forEach((c, i) => {
+      setSrc(c, 'hud_mvm_bomb_upgrade_' + (i + 1) + (i < level ? '' : '_disabled'));
+      c.classList.toggle('on', i < level);
+    });
+    const from = held && cur.kind === 'charge' ? cur.from : null;
+    const at = held && cur.kind === 'charge' ? cur.at : null;
+    const charging = Number.isFinite(from) && Number.isFinite(at) && at > from && level < maxLevel;
+    meter.hidden = !charging;
+    if (charging) {
+      setSrc(meter.firstChild, 'bomb_carrier_upgrade_base');
+      setSrc(meter.lastChild, 'bomb_carrier_upgrade_frame');
+      const url = iconURL('bomb_carrier_upgrade_meter');
+      if (url) meterFill.style.backgroundImage = 'url(' + url + ')';
+      const p = Math.max(0, Math.min(1, (t - from) / (at - from)));
+      meter.querySelector('.bomb-meter-clip').style.width = (p * 100).toFixed(1) + '%';
+      meter.title = 'Next bomb upgrade in ' + fmtNum(Math.max(0, at - t)) + 's';
+    }
+  };
+  update(0);
+  hud.update = update;
+  return hud;
+}
+
+function tankPathLength(a) {
+  const cum = a.chain && a.chain.cum;
+  return cum && cum.length ? cum[cum.length - 1] : 0;
+}
+
+function tankProgressAt(a, t) {
+  if (a.tank && a.tank.immobile) return 0;
+  const len = tankPathLength(a);
+  if (!(len > 0)) return 0;
+  return Math.max(0, Math.min(1, (a.speed || 0) * (t - a.spawnT) / len));
+}
+
+const TANK_BAR_WIDE = 153;
+
+function buildTankHUD(ai) {
+  const tanks = (ai.actors || []).filter(a => a.kind === 'tank');
+  if (!tanks.length) return null;
+  const hud = el('div', { class: 'tank-hud' });
+  let skinned = false;
+  const rows = tanks.map(a => {
+    const icon = el('img', { class: 'tank-icon', alt: 'Tank' });
+    const fill = el('div', { class: 'tank-bar-fill' });
+    const row = el('div', { class: 'tank-panel' }, icon, el('div', { class: 'tank-bar' }, fill));
+    hud.append(row);
+    return { a, row, icon, fill };
+  });
+  const update = t => {
+    if (!skinned) {
+      const panel = iconURL('tournament_panel_brown');
+      const track = iconURL('tournament_panel_tan');
+      const bar = iconURL('tournament_panel_blu');
+      if (panel && track && bar) {
+        hud.style.setProperty('--tank-panel', 'url(' + panel + ')');
+        hud.style.setProperty('--tank-track', 'url(' + track + ')');
+        hud.style.setProperty('--tank-fill', 'url(' + bar + ')');
+        skinned = true;
+      }
+    }
+    let anyLive = false;
+    for (const r of rows) {
+      const live = t >= r.a.spawnT && t <= r.a.dieT;
+      r.row.hidden = !live;
+      if (!live) continue;
+      anyLive = true;
+      const url = iconURL(tankIconName(r.a.tank));
+      r.icon.hidden = !url;
+      if (url) r.icon.src = url;
+      r.fill.style.width = TANK_BAR_WIDE + 'px';
+      r.row.title = (r.a.tank.name || 'Tank') + ' — ' + r.a.tank.health + ' HP · '
+        + Math.round(tankProgressAt(r.a, t) * 100) + '% of the way to the hatch';
+    }
+    hud.hidden = !anyLive;
   };
   update(0);
   hud.update = update;
@@ -489,6 +585,25 @@ function buildBombHUD(ai) {
 }
 
 const TELEPORTER_MODEL = 'models/buildables/teleporter';
+
+let buildTimes = null;
+let buildTimesReq = null;
+
+function teleporterBuildTime() {
+  if (!buildTimes) return null;
+  const v = buildTimes.obj_teleporter;
+  return Number.isFinite(v) ? v : 0;
+}
+
+function resolveBuildTimes() {
+  if (buildTimesReq) return buildTimesReq;
+  buildTimesReq = (async () => {
+    if (!native.isElectron || !window.popnative.buildTimes) { buildTimes = {}; return false; }
+    try { buildTimes = (await window.popnative.buildTimes(await getTFPath())) || {}; } catch { buildTimes = {}; }
+    return Number.isFinite(buildTimes.obj_teleporter);
+  })();
+  return buildTimesReq;
+}
 const DEPLOY_ANIM_MODEL = 'models/bots/scout/bot_scout_animations';
 
 function cleanTankModel(m) {
@@ -500,7 +615,70 @@ function gateLetter(g, i) {
   return m ? m[1] : String.fromCharCode(65 + i);
 }
 
-function buildGateHUD(mapData, wave, ai) {
+function allGatesCapturedAt(gates) {
+  if (!gates || !gates.length) return null;
+  let last = 0;
+  for (const g of gates) {
+    if (g.capturedAt == null) return null;
+    last = Math.max(last, g.capturedAt);
+  }
+  return last;
+}
+
+function gateUnlockAt(cell, cells) {
+  if (!cell.g.startsLocked) return 0;
+  if (cell.state && cell.state.openAt != null) return cell.state.openAt;
+  const prev = cell.g.previous ? cells.find(x => x.g.point === cell.g.previous) : null;
+  if (!prev || !prev.state || prev.state.capturedAt == null) return null;
+  const on = prev.g.effects && (prev.g.effects.gatesOn || []).find(x => x.trigger === cell.g.trigger);
+  return prev.state.capturedAt + (on ? on.delay : 0);
+}
+
+const gateIconCache = new Map();
+
+function applyGateIcons(c, held, taken, overlay) {
+  c.heldURL = held;
+  c.takenURL = taken;
+  if (!held && !taken) return;
+  c.fallback.hidden = true;
+  c.base.hidden = false;
+  c.base.src = held || taken;
+  if (overlay) { c.over.src = overlay; c.over.hidden = false; }
+}
+
+function loadGateIcons(bspPath, cells) {
+  const pending = [];
+  for (const c of cells) {
+    const ic = c.g.icons || {};
+    const names = [ic.held, ic.taken, ic.overlay];
+    if (names.every(n => !n || gateIconCache.has(n))) {
+      applyGateIcons(c, gateIconCache.get(ic.held) || null, gateIconCache.get(ic.taken) || null, gateIconCache.get(ic.overlay) || null);
+      continue;
+    }
+    pending.push(c);
+  }
+  if (!pending.length) return;
+  (async () => {
+    const tfPath = await getTFPath();
+    const inflight = new Map();
+    const resolve = async mat => {
+      if (!mat) return null;
+      if (gateIconCache.has(mat)) return gateIconCache.get(mat);
+      if (!inflight.has(mat)) inflight.set(mat, window.popnative.matIcon(mat, tfPath, null));
+      const url = await inflight.get(mat);
+      gateIconCache.set(mat, url || null);
+      return url || null;
+    };
+    for (const c of pending) {
+      const ic = c.g.icons || {};
+      const [held, taken, overlay] = await Promise.all([resolve(ic.held), resolve(ic.taken), resolve(ic.overlay)]);
+      if (!c.cell.isConnected) continue;
+      applyGateIcons(c, held, taken, overlay);
+    }
+  })().catch(() => {});
+}
+
+function buildGateHUD(mapData, wave, ai, bspPath) {
   const gates = (mapData && mapData.gates) || [];
   if (!gates.length) return null;
   const gatebots = wave ? (wave.gatebotCount || 0) : 0;
@@ -524,35 +702,68 @@ function buildGateHUD(mapData, wave, ai) {
         + (on ? `\nspawns move to ${on}` : '')
         + (off ? `\nspawns stop at ${off}` : '');
     }
-    cell.append(el('div', { class: 'gate-icon', text: gateLetter(g, i) }));
+    const icon = el('div', { class: 'gate-icon' });
+    const base = el('img', { class: 'gate-icon-base', alt: '' });
+    const over = el('img', { class: 'gate-icon-overlay', alt: '' });
+    base.hidden = true;
+    over.hidden = true;
+    const capFill = el('div', { class: 'gate-cap-fill' });
+    const cap = el('div', { class: 'gate-cap' }, capFill);
+    const count = el('div', { class: 'gate-count' });
+    count.hidden = true;
+    const fallback = el('div', { class: 'gate-icon-letter', text: gateLetter(g, i) });
+    icon.append(fallback, base, over, cap, count);
+    cell.append(icon);
     const meta = el('div', { class: 'gate-meta' },
       el('div', { class: 'gate-name', text: g.label }),
       el('div', { class: 'gate-time', text: g.startsLocked ? 'locked · ' + fmtNum(g.capTime) + 's' : fmtNum(g.capTime) + 's to cap' }));
     const timeEl = meta.lastChild;
-    if (fx && fx.pauseFor) meta.append(el('div', { class: 'gate-fx', text: '+' + fmtNum(fx.pauseFor) + 's spawn pause' }));
     cell.append(meta);
     strip.append(cell);
-    cells.push({ g, cell, timeEl, state: stateOf(g), baseText: timeEl.textContent });
+    cells.push({ g, cell, timeEl, base, over, fallback, cap, capFill, count, state: stateOf(g) });
   });
+  loadGateIcons(bspPath || null, cells);
   hud.append(strip);
   const note = el('div', { class: 'gate-note' + (gatebots ? '' : ' muted'), text: gatebots ? gatebots + ' gatebots this wave' : 'no gatebots this wave' });
   hud.append(note);
+
+  const liveAt = (st, t) => {
+    if (!st || !st.log || !st.log.length) return null;
+    let cur = null;
+    for (const e of st.log) { if (e.t <= t) cur = e; else break; }
+    return cur;
+  };
 
   const update = t => {
     let pausedUntil = 0;
     for (const c of cells) {
       const st = c.state;
+      const live = liveAt(st, t);
+      const capped0 = st && st.capturedAt !== null && t >= st.capturedAt;
+      const frac = capped0 ? 1 : (live && c.g.capTime > 0 ? Math.max(0, Math.min(1, live.progress / c.g.capTime)) : 0);
+      c.capFill.style.height = (frac * 100).toFixed(1) + '%';
+      c.cap.hidden = !(frac > 0) || capped0;
+      const holders = capped0 ? 0 : (live ? live.holders : 0);
+      c.count.hidden = holders <= 0;
+      if (holders > 0) c.count.textContent = holders;
+      c.cell.classList.toggle('capping', holders > 0 && !capped0);
       const capped = st && st.capturedAt !== null && t >= st.capturedAt;
       c.cell.classList.toggle('captured', !!capped);
+      const want = capped ? (c.takenURL || c.heldURL) : (c.heldURL || c.takenURL);
+      if (want && c.base.src !== want) c.base.src = want;
       if (capped) {
         c.cell.classList.remove('locked');
         c.timeEl.textContent = 'captured ' + fmtTime(st.capturedAt);
         const fx = c.g.effects;
         if (fx && fx.pauseFor) pausedUntil = Math.max(pausedUntil, st.capturedAt + fx.pauseFor);
-      } else {
-        c.cell.classList.toggle('locked', !!c.g.startsLocked && !(st && st.open));
-        c.timeEl.textContent = c.baseText;
+        continue;
       }
+      const unlockedAt = gateUnlockAt(c, cells);
+      const open = unlockedAt != null && t >= unlockedAt;
+      c.cell.classList.toggle('locked', !open);
+      c.timeEl.textContent = open ? fmtNum(c.g.capTime) + 's to cap'
+        : unlockedAt != null ? 'unlocks ' + fmtTime(unlockedAt)
+          : 'locked · ' + fmtNum(c.g.capTime) + 's';
     }
     const paused = pausedUntil > t;
     note.classList.toggle('paused', paused);
@@ -962,7 +1173,7 @@ function playStateFor(file, waveIndex) {
 }
 
 function getDPS() {
-  return Math.max(0, parseInt(localStorage.getItem('popvis.teamdps') || '1000', 10) || 0);
+  return Math.max(0, state.simOpts.teamDPS || 0);
 }
 
 function zonesMode() {
@@ -1321,13 +1532,15 @@ export function renderMapView(container, file, waveIndex) {
   const ps = playStateFor(file, waveIndex);
 
   const killPts = killPointsFor(mapData.map);
+  const engineerNests = (mapData.hints || []).filter(h => h.kind === 'bot_hint_engineer_nest');
+  const engineerSpec = engineerProbeSpec(mapData, wave);
   const objIdx = objectiveIdxFor(mapData.map);
   const pathGroups = bombPathGroups(mapData);
   const perWavePath = bombPathRerollsFor(file, mapData);
   const bombPath = bombPathFor(mapData.map, pathGroups, waveIndex, perWavePath);
   const toggles = navTogglesFor(file, wave);
-  const teleBuild = animDurationSync(TELEPORTER_MODEL, 'build');
-  if (teleBuild === null) resolveAnimDuration(TELEPORTER_MODEL, 'build').then(v => { if (v) emit('map'); });
+  const teleBuild = teleporterBuildTime();
+  if (teleBuild === null) resolveBuildTimes().then(v => { if (v) emit('map'); });
   const deployAnim = animDurationSync(DEPLOY_ANIM_MODEL, 'deploybomb');
   if (deployAnim === null) resolveAnimDuration(DEPLOY_ANIM_MODEL, 'deploybomb').then(v => { if (v) emit('map'); });
   const aiKey = [waveIndex, model, dps, zMode, paintV, objIdx, bombPath, teleBuild || 0, deployAnim || 0, JSON.stringify(killPts),
@@ -1547,11 +1760,6 @@ export function renderMapView(container, file, waveIndex) {
           onclick: () => { localStorage.setItem('popvis.zonesmode', m); emit('map'); }
         })));
       panel.append(el('div', { class: 'opt-row' }, el('span', { class: 'opt-label', text: 'Damage zones' }), zoneSeg));
-      if (zMode !== 'off') {
-        const dpsInput = el('input', { class: 'inp sm map-dps', type: 'number', min: 0, step: 250, value: dps, title: 'Combined defender damage per second' });
-        dpsInput.addEventListener('change', () => { localStorage.setItem('popvis.teamdps', String(Math.max(0, parseInt(dpsInput.value, 10) || 0))); emit('map'); });
-        panel.append(el('div', { class: 'opt-row' }, el('span', { class: 'opt-label', text: 'Team DPS' }), dpsInput));
-      }
       if (zMode === 'custom') {
         const brushVal = el('span', { class: 'map-time', text: Math.round(ps.brush * 100) + '%' });
         const brush = el('input', { type: 'range', class: 'map-brush', min: 0, max: 150, step: 10, value: Math.round(ps.brush * 100) });
@@ -1625,27 +1833,19 @@ export function renderMapView(container, file, waveIndex) {
     panel.append(killRow);
 
     panel.append(el('div', { class: 'tool-sep' }));
-    const probeClasses = ['scout', 'soldier', 'pyro', 'demoman', 'heavyweapons', 'engineer', 'medic', 'sniper', 'spy'];
-    const probeSel = el('select', { class: 'inp sm', 'aria-label': 'Robot class' },
-      ...probeClasses.map(c => el('option', { value: c, text: (CLASS_INFO[c] || {}).label || c, selected: c === ps.probeClass })));
-    const giantBox = el('input', { type: 'checkbox', id: 'probe-giant', checked: !!ps.probeGiant });
-    giantBox.addEventListener('change', () => { ps.probeGiant = giantBox.checked; });
-    probeSel.addEventListener('change', () => { ps.probeClass = probeSel.value; });
     const existing = probesFor(file, waveIndex);
-    const probeRow = el('div', { class: 'opt-row' },
-      el('span', { class: 'opt-label', text: 'Spawn' }), probeSel,
-      el('button', {
-        class: 'btn sm primary', text: 'Add',
-        title: 'Spawn one of these at the wave start and watch it play out. It is not written to the popfile.',
-        onclick: () => { addProbe(file, waveIndex, { cls: probeSel.value, giant: !!ps.probeGiant }); emit('map'); }
-      }));
+    const engBtn = tool('engineer', 'plus', 'Place engineer',
+      engineerSpec
+        ? 'Click the map to drop an engineer there. It walks to the nearest highlighted nest hint and builds its teleporter. Not written to the popfile.'
+        : 'This map has no bot_hint_engineer_nest');
+    if (!engineerSpec) { engBtn.disabled = true; if (ps.tool === 'engineer') ps.tool = null; }
+    const probeRow = el('div', { class: 'opt-row' }, engBtn);
     if (existing.length) probeRow.append(el('button', {
       class: 'btn sm', text: 'Clear ' + existing.length,
-      title: 'Remove every spawned test robot from this wave',
+      title: 'Remove every spawned test engineer from this wave',
       onclick: () => { clearProbes(file, waveIndex); emit('map'); }
     }));
     panel.append(probeRow);
-    panel.append(el('label', { class: 'opt-row probe-giant', for: 'probe-giant' }, giantBox, el('span', { class: 'opt-label', text: 'Giant' })));
 
 
     if (ps.tool === 'kill') {
@@ -1666,13 +1866,15 @@ export function renderMapView(container, file, waveIndex) {
 
   let gateHud = null;
   let bombHud = null;
+  let tankHud = null;
   const canvas = el('canvas', { class: 'map-canvas' + (ps.tool ? ' painting' : '') });
   canvas.addEventListener('contextmenu', e => { if (ps.tool) e.preventDefault(); });
   const canvasWrap = el('div', { class: 'map-canvaswrap' }, canvas);
-  gateHud = buildGateHUD(mapData, wave, ai);
+  gateHud = buildGateHUD(mapData, wave, ai, file.mapBspPath || null);
   if (gateHud) canvasWrap.append(gateHud);
   bombHud = buildBombHUD(ai);
-  if (bombHud) canvasWrap.append(bombHud);
+  tankHud = buildTankHUD(ai);
+  if (bombHud || tankHud) canvasWrap.append(el('div', { class: 'map-status' }, bombHud, tankHud));
   if (resimulating) canvasWrap.append(el('div', { class: 'map-resim', text: 'Re-simulating…' }));
   const approx = mapData.nav.approx && !approxDismissed.has(mapData.map)
     ? buildApproxBanner(file, mapData)
@@ -1746,6 +1948,7 @@ export function renderMapView(container, file, waveIndex) {
   }
   function actorsAt3D(t) {
     const out = [];
+    const gatesDoneAt = allGatesCapturedAt(ai.gates);
     let freshItems = false;
     for (const a of ai.actors) {
       if (a.kind === 'bot' && a.bot.items) for (const it of a.bot.items) if (!itemsRequested.has(it)) { itemsRequested.add(it); freshItems = true; }
@@ -1783,9 +1986,11 @@ export function renderMapView(container, file, waveIndex) {
       let scale = 1, modelBase = null, attachments = null, loadoutKey = null, activity = null;
       if (a.kind === 'bot') {
         scale = a.bot.scale != null ? a.bot.scale : (a.bot.isGiant ? 1.75 : 1);
-        modelBase = botModelBase(a.bot);
-        const weps = botWeaponModels(a.bot);
-        const cos = botCosmeticModels(a.bot);
+        modelBase = isSentryBuster(a) ? SENTRY_BUSTER_MODEL : botModelBase(a.bot);
+        const reverted = a.isGatebot && gatesDoneAt != null && t >= gatesDoneAt;
+        const styles = reverted ? a.bot.revertItemStyles : a.bot.itemStyles;
+        const weps = botWeaponModels(a.bot, styles);
+        const cos = botCosmeticModels(a.bot, styles);
         activity = botActivity(a.bot);
         attachments = [...weps, ...cos];
         loadoutKey = modelBase + '|' + activity + '|' + attachments.join('|');
@@ -1793,17 +1998,39 @@ export function renderMapView(container, file, waveIndex) {
         if (Number.isFinite(a.tank.scale) && a.tank.scale > 0) scale = a.tank.scale;
         modelBase = a.tank.model ? cleanTankModel(a.tank.model) : null;
       }
+      const modelSkin = a.kind === 'tank' && a.tank ? (a.tank.skin || 0) : 0;
       out.push({
         x: p[0], y: p[1], z: actorZAt(a, t), size: cs.s, r: cs.c[0], g: cs.c[1], b: cs.c[2],
         kind: a.kind, cls: a.kind === 'bot' ? a.bot.cls : null,
         crit: a.kind === 'bot' && !!a.bot.alwaysCrit,
         ubered: !!(a.uberUntil > t),
-        tankSkin: a.kind === 'tank' && a.tank ? (a.tank.skin || 0) : 0,
+        modelSkin,
         tankSmoke: !(a.kind === 'tank' && a.tank && a.tank.disableSmokestack),
         probe: !!(a.ws && a.ws.isProbe),
         viaTeleporter: !!a.viaTeleporter,
         modelBase, attachments, loadoutKey, activity, moving, carrying: false, speed, dist: actorDistAt(a, t),
         heading, scale, phase: (Math.floor(a.spawnT * 13) + (a.memberIdx || 0) * 5) % 128
+      });
+    }
+    if (ps.tool === 'engineer' && ps.hover && engineerSpec) {
+      const area = ai.nav && ai.nav.nearestArea([ps.hover[0], ps.hover[1]]);
+      const gz = area ? (area.nw[2] + area.se[2]) / 2 : 0;
+      const ghostBot = { cls: 'engineer', items: [], attrs: [], tags: [], loadout: {}, combat: {} };
+      const base = botModelBase(ghostBot);
+      const act = botActivity(ghostBot);
+      out.push({
+        x: ps.hover[0], y: ps.hover[1], z: gz, size: 0.55, r: 0.42, g: 0.66, b: 0.92,
+        kind: 'bot', cls: 'engineer', probe: true,
+        modelBase: base, attachments: [], activity: act,
+        loadoutKey: base + '|' + act + '|', moving: false, carrying: false, speed: 0, dist: 0,
+        heading: 0, scale: 1, phase: 0
+      });
+    }
+    for (const tp of ai.teleporters || []) {
+      if (t < tp.readyAt) continue;
+      out.push({
+        x: tp.pos[0], y: tp.pos[1], z: tp.pos[2], size: 0.6, r: 0.42, g: 0.66, b: 0.92,
+        kind: 'building', modelBase: TELEPORTER_MODEL, modelSkin: BLU_SKIN, heading: 0, scale: 1
       });
     }
     if (ai.bomb && ai.bomb.samples && ai.bomb.samples.length) {
@@ -1822,6 +2049,14 @@ export function renderMapView(container, file, waveIndex) {
     }
     return out;
   }
+  function placeEngineer(wx, wy) {
+    if (!engineerSpec) return;
+    const area = ai.nav && ai.nav.nearestArea([wx, wy]);
+    const z = area ? (area.nw[2] + area.se[2]) / 2 : 0;
+    addProbe(file, waveIndex, { ...engineerSpec, pos: [wx, wy, z] });
+    emit('map');
+  }
+
   function countActiveAt(t) {
     let n = 0;
     for (const a of ai.actors) if (t >= a.spawnT && t <= a.dieT) n++;
@@ -1853,9 +2088,20 @@ export function renderMapView(container, file, waveIndex) {
         const bi = Math.max(0, Math.min(ai.bomb.samples.length - 1, Math.round(tt / STEP)));
         return routeProgress(ai.route, ai.bomb.samples[bi]);
       },
+      killIndexAt: (wx, wy) => killPointAt(killPts, wx, wy),
+      hintRings: engineerNests.map(h => [h.origin[0], h.origin[1]]),
+      propEvents: ai.propEvents || null,
+      doors: ai.doors || null,
+      teleporters: ai.teleporters || null,
+      mapParticles: new Map((mapData.particles || []).map(p => [p.name, p])),
+      onHover: (wx, wy) => {
+        ps.hover = wx == null ? null : [wx, wy];
+        if (active3D) active3D.redraw();
+      },
+      onPlace: (wx, wy) => placeEngineer(wx, wy),
       onKill: (wx, wy, remove) => {
         const list = killPointsFor(mapData.map);
-        const hit = list.findIndex(k => (k[0] - wx) ** 2 + (k[1] - wy) ** 2 < (k[2] || KILL_RADIUS) ** 2);
+        const hit = killPointAt(list, wx, wy);
         if (remove) { if (hit < 0) return; list.splice(hit, 1); }
         else list.push([wx, wy, ps.killRadius]);
         saveKillPoints(mapData.map, list);
@@ -1864,6 +2110,7 @@ export function renderMapView(container, file, waveIndex) {
       onTime: tt => {
         if (gateHud) gateHud.update(tt);
         if (bombHud) bombHud.update(tt);
+        if (tankHud) tankHud.update(tt);
         const alive = countActiveAt(tt);
         timeLbl.textContent = fmtTime(tt) + ' / ' + fmtTime(waveEnd) + ' — ' + alive + ' active';
         if (!ps.playing) setPlayLabel(false);
@@ -1882,10 +2129,11 @@ export function renderMapView(container, file, waveIndex) {
       wrap3d.append(active3D.canvas);
     }
     wrap3d.append(el('div', { class: 'map-3d-hint', text: 'left-drag orbit · right-drag pan · wheel zoom · Fit resets' }));
-    gateHud = buildGateHUD(mapData, wave, ai);
+    gateHud = buildGateHUD(mapData, wave, ai, file.mapBspPath || null);
     if (gateHud) wrap3d.append(gateHud);
     bombHud = buildBombHUD(ai);
-    if (bombHud) wrap3d.append(bombHud);
+    tankHud = buildTankHUD(ai);
+    if (bombHud || tankHud) wrap3d.append(el('div', { class: 'map-status' }, bombHud, tankHud));
     timeLbl.textContent = fmtTime(ps.t) + ' / ' + fmtTime(waveEnd) + ' — ' + countActiveAt(ps.t) + ' active';
   }
 
@@ -2087,12 +2335,10 @@ export function renderMapView(container, file, waveIndex) {
     ctx.font = 'bold 10px sans-serif';
     ctx.fillText('HATCH', ox + 11, oy + 4);
 
-    const eraseTarget = ps.tool === 'killerase' && ps.hover
-      ? killPts.findIndex(k => (k[0] - ps.hover[0]) ** 2 + (k[1] - ps.hover[1]) ** 2 < (k[2] || KILL_RADIUS) ** 2)
-      : -1;
+    const eraseTarget = ps.tool === 'kill' && ps.hover ? killPointAt(killPts, ps.hover[0], ps.hover[1]) : -1;
     killPts.forEach((k, ki) => {
       const [kx, ky] = toScreen(k[0], k[1]);
-      const kr = (k[2] || KILL_RADIUS) * vs.scale;
+      const kr = killRadiusOf(k) * vs.scale;
       const doomed = ki === eraseTarget;
       ctx.beginPath();
       ctx.arc(kx, ky, Math.max(4, kr), 0, Math.PI * 2);
@@ -2107,6 +2353,35 @@ export function renderMapView(container, file, waveIndex) {
       ctx.font = 'bold 9px sans-serif';
       ctx.fillText(doomed ? 'REMOVE' : 'DESPAWN', kx + Math.max(4, kr) + 4, ky + 3);
     });
+
+    if (ps.tool === 'engineer') {
+      for (const h of engineerNests) {
+        const [nx, ny] = toScreen(h.origin[0], h.origin[1]);
+        const nr = Math.max(5, 90 * vs.scale);
+        ctx.beginPath();
+        ctx.arc(nx, ny, nr, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(242,184,72,.16)';
+        ctx.fill();
+        ctx.strokeStyle = '#f2b848';
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+      }
+      if (ps.hover) {
+        const [hx, hy] = toScreen(ps.hover[0], ps.hover[1]);
+        const img = iconImage(classIconName('engineer'), scheduleDraw);
+        const plate = 26;
+        ctx.globalAlpha = 0.75;
+        ctx.fillStyle = NORMAL_BG;
+        ctx.beginPath();
+        ctx.roundRect(hx - plate / 2, hy - plate / 2, plate, plate, 5);
+        ctx.fill();
+        ctx.strokeStyle = '#7fb8f0';
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+        if (img && img.complete && img.naturalWidth) ctx.drawImage(img, hx - plate * 0.44, hy - plate * 0.44, plate * 0.875, plate * 0.875);
+        ctx.globalAlpha = 1;
+      }
+    }
 
     if (ps.tool === 'kill' && ps.hover) {
       const [hx, hy] = toScreen(ps.hover[0], ps.hover[1]);
@@ -2511,12 +2786,35 @@ export function renderMapView(container, file, waveIndex) {
     for (const q of shown) {
       if (q.n > 1) drawCount(q.sx, q.sy, q.plate * (1 + q.zf * LIFT_SCALE) * stackScale(q.n), q.n);
     }
+    drawTeleporters(t);
     drawBomb(t);
+    if (gateHud) gateHud.update(t);
+    if (bombHud) bombHud.update(t);
+    if (tankHud) tankHud.update(t);
     timeLbl.textContent = fmtTime(t) + ' / ' + fmtTime(waveEnd) + ' — ' + alive + ' active';
     const fs = fitScaleFor();
     if (fs) zoomLbl.textContent = Math.round(vs.scale / fs * 100) + '%';
     drawMini();
     updateWavePanel(t, alive, waveEnd);
+  }
+
+  function drawTeleporters(t) {
+    for (const tp of ai.teleporters || []) {
+      if (t < tp.readyAt) continue;
+      const [sx, sy] = toScreen(tp.pos[0], tp.pos[1]);
+      const r = Math.max(5, 42 * vs.scale);
+      ctx.beginPath();
+      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(107,169,235,.22)';
+      ctx.fill();
+      ctx.strokeStyle = '#6ba9eb';
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(sx, sy, Math.max(2, r * 0.34), 0, Math.PI * 2);
+      ctx.fillStyle = '#6ba9eb';
+      ctx.fill();
+    }
   }
 
   function drawSelRing(sx, sy, plate) {
@@ -2626,11 +2924,17 @@ export function renderMapView(container, file, waveIndex) {
   let paintingDown = false;
   canvas.addEventListener('mousedown', e => {
     const rect = canvas.getBoundingClientRect();
+    if (ps.tool === 'engineer' && e.button === 0) {
+      e.preventDefault();
+      const [wx, wy] = toWorld(e.clientX - rect.left, e.clientY - rect.top);
+      placeEngineer(wx, wy);
+      return;
+    }
     if (ps.tool === 'kill' && (e.button === 0 || e.button === 2)) {
       e.preventDefault();
       const [wx, wy] = toWorld(e.clientX - rect.left, e.clientY - rect.top);
       const list = killPointsFor(mapData.map);
-      const hit = list.findIndex(k => (k[0] - wx) ** 2 + (k[1] - wy) ** 2 < (k[2] || KILL_RADIUS) ** 2);
+      const hit = killPointAt(list, wx, wy);
       if (e.button === 2 || e.shiftKey) {
         if (hit < 0) return;
         list.splice(hit, 1);
@@ -2670,7 +2974,7 @@ export function renderMapView(container, file, waveIndex) {
       }
       return;
     }
-    if (ps.tool === 'kill' || ps.tool === 'killerase') {
+    if (ps.tool === 'kill' || ps.tool === 'engineer') {
       if (e.target === canvas) {
         ps.hover = toWorld(e.clientX - rect.left, e.clientY - rect.top);
       } else if (ps.hover) {

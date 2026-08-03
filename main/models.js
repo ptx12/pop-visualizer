@@ -161,6 +161,22 @@ export function register() {
     }
   });
 
+  ipcMain.handle('game:buildtimes', async (e, tfPathOverride) => {
+    const tfPath = tfPathOverride || await detectTFPath();
+    if (!tfPath) return null;
+    const buf = await readGameFile('scripts/objects.txt', tfPath);
+    if (!buf) return null;
+    const text = buf.toString('latin1');
+    const out = {};
+    const re = /ClassName\s+"?([a-z_]+)"?[\s\S]*?BuildTime\s+"?([0-9.]+)"?/gi;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const v = parseFloat(m[2]);
+      if (Number.isFinite(v) && !(m[1].toLowerCase() in out)) out[m[1].toLowerCase()] = v;
+    }
+    return out;
+  });
+
   ipcMain.handle('hlmv:find', async (e, tfPathOverride, override) => {
     if (override) {
       try { await fs.access(override); return override; } catch {}

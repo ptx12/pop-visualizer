@@ -125,7 +125,7 @@ for (const map of MAPS) {
     for (const n of notPacked.slice(0, 3)) console.log('       ' + n);
   }
 
-  const { models, drawn } = brushModelDrawn(bsp);
+  const { models, drawn, doors, doorOf } = brushModelDrawn(bsp);
   check(map + ': worldspawn is drawn', drawn[0] === 1);
   const text = readEntityLump(bsp);
   const ents = parseEntities(text || '');
@@ -138,6 +138,30 @@ for (const map of MAPS) {
     if (drawn[mi] && (e.classname.startsWith('trigger_') || e.classname.startsWith('func_nav_'))) triggersDrawn++;
   }
   check(map + ': trigger and nav volumes are not drawn', triggersDrawn === 0, triggersDrawn + ' drawn');
+
+  const missedDoors = [];
+  for (const [mi, e] of byModel) {
+    if (!drawn[mi] || !/^(func_door|func_door_rotating|func_movelinear)$/.test(e.classname)) continue;
+    if (doorOf[mi] < 0) missedDoors.push(e.targetname || e.classname);
+  }
+  check(map + ': every drawn door brush is a mover the map logic can open',
+    missedDoors.length === 0, missedDoors.join(', '));
+
+  const badTravel = doors.filter(d => !(d.duration > 0) || !Number.isFinite(d.duration)
+    || (d.kind === 'linear' && !(d.travel > 0))
+    || (d.kind === 'linear' && Math.abs(Math.hypot(d.dir[0], d.dir[1], d.dir[2]) - 1) > 1e-6));
+  check(map + ': every door has a real travel distance, direction and duration',
+    badTravel.length === 0, badTravel.map(d => (d.name || d.cls) + ' ' + JSON.stringify({ travel: d.travel, dur: d.duration })).join('; '));
+
+  const movedGroups = world.materials.filter(m => m.mover != null);
+  const doorModels = new Set(doors.map(d => d.model));
+  const strayMovers = movedGroups.filter(m => !world.movers[m.mover] || !doorModels.has(world.movers[m.mover].model));
+  check(map + ': moving door geometry is split out of the static world mesh',
+    strayMovers.length === 0, strayMovers.length + ' stray');
+
+  const blockerMats = world.materials.filter(m => /(^|\/)(tools|skybox)\/|areaportal/i.test(m.name));
+  check(map + ': sightline blockers are not drawn as architecture',
+    blockerMats.length === 0, blockerMats.map(m => m.name).join(', '));
 
   const spawns = ents.filter(e => /^info_player_(teamspawn|start)$/.test(e.classname))
     .map(e => String(e.origin || '').trim().split(/\s+/).map(parseFloat))

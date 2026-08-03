@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { decodeVTF } from '../shared/vtf.js';
-import { readMaterialFile, makeMaterialLoader, pakFor } from '../shared/materials.js';
+import { readMaterialFile, makeMaterialLoader, pakFor, baseTextureOf } from '../shared/materials.js';
+import { encodePNG } from '../shared/png.js';
 import { detectTFPath } from './tfpath.js';
 
 export { readMaterialFile, makeMaterialLoader };
@@ -34,6 +35,7 @@ function byteCache(maxBytes) {
 
 const vmtCache = byteCache(16 * 1024 * 1024);
 const texCache = byteCache(192 * 1024 * 1024);
+const iconCache = byteCache(8 * 1024 * 1024);
 
 export function flushMaterialCaches() {
   vmtCache.clear();
@@ -55,6 +57,32 @@ export function register() {
     if (vmtCache.has(key)) return vmtCache.get(key);
     const buf = await readMaterialFile(rel, tfPath, pakFor(bspPath));
     return vmtCache.set(key, buf, buf ? buf.length : 0);
+  });
+
+  ipcMain.handle('mat:icon', async (e, matPath, tfPathOverride, bspPath) => {
+    const tfPath = tfPathOverride || await detectTFPath();
+    if (!tfPath) return null;
+    const name = String(matPath || '').replace(/\\/g, '/').replace(/^\/+/, '')
+      .replace(/^materials\//i, '').replace(/\.vmt$/i, '').toLowerCase().trim();
+    if (!name || name.includes('..')) return null;
+    const key = tfPath + '|' + (bspPath || '') + '|icon|' + name;
+    if (iconCache.has(key)) return iconCache.get(key);
+    let url = null;
+    let pak = null;
+    try { pak = pakFor(bspPath); } catch { pak = null; }
+    for (const src of pak ? [pak, null] : [null]) {
+      try {
+        const base = await baseTextureOf(name, tfPath, src, new Set([name]));
+        const buf = await readMaterialFile('materials/' + (base || name) + '.vtf', tfPath, src);
+        if (!buf) continue;
+        const { width, height, rgba } = decodeVTF(buf);
+        url = 'data:image/png;base64,' + encodePNG(rgba, width, height).toString('base64');
+        break;
+      } catch {
+        url = null;
+      }
+    }
+    return iconCache.set(key, url, url ? url.length : 0);
   });
 
   ipcMain.handle('mat:texture', async (e, relPath, tfPathOverride, bspPath) => {

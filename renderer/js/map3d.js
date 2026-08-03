@@ -1,5 +1,6 @@
+import { killRadiusOf } from './killzones.js';
 import { getTFPath } from './icons.js';
-import { loadBotPose, loadPropModel, loadAttachment } from './botmodels.js';
+import { loadBotPose, loadPropModel, loadPropAnim, loadAttachment } from './botmodels.js';
 import { ambientCubeAt, pickLocalLights, EMIT_SKYLIGHT } from '../../shared/lightmath.js';
 import { stripVmtComments, vmtParam, vmtColor, vmtTexturePath } from '../../shared/vmt.js';
 import { loadSystem, createEmitter, PARTICLE_STRIDE } from './particles.js';
@@ -194,18 +195,24 @@ gl_FragColor=vec4(c+uGlow*(0.5+0.5*t.rgb),1.0);}`;
 
 const MODEL_DISPLAY_SCALE = 1;
 const LM_OVERBRIGHT = 2.0;
+export const BLU_SKIN = 1;
 const BOMB_MODEL = 'models/props_td/atom_bomb';
 const TANK_HULL_MODEL = 'models/bots/boss_bot/boss_tank';
 const TANK_BOMB_MODEL = 'models/bots/boss_bot/bomb_mechanism';
 const TANK_SMOKE_ATTACH = 'smoke_attachment';
+const TANK_MECH_BONE = 'turret_bone';
+const TRACK_ANIM = 'forward';
+const TRACK_ANIM_KEY = 'tanktrack|';
+const TANK_BODY_ANIM = 'movement';
+const TANK_BODY_KEY = 'tankbody|';
 const TANK_TRACKS = [
   ['models/bots/boss_bot/tank_track_l', 'tank_track_l'],
   ['models/bots/boss_bot/tank_track_r', 'tank_track_r']
 ];
 const WORLD_VS = `attribute vec3 aPos;attribute vec2 aUV;attribute vec2 aLmUV;
-uniform mat4 uMVP;uniform vec2 uTexSize;uniform float uFogStart;uniform float uFogEnd;
+uniform mat4 uMVP;uniform mat4 uModel;uniform vec2 uTexSize;uniform float uFogStart;uniform float uFogEnd;
 varying vec2 vUV;varying vec2 vLmUV;varying float vFog;
-void main(){vUV=aUV/uTexSize;vLmUV=aLmUV;vec4 p=uMVP*vec4(aPos,1.0);vFog=clamp((p.w-uFogStart)/(uFogEnd-uFogStart),0.0,1.0);gl_Position=p;}`;
+void main(){vUV=aUV/uTexSize;vLmUV=aLmUV;vec4 p=uMVP*(uModel*vec4(aPos,1.0));vFog=clamp((p.w-uFogStart)/(uFogEnd-uFogStart),0.0,1.0);gl_Position=p;}`;
 const WORLD_FS = `precision mediump float;varying vec2 vUV;varying vec2 vLmUV;varying float vFog;
 uniform sampler2D uTex;uniform sampler2D uLightmap;uniform float uHasTex;uniform float uHasLM;uniform vec3 uFogColor;uniform float uLmRange;uniform float uExposure;uniform float uUseTexAlpha;uniform float uMatAlpha;uniform float uBrightPass;uniform vec3 uMinLight;uniform vec3 uFlatColor;
 void main(){
@@ -233,6 +240,12 @@ const ZONE_FILL_OUT = 0.3;
 const ZONE_WALL_A = 0.26;
 const ZONE_FILL_RGB = [0.83, 0.31, 0.29];
 const ZONE_RIM_RGB = [0.83, 0.45, 0.42];
+const ZONE_DOOMED_RGB = [1, 0.56, 0.52];
+const GHOST_FILL_RGB = [0.5, 0.72, 0.94];
+const GHOST_RIM_RGB = [0.62, 0.8, 0.98];
+const HINT_FILL_RGB = [0.95, 0.72, 0.28];
+const HINT_RIM_RGB = [1, 0.82, 0.42];
+const HINT_RING = 90;
 const ROUTE_LIFT = 5;
 const ROUTE_PX = 3.6;
 const ROUTE_RGB = [0.5, 0.72, 0.94];
@@ -241,6 +254,26 @@ const ROUTE_DASH_FRAC = 0.013;
 const ROUTE_FLOW = 46;
 const LUM3 = (r, g, b) => r * 0.2126 + g * 0.7152 + b * 0.0722;
 const ZUP2YUP = [1, 0, 0, 0, 0, 0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1];
+function mInvertAffine(m) {
+  const m00 = m[0], m10 = m[1], m20 = m[2];
+  const m01 = m[4], m11 = m[5], m21 = m[6];
+  const m02 = m[8], m12 = m[9], m22 = m[10];
+  const c00 = m11 * m22 - m12 * m21, c01 = m02 * m21 - m01 * m22, c02 = m01 * m12 - m02 * m11;
+  const det = m00 * c00 + m10 * c01 + m20 * c02;
+  if (!det) return null;
+  const s = 1 / det;
+  const o = [
+    c00 * s, (m12 * m20 - m10 * m22) * s, (m10 * m21 - m11 * m20) * s, 0,
+    c01 * s, (m00 * m22 - m02 * m20) * s, (m01 * m20 - m00 * m21) * s, 0,
+    c02 * s, (m02 * m10 - m00 * m12) * s, (m00 * m11 - m01 * m10) * s, 0,
+    0, 0, 0, 1
+  ];
+  const tx = m[12], ty = m[13], tz = m[14];
+  o[12] = -(o[0] * tx + o[4] * ty + o[8] * tz);
+  o[13] = -(o[1] * tx + o[5] * ty + o[9] * tz);
+  o[14] = -(o[2] * tx + o[6] * ty + o[10] * tz);
+  return o;
+}
 function mTranslate(x, y, z) { return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1]; }
 function mRotY(a) { const c = Math.cos(a), s = Math.sin(a); return [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]; }
 function mScale(s) { return [s, 0, 0, 0, 0, s, 0, 0, 0, 0, s, 0, 0, 0, 0, 1]; }
@@ -316,13 +349,16 @@ export function createMap3D(scene) {
   const fxEmitters = new Map();
   let fxLastT = null;
 
-  const FX = { carrier: 'mvm_hatch_destroy_smolderembers', crit: 'critgun_weaponmodel_blu', tanksmoke: 'smoke_train' };
+  const FX = { carrier: 'mvm_hatch_destroy_smolderembers', crit: 'critgun_weaponmodel_blu', tanksmoke: 'smoke_train', teleporter: 'teleporter_blue_exit' };
   const CRIT_GLOW = (() => { const v = [5, 20, 80]; const m = Math.max(...v); return v.map(c => c / m * 0.62); })();
   const UBER_GLOW = [0.72, 0.74, 0.78];
   const PROBE_GLOW = [0.10, 0.42, 0.14];
 
   function fxFor(key) {
-    const name = FX[key];
+    return fxForName(FX[key]);
+  }
+
+  function fxForName(name) {
     if (!name) return null;
     if (!fxCache.has(name)) {
       fxCache.set(name, null);
@@ -341,10 +377,14 @@ export function createMap3D(scene) {
   }
 
   function fxEmitter(id, key, origin, sampler) {
-    const layers = fxFor(key);
+    return fxEmitterFrom(id, fxFor(key), origin, sampler);
+  }
+
+  function fxEmitterFrom(id, layers, origin, sampler) {
     if (!layers) return null;
     let set = fxEmitters.get(id);
     if (!set || set.layers !== layers) {
+      if (set) fxEmitters.delete(id);
       set = { layers, emitters: layers.map(l => createEmitter(l.def, l.seq)) };
       if (origin) for (let i = 0; i < 45; i++) for (const e of set.emitters) e.step(1 / 30, origin, sampler);
       fxEmitters.set(id, set);
@@ -423,6 +463,8 @@ export function createMap3D(scene) {
     covered: gl.getUniformLocation(ovlProg, 'uCovered')
   };
   const zoneBuf = gl.createBuffer();
+  const ghostBuf = gl.createBuffer();
+  const hintBuf = gl.createBuffer();
   const routeBuf = gl.createBuffer();
   gl.getExtension('OES_element_index_uint');
   const anisoExt = gl.getExtension('EXT_texture_filter_anisotropic') || gl.getExtension('WEBKIT_EXT_texture_filter_anisotropic');
@@ -435,6 +477,7 @@ export function createMap3D(scene) {
     uv: gl.getAttribLocation(worldProg, 'aUV'),
     lmuv: gl.getAttribLocation(worldProg, 'aLmUV'),
     mvp: gl.getUniformLocation(worldProg, 'uMVP'),
+    model: gl.getUniformLocation(worldProg, 'uModel'),
     texSize: gl.getUniformLocation(worldProg, 'uTexSize'),
     texU: gl.getUniformLocation(worldProg, 'uTex'),
     lightmap: gl.getUniformLocation(worldProg, 'uLightmap'),
@@ -578,7 +621,7 @@ export function createMap3D(scene) {
       const posBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, posBuf); gl.bufferData(gl.ARRAY_BUFFER, f32(m.positions), gl.STATIC_DRAW);
       const uvBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf); gl.bufferData(gl.ARRAY_BUFFER, f32(m.uvs), gl.STATIC_DRAW);
       const lmBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, lmBuf); gl.bufferData(gl.ARRAY_BUFFER, f32(m.lm), gl.STATIC_DRAW);
-      const g = { posBuf, uvBuf, lmBuf, count: m.count, tex: null, texW: 256, texH: 256, translucent: false, alpha: 1, belowWater: false, flatColor: null };
+      const g = { posBuf, uvBuf, lmBuf, count: m.count, mover: m.mover != null ? m.mover : -1, tex: null, texW: 256, texH: 256, translucent: false, alpha: 1, belowWater: false, flatColor: null };
       world.push(g);
       resolveMat(m.name, [], tfPath).then(mat => { if (disposed) return; g.tex = mat.tex; g.translucent = mat.translucent; g.alpha = mat.alpha; g.belowWater = mat.belowWater; g.flatColor = mat.flatColor; if (mat.w) { g.texW = mat.w; g.texH = mat.h; } schedule(); });
     }
@@ -653,10 +696,206 @@ export function createMap3D(scene) {
   let propInstances = null;
   let propsKey = null;
 
-  function ensureProp(model) {
-    if (!model || props.has(model)) return;
+  const propKey = (model, skin) => skin ? model + '#' + skin : model;
+
+  const IDENTITY4 = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  const moverMat = new Float32Array(16);
+  let moverDoors = null;
+  let moverDoorsKey = null;
+
+  const doorForMover = idx => {
+    const defs = scene.faces3d && scene.faces3d.movers;
+    if (!defs || !defs[idx]) return null;
+    const doors = scene.doors;
+    if (!doors || !doors.length) return null;
+    if (moverDoorsKey !== doors) {
+      moverDoors = new Map();
+      for (const d of doors) moverDoors.set(d.model, d);
+      moverDoorsKey = doors;
+    }
+    const sim = moverDoors.get(defs[idx].model);
+    return sim ? { def: defs[idx], keys: sim.keys } : null;
+  };
+
+  const doorFrac = (keys, t) => {
+    for (let i = keys.length - 1; i >= 0; i--) {
+      if (keys[i].t > t) continue;
+      if (i + 1 >= keys.length) return keys[i].frac;
+      const a = keys[i], b = keys[i + 1];
+      if (b.t <= a.t) return b.frac;
+      return a.frac + (b.frac - a.frac) * Math.max(0, Math.min(1, (t - a.t) / (b.t - a.t)));
+    }
+    return keys[0].frac;
+  };
+
+  let doorByName = null;
+  let doorByNameKey = null;
+
+  const doorNamed = name => {
+    const doors = scene.doors;
+    if (!name || !doors || !doors.length) return null;
+    if (doorByNameKey !== doors) {
+      doorByName = new Map();
+      for (const d of doors) if (d.name) doorByName.set(d.name, { keys: d.keys, def: d });
+      doorByNameKey = doors;
+    }
+    return doorByName.get(name) || null;
+  };
+
+  const propPose = inst => {
+    if (!inst.parent) return null;
+    const hit = doorNamed(inst.parent);
+    if (!hit || !hit.def) return null;
+    const frac = doorFrac(hit.keys, scene.ps.t);
+    if (!(frac > 0)) return null;
+    const d = hit.def;
+    if (d.kind === 'rotate') {
+      const rad = d.degrees * frac * Math.PI / 180;
+      const c = Math.cos(rad), s2 = Math.sin(rad);
+      const h = d.hinge;
+      const dx = inst.origin[0] - h[0], dy = inst.origin[1] - h[1];
+      if (d.axis[2]) {
+        return {
+          origin: [h[0] + dx * c - dy * s2, h[1] + dx * s2 + dy * c, inst.origin[2]],
+          angles: [inst.angles[0], inst.angles[1] + d.degrees * frac, inst.angles[2]]
+        };
+      }
+      return null;
+    }
+    const m = d.travel * frac;
+    return {
+      origin: [inst.origin[0] + d.dir[0] * m, inst.origin[1] + d.dir[1] * m, inst.origin[2] + d.dir[2] * m],
+      angles: inst.angles
+    };
+  };
+
+  function moverMatrix(idx) {
+    if (idx < 0) return IDENTITY4;
+    const hit = doorForMover(idx);
+    if (!hit) return IDENTITY4;
+    const frac = doorFrac(hit.keys, scene.ps.t);
+    if (!(frac > 0)) return IDENTITY4;
+    const d = hit.def;
+    moverMat.set(IDENTITY4);
+    if (d.kind === 'rotate') {
+      const rad = d.degrees * frac * Math.PI / 180;
+      const c = Math.cos(rad), s = Math.sin(rad);
+      const h = d.hinge;
+      const gx = h[0], gy = h[2], gz = -h[1];
+      let m0 = 1, m1 = 0, m2 = 0, m4 = 0, m5 = 1, m6 = 0, m8 = 0, m9 = 0, m10 = 1;
+      if (d.axis[2]) { m0 = c; m2 = -s; m8 = s; m10 = c; }
+      else if (d.axis[0]) { m5 = c; m6 = s; m9 = -s; m10 = c; }
+      else { m0 = c; m1 = -s; m4 = s; m5 = c; }
+      moverMat[0] = m0; moverMat[1] = m1; moverMat[2] = m2;
+      moverMat[4] = m4; moverMat[5] = m5; moverMat[6] = m6;
+      moverMat[8] = m8; moverMat[9] = m9; moverMat[10] = m10;
+      moverMat[12] = gx - (gx * m0 + gy * m4 + gz * m8);
+      moverMat[13] = gy - (gx * m1 + gy * m5 + gz * m9);
+      moverMat[14] = gz - (gx * m2 + gy * m6 + gz * m10);
+      return moverMat;
+    }
+    const m = d.travel * frac;
+    moverMat[12] = d.dir[0] * m;
+    moverMat[13] = d.dir[2] * m;
+    moverMat[14] = -d.dir[1] * m;
+    return moverMat;
+  }
+
+  const propAnimAt = inst => {
+    const list = scene.propEvents;
+    if (!inst.name || !list || !list.length) return null;
+    const now = scene.ps.t;
+    let hit = null;
+    for (const e of list) {
+      if (e.at > now) break;
+      if (e.name !== inst.name) continue;
+      if (e.effect === 'anim' && e.param) hit = e;
+      else if (e.effect === 'kill' || e.effect === 'show') hit = null;
+    }
+    return hit;
+  };
+
+  const oneShotFrame = (pool, elapsed) => {
+    const nf = pool.numframes || 1;
+    const fpos = Math.max(0, elapsed) * (pool.fps || 30);
+    if (fpos >= nf - 1) return { f0: nf - 1, f1: nf - 1, blend: 0 };
+    const i = Math.floor(fpos);
+    return { f0: i, f1: Math.min(nf - 1, i + 1), blend: fpos - i };
+  };
+
+  const BURST_STEP = 1 / 30;
+  const BURST_MAX_STEPS = 900;
+
+  function pushMapBursts(live) {
+    const list = scene.propEvents;
+    const table = scene.mapParticles;
+    if (!list || !list.length || !table || !table.size) return;
+    const now = scene.ps.t;
+    const stopped = new Map();
+    for (const e of list) {
+      if (e.at > now) break;
+      if (e.effect === 'burstoff') stopped.set(e.name, e.at);
+    }
+    for (const e of list) {
+      if (e.at > now) break;
+      if (e.effect !== 'burst') continue;
+      const off = stopped.get(e.name);
+      if (off != null && off > e.at) continue;
+      const ent = table.get(e.name);
+      if (!ent) continue;
+      const layers = fxForName(ent.effect);
+      if (!layers) continue;
+      const id = 'burst:' + e.name + '@' + e.at.toFixed(2);
+      const want = now - e.at;
+      let set = fxEmitters.get(id);
+      if (!set || set.layers !== layers || set.simT > want + 1e-3) {
+        set = { layers, emitters: layers.map(l => createEmitter(l.def, l.seq)), simT: 0 };
+        fxEmitters.set(id, set);
+      }
+      let guard = 0;
+      while (set.simT < want && guard++ < BURST_MAX_STEPS) {
+        const step = Math.min(BURST_STEP, want - set.simT);
+        for (const em of set.emitters) em.step(step, ent.origin);
+        set.simT += step;
+      }
+      for (let i = 0; i < set.emitters.length; i++) live.push([set.layers[i].tex, set.emitters[i], !!set.layers[i].def.additive]);
+    }
+  }
+
+  const propSkinAt = inst => {
+    const list = scene.propEvents;
+    if (!inst.name || !list || !list.length) return null;
+    const now = scene.ps.t;
+    let skin = null;
+    for (const e of list) {
+      if (e.at > now) break;
+      if (e.name !== inst.name || e.effect !== 'skin') continue;
+      const v = parseInt(e.param, 10);
+      if (Number.isFinite(v)) skin = v;
+    }
+    return skin;
+  };
+
+  const propVisible = inst => {
+    if (!inst.name) return !inst.startDisabled;
+    const list = scene.propEvents;
+    if (!list || !list.length) return !inst.startDisabled;
+    let visible = !inst.startDisabled;
+    const now = scene.ps.t;
+    for (const e of list) {
+      if (e.at > now) break;
+      if (e.name !== inst.name) continue;
+      if (e.effect === 'kill') visible = false;
+      else if (e.effect === 'show') visible = true;
+    }
+    return visible;
+  };
+
+  function ensureProp(model, skin = 0) {
+    const key = propKey(model, skin);
+    if (!model || props.has(key)) return;
     const rec = { loading: true, loaded: false };
-    props.set(model, rec);
+    props.set(key, rec);
     (async () => {
       let m = null;
       try { m = await loadPropModel(model, (scene && scene.bspPath) || null); } catch {}
@@ -668,15 +907,15 @@ export function createMap3D(scene) {
       const uvBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf); gl.bufferData(gl.ARRAY_BUFFER, m.uv, gl.STATIC_DRAW);
       const idxBuf = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, m.idx, gl.STATIC_DRAW);
       const mats = new Map();
-      const skin0 = m.skins && m.skins[0] ? m.skins[0] : null;
+      const fam = m.skins ? (m.skins[skin] || m.skins[0] || null) : null;
       for (const me of m.meshes) {
         if (mats.has(me.material)) continue;
         mats.set(me.material, { tex: null, alphaTest: false });
-        const texIdx = skin0 && me.material < skin0.length ? skin0[me.material] : me.material;
+        const texIdx = fam && me.material < fam.length ? fam[me.material] : me.material;
         const texName = m.textures[texIdx] ?? m.textures[me.material];
         resolveMat(texName, m.cdtextures, tfPath).then(mat => { if (!disposed) { mats.set(me.material, mat); schedule(); } });
       }
-      Object.assign(rec, { loading: false, loaded: true, posBuf, nrmBuf, uvBuf, idxBuf, meshes: m.meshes, mats, boneOrigins: m.boneOrigins || null, attachOrigins: m.attachOrigins || null });
+      Object.assign(rec, { loading: false, loaded: true, posBuf, nrmBuf, uvBuf, idxBuf, meshes: m.meshes, mats, boneOrigins: m.boneOrigins || null, attachOrigins: m.attachOrigins || null, boneMatrices: m.boneMatrices || null, attachMatrices: m.attachMatrices || null });
       schedule();
     })();
   }
@@ -690,7 +929,7 @@ export function createMap3D(scene) {
     const uvBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf); gl.bufferData(gl.ARRAY_BUFFER, pose.uv, gl.STATIC_DRAW);
     const idxBuf = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, pose.idx, gl.STATIC_DRAW);
     const mats = new Map();
-    const skinFam = pose.skins ? (pose.skins[1] || pose.skins[0] || null) : null;
+    const skinFam = pose.skins ? (pose.skins[BLU_SKIN] || pose.skins[0] || null) : null;
     for (const m of pose.meshes) {
       if (mats.has(m.material)) continue;
       mats.set(m.material, { tex: null, alphaTest: false });
@@ -749,6 +988,22 @@ export function createMap3D(scene) {
     return { f0: base + local0, f1: base + (local0 + 1) % nf, blend: fpos - Math.floor(fpos) };
   }
 
+  function boneWorldAt(pool, name, frame) {
+    if (!pool) return null;
+    if (frame != null && pool.boneWorldFrames && pool.boneNames) {
+      const fr = pool.boneWorldFrames[Math.min(frame, pool.boneWorldFrames.length - 1)];
+      const i = pool.boneNames.indexOf(name);
+      if (fr && i >= 0 && fr[i]) return fr[i];
+    }
+    return (pool.boneMatrices && pool.boneMatrices[name]) || null;
+  }
+
+  function followMatrix(M, parentBone, follower, name, frame) {
+    const own = boneWorldAt(follower, name, frame);
+    const inv = own ? mInvertAffine(own) : null;
+    return mul(M, inv ? mul(parentBone, inv) : parentBone);
+  }
+
   function modelSampler(pool, frame, a, gy) {
     const boneFrames = pool && pool.boneWorldFrames;
     const boxes = pool && pool.hitboxes;
@@ -796,6 +1051,22 @@ export function createMap3D(scene) {
     };
   }
 
+  function ensureAnimProp(key, base, animName) {
+    if (!key || models.has(key)) return;
+    const rec = { loading: true, loaded: false };
+    models.set(key, rec);
+    (async () => {
+      let pose = null;
+      try { pose = await loadPropAnim(base, animName, (scene && scene.bspPath) || null); } catch {}
+      if (disposed) return;
+      if (!pose) { rec.loading = false; rec.error = true; return; }
+      const tfPath = await getTFPath();
+      const body = buildRenderable(pose, tfPath);
+      Object.assign(rec, { loading: false, loaded: true, ...body, attachments: [], numframes: pose.numframes, fps: pose.fps, moveDist: pose.moveDist || 0, runCount: pose.numframes, standCount: 0, standFps: pose.fps, flagFrames: null, hitboxes: [], boneWorldFrames: pose.boneWorldFrames, boneNames: pose.boneNames || null });
+      schedule();
+    })();
+  }
+
   function ensureModel(key, base, attachments, activity) {
     if (!key || models.has(key)) return;
     const rec = { loading: true, loaded: false };
@@ -841,7 +1112,8 @@ export function createMap3D(scene) {
   function loadScene(s) {
     scene = s;
     if (s.lighting !== lightData) { lightData = s.lighting || null; lightCache.clear(); }
-    canvas.style.cursor = s.tool === 'kill' ? 'crosshair' : '';
+    canvas.style.cursor = (s.tool === 'kill' || s.tool === 'engineer') ? 'crosshair' : '';
+    if (s.tool !== 'kill' && s.tool !== 'engineer') clearKillGhost();
     const t = buildTerrain(s.heightGrid, s.bounds);
     terrainCount = t.count;
     gl.bindBuffer(gl.ARRAY_BUFFER, terrainBuf);
@@ -945,7 +1217,7 @@ export function createMap3D(scene) {
       at += arr.length / 9;
     };
     for (const kp of kps) {
-      const cx = kp[0], cy = kp[1], R = kp[2] || 200;
+      const cx = kp[0], cy = kp[1], R = killRadiusOf(kp);
       const rings = Math.max(ZONE_RING_MIN, Math.min(ZONE_RING_MAX, Math.ceil(R / cell)));
       const segs = Math.max(ZONE_SEG_MIN, Math.min(ZONE_SEG_MAX, Math.ceil(2 * Math.PI * R / cell)));
       const ringPt = (k, i) => {
@@ -1002,6 +1274,33 @@ export function createMap3D(scene) {
     gl.bindBuffer(gl.ARRAY_BUFFER, zoneBuf);
     gl.bufferData(gl.ARRAY_BUFFER, zoneGeo.data, gl.STATIC_DRAW);
     return zoneGeo;
+  }
+
+  let hintGeo = null, hintKey = null, hintGrid = null;
+  function hintOverlay() {
+    const hints = scene.tool === 'engineer' ? scene.hintRings : null;
+    if (!hints || !hints.length || !scene.heightGrid) return null;
+    const key = hints.map(h => h.join(',')).join(';');
+    if (hintGeo && hintKey === key && hintGrid === scene.heightGrid) return hintGeo;
+    hintGeo = zoneGeometry(hints.map(h => [h[0], h[1], HINT_RING]));
+    hintKey = key;
+    hintGrid = scene.heightGrid;
+    gl.bindBuffer(gl.ARRAY_BUFFER, hintBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, hintGeo.data, gl.STATIC_DRAW);
+    return hintGeo;
+  }
+
+  let ghostGeo = null, ghostKey = null, ghostGrid = null;
+  function ghostOverlay() {
+    if (!killGhost || scene.tool !== 'kill' || !scene.heightGrid) return null;
+    const key = killGhost.join(',');
+    if (ghostGeo && ghostKey === key && ghostGrid === scene.heightGrid) return ghostGeo;
+    ghostGeo = zoneGeometry([killGhost]);
+    ghostKey = key;
+    ghostGrid = scene.heightGrid;
+    gl.bindBuffer(gl.ARRAY_BUFFER, ghostBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, ghostGeo.data, gl.STATIC_DRAW);
+    return ghostGeo;
   }
 
   let routeGeo = null, routeSrc = null;
@@ -1079,7 +1378,9 @@ export function createMap3D(scene) {
   function drawOverlays(mvp) {
     const zone = zoneOverlay();
     const route = routeOverlay();
-    if (!zone && !route) return;
+    const ghost = ghostOverlay();
+    const hints = hintOverlay();
+    if (!zone && !route && !ghost && !hints) return;
     gl.useProgram(ovlProg);
     gl.uniformMatrix4fv(oA.mvp, false, mvp);
     gl.uniform2f(oA.viewport, canvas.width, canvas.height);
@@ -1097,14 +1398,48 @@ export function createMap3D(scene) {
 
     if (zone) {
       bindOverlay(zoneBuf);
+      const fillOf = i => i === killGhostIdx ? ZONE_DOOMED_RGB : ZONE_FILL_RGB;
+      const rimOf = i => i === killGhostIdx ? ZONE_DOOMED_RGB : ZONE_RIM_RGB;
       gl.uniform1f(oA.px, 0);
-      gl.uniform4f(oA.color, ZONE_FILL_RGB[0], ZONE_FILL_RGB[1], ZONE_FILL_RGB[2], 1);
-      for (const [start, count] of zone.fills) gl.drawArrays(gl.TRIANGLE_STRIP, start, count);
-      gl.uniform4f(oA.color, ZONE_RIM_RGB[0], ZONE_RIM_RGB[1], ZONE_RIM_RGB[2], 1);
-      for (const [start, count] of zone.walls) gl.drawArrays(gl.TRIANGLE_STRIP, start, count);
+      zone.fills.forEach(([start, count], i) => {
+        const c = fillOf(i);
+        gl.uniform4f(oA.color, c[0], c[1], c[2], 1);
+        gl.drawArrays(gl.TRIANGLE_STRIP, start, count);
+      });
+      zone.walls.forEach(([start, count], i) => {
+        const c = rimOf(i);
+        gl.uniform4f(oA.color, c[0], c[1], c[2], 1);
+        gl.drawArrays(gl.TRIANGLE_STRIP, start, count);
+      });
       gl.uniform1f(oA.px, ZONE_RIM_PX);
-      gl.uniform4f(oA.color, ZONE_RIM_RGB[0], ZONE_RIM_RGB[1], ZONE_RIM_RGB[2], 0.95);
-      for (const [start, count] of zone.rims) gl.drawArrays(gl.TRIANGLE_STRIP, start, count);
+      zone.rims.forEach(([start, count], i) => {
+        const c = rimOf(i);
+        gl.uniform4f(oA.color, c[0], c[1], c[2], i === killGhostIdx ? 1 : 0.95);
+        gl.drawArrays(gl.TRIANGLE_STRIP, start, count);
+      });
+    }
+
+    if (ghost) {
+      bindOverlay(ghostBuf);
+      gl.uniform1f(oA.px, 0);
+      gl.uniform4f(oA.color, GHOST_FILL_RGB[0], GHOST_FILL_RGB[1], GHOST_FILL_RGB[2], 1);
+      for (const [start, count] of ghost.fills) gl.drawArrays(gl.TRIANGLE_STRIP, start, count);
+      gl.uniform4f(oA.color, GHOST_RIM_RGB[0], GHOST_RIM_RGB[1], GHOST_RIM_RGB[2], 1);
+      for (const [start, count] of ghost.walls) gl.drawArrays(gl.TRIANGLE_STRIP, start, count);
+      gl.uniform1f(oA.px, ZONE_RIM_PX);
+      gl.uniform4f(oA.color, GHOST_RIM_RGB[0], GHOST_RIM_RGB[1], GHOST_RIM_RGB[2], 1);
+      for (const [start, count] of ghost.rims) gl.drawArrays(gl.TRIANGLE_STRIP, start, count);
+    }
+
+    if (hints) {
+      bindOverlay(hintBuf);
+      gl.uniform1f(oA.px, 0);
+      gl.uniform4f(oA.color, HINT_FILL_RGB[0], HINT_FILL_RGB[1], HINT_FILL_RGB[2], 1);
+      for (const [start, count] of hints.fills) gl.drawArrays(gl.TRIANGLE_STRIP, start, count);
+      gl.uniform4f(oA.color, HINT_RIM_RGB[0], HINT_RIM_RGB[1], HINT_RIM_RGB[2], 1);
+      for (const [start, count] of hints.walls) gl.drawArrays(gl.TRIANGLE_STRIP, start, count);
+      gl.uniform1f(oA.px, ZONE_RIM_PX);
+      for (const [start, count] of hints.rims) gl.drawArrays(gl.TRIANGLE_STRIP, start, count);
     }
 
     if (route) {
@@ -1184,6 +1519,7 @@ export function createMap3D(scene) {
         gl.uniform1f(wA.hasTex, g.tex ? 1 : 0);
         gl.uniform3fv(wA.flatColor, g.flatColor || NO_TEX_COLOR);
         gl.uniform2f(wA.texSize, g.texW, g.texH);
+        gl.uniformMatrix4fv(wA.model, false, moverMatrix(g.mover));
         gl.bindBuffer(gl.ARRAY_BUFFER, g.posBuf); gl.enableVertexAttribArray(wA.pos); gl.vertexAttribPointer(wA.pos, 3, gl.FLOAT, false, 0, 0);
         gl.bindBuffer(gl.ARRAY_BUFFER, g.uvBuf); gl.enableVertexAttribArray(wA.uv); gl.vertexAttribPointer(wA.uv, 2, gl.FLOAT, false, 0, 0);
         gl.bindBuffer(gl.ARRAY_BUFFER, g.lmBuf); gl.enableVertexAttribArray(wA.lmuv); gl.vertexAttribPointer(wA.lmuv, 2, gl.FLOAT, false, 0, 0);
@@ -1209,6 +1545,8 @@ export function createMap3D(scene) {
       gl.drawArrays(gl.TRIANGLES, 0, terrainCount);
     }
 
+    const animatedProps = [];
+    const skinnedProps = [];
     if (propInstances) {
       gl.useProgram(modelProg);
       gl.uniform1f(mA.mExposure, worldExposure);
@@ -1227,8 +1565,25 @@ export function createMap3D(scene) {
         gl.bindBuffer(gl.ARRAY_BUFFER, pool.uvBuf); gl.enableVertexAttribArray(mA.uv); gl.vertexAttribPointer(mA.uv, 2, gl.FLOAT, false, 0, 0);
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, pool.idxBuf);
         for (const inst of insts) {
-          applyModelLight(inst.origin[0], inst.origin[1], inst.origin[2] + 32);
-          const M = mul(mul(mul(ZUP2YUP, mTranslate(inst.origin[0], inst.origin[1], inst.origin[2])), angleMatrix(inst.angles[0], inst.angles[1], inst.angles[2])), mScale(inst.scale || 1));
+          if (!propVisible(inst)) continue;
+          const ev = propAnimAt(inst);
+          if (ev) {
+            const key = model + '|anim|' + ev.param;
+            const anim = models.get(key);
+            if (!anim) ensureAnimProp(key, model, ev.param);
+            if (anim && anim.loaded) { animatedProps.push({ inst, anim, since: scene.ps.t - ev.at }); continue; }
+          }
+          const sk = propSkinAt(inst);
+          if (sk) {
+            const skinned = props.get(propKey(model, sk));
+            if (!skinned) ensureProp(model, sk);
+            if (skinned && skinned.loaded) { skinnedProps.push({ inst, pool: skinned }); continue; }
+          }
+          const pose = propPose(inst);
+          const org = pose ? pose.origin : inst.origin;
+          const ang = pose ? pose.angles : inst.angles;
+          applyModelLight(org[0], org[1], org[2] + 32);
+          const M = mul(mul(mul(ZUP2YUP, mTranslate(org[0], org[1], org[2])), angleMatrix(ang[0], ang[1], ang[2])), mScale(inst.scale || 1));
           gl.uniformMatrix4fv(mA.mvp, false, new Float32Array(mul(mvp, M)));
           gl.uniformMatrix4fv(mA.model, false, new Float32Array(M));
           for (const me of pool.meshes) {
@@ -1244,10 +1599,58 @@ export function createMap3D(scene) {
       }
     }
 
+    if (skinnedProps.length) {
+      for (const { inst, pool } of skinnedProps) {
+        const pose = propPose(inst);
+        const org = pose ? pose.origin : inst.origin;
+        const ang = pose ? pose.angles : inst.angles;
+        applyModelLight(org[0], org[1], org[2] + 32);
+        const M = mul(mul(mul(ZUP2YUP, mTranslate(org[0], org[1], org[2])), angleMatrix(ang[0], ang[1], ang[2])), mScale(inst.scale || 1));
+        gl.uniformMatrix4fv(mA.mvp, false, new Float32Array(mul(mvp, M)));
+        gl.uniformMatrix4fv(mA.model, false, new Float32Array(M));
+        gl.bindBuffer(gl.ARRAY_BUFFER, pool.posBuf); gl.enableVertexAttribArray(mA.pos); gl.vertexAttribPointer(mA.pos, 3, gl.FLOAT, false, 0, 0); gl.enableVertexAttribArray(mA.pos2); gl.vertexAttribPointer(mA.pos2, 3, gl.FLOAT, false, 0, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, pool.nrmBuf); gl.enableVertexAttribArray(mA.nrm); gl.vertexAttribPointer(mA.nrm, 3, gl.FLOAT, false, 0, 0); gl.enableVertexAttribArray(mA.nrm2); gl.vertexAttribPointer(mA.nrm2, 3, gl.FLOAT, false, 0, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, pool.uvBuf); gl.enableVertexAttribArray(mA.uv); gl.vertexAttribPointer(mA.uv, 2, gl.FLOAT, false, 0, 0);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, pool.idxBuf);
+        for (const me of pool.meshes) {
+          const mat = pool.mats.get(me.material) || {};
+          gl.activeTexture(gl.TEXTURE0);
+          if (mat.tex) gl.bindTexture(gl.TEXTURE_2D, mat.tex);
+          gl.uniform1i(mA.texU, 0);
+          gl.uniform1f(mA.hasTex, mat.tex ? 1 : 0);
+          gl.uniform1f(mA.alphaTest, mat.alphaTest ? 1 : 0);
+          gl.drawElements(gl.TRIANGLES, me.count, gl.UNSIGNED_INT, me.offset * 4);
+        }
+      }
+    }
+
+    if (animatedProps.length) {
+      gl.useProgram(modelProg);
+      gl.uniform1f(mA.mExposure, worldExposure);
+      gl.uniform3fv(mA.fogColor, FOG_COLOR);
+      gl.uniform1f(mA.fogStart, fogStart);
+      gl.uniform1f(mA.fogEnd, fogEnd);
+      gl.uniform3f(mA.glow, 0, 0, 0);
+      gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
+      gl.disable(gl.CULL_FACE);
+      for (const { inst, anim, since } of animatedProps) {
+        const pose = propPose(inst);
+        const org = pose ? pose.origin : inst.origin;
+        const ang = pose ? pose.angles : inst.angles;
+        applyModelLight(org[0], org[1], org[2] + 32);
+        const M = mul(mul(mul(ZUP2YUP, mTranslate(org[0], org[1], org[2])), angleMatrix(ang[0], ang[1], ang[2])), mScale(inst.scale || 1));
+        gl.uniformMatrix4fv(mA.mvp, false, new Float32Array(mul(mvp, M)));
+        gl.uniformMatrix4fv(mA.model, false, new Float32Array(M));
+        const { f0, f1, blend } = oneShotFrame(anim, since);
+        drawRenderable(anim, f0, f1, blend);
+      }
+      gl.uniform1f(mA.blend, 0);
+    }
+
     const actors = scene.actorsAt ? scene.actorsAt(scene.ps.t) : [];
     const pts = [];
     const modelActors = [];
-    const tankActors = [];
+    const propActors = [];
     for (const a of actors) {
       if (a.kind === 'bot' && a.modelBase && a.loadoutKey) {
         const pool = models.get(a.loadoutKey);
@@ -1256,17 +1659,17 @@ export function createMap3D(scene) {
         if (pool && pool.error) { pts.push(a); continue; }
         if (pool && pool.loading) { pts.push(a); continue; }
       }
-      if (a.kind === 'tank') {
+      if (a.kind === 'tank' || a.kind === 'building') {
         const base = a.modelBase || TANK_HULL_MODEL;
-        const hull = props.get(base);
+        const hull = props.get(propKey(base, a.modelSkin || 0));
         if (!hull) {
-          ensureProp(base);
-          if (!a.modelBase) {
+          ensureProp(base, a.modelSkin || 0);
+          if (a.kind === 'tank' && !a.modelBase) {
             ensureProp(TANK_BOMB_MODEL);
             for (const [m] of TANK_TRACKS) ensureProp(m);
           }
         }
-        if (hull && hull.loaded) { tankActors.push(a); continue; }
+        if (hull && hull.loaded) { propActors.push(a); continue; }
       }
       pts.push(a);
     }
@@ -1315,7 +1718,7 @@ export function createMap3D(scene) {
       gl.disable(gl.CULL_FACE);
     }
 
-    if (tankActors.length) {
+    if (propActors.length) {
       const mech = props.get(TANK_BOMB_MODEL);
       gl.useProgram(modelProg);
       gl.uniform1f(mA.mExposure, worldExposure);
@@ -1326,23 +1729,60 @@ export function createMap3D(scene) {
       gl.uniform3f(mA.glow, 0, 0, 0);
       gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
       gl.disable(gl.CULL_FACE);
-      for (const a of tankActors) {
+      for (const a of propActors) {
         const gy = Number.isFinite(a.z) ? a.z : sampleHeight(a.x, a.y);
         applyModelLight(a.x, a.y, gy + 80);
         const M = mul(mul(mul(mTranslate(a.x, gy, -a.y), mRotY(a.heading || 0)), ZUP2YUP), mScale(a.scale || 1));
         gl.uniformMatrix4fv(mA.mvp, false, new Float32Array(mul(mvp, M)));
         gl.uniformMatrix4fv(mA.model, false, new Float32Array(M));
-        const hull = props.get(a.modelBase || TANK_HULL_MODEL);
+        const hull = props.get(propKey(a.modelBase || TANK_HULL_MODEL, a.modelSkin || 0));
         if (!hull || !hull.loaded) continue;
-        drawStatic(hull);
-        if (a.modelBase) continue;
-        if (mech && mech.loaded) drawStatic(mech);
-        const bo = hull.boneOrigins;
-        if (bo) for (const [model, bone] of TANK_TRACKS) {
+        let bm = hull.boneMatrices;
+        let drawn = false;
+        if (a.kind === 'tank' && !a.modelBase) {
+          const bodyKey = TANK_BODY_KEY + TANK_HULL_MODEL;
+          const body = models.get(bodyKey);
+          if (!body) ensureAnimProp(bodyKey, TANK_HULL_MODEL, TANK_BODY_ANIM);
+          if (body && body.loaded) {
+            const bf = animFrame(body, a);
+            drawRenderable(body, bf.f0, bf.f1, bf.blend);
+            gl.uniform1f(mA.blend, 0);
+            drawn = true;
+            const frame = body.boneWorldFrames && body.boneWorldFrames[bf.f0];
+            if (frame && body.boneNames) {
+              const named = {};
+              for (let i = 0; i < body.boneNames.length; i++) named[body.boneNames[i]] = frame[i];
+              bm = named;
+            }
+          }
+        }
+        if (!drawn) drawStatic(hull);
+        if (a.kind !== 'tank' || a.modelBase) continue;
+        if (mech && mech.loaded) {
+          const tb = bm && bm[TANK_MECH_BONE];
+          const MM = tb ? followMatrix(M, tb, mech, TANK_MECH_BONE, null) : M;
+          gl.uniformMatrix4fv(mA.mvp, false, new Float32Array(mul(mvp, MM)));
+          gl.uniformMatrix4fv(mA.model, false, new Float32Array(MM));
+          drawStatic(mech);
+        }
+        if (bm) for (const [model, bone] of TANK_TRACKS) {
+          const b = bm[bone];
+          if (!b) continue;
+          const key = TRACK_ANIM_KEY + model;
+          const anim = models.get(key);
+          if (!anim) ensureAnimProp(key, model, TRACK_ANIM);
+          if (anim && anim.loaded) {
+            const tf = animFrame(anim, a);
+            const TM = followMatrix(M, b, anim, bone, tf.f0);
+            gl.uniformMatrix4fv(mA.mvp, false, new Float32Array(mul(mvp, TM)));
+            gl.uniformMatrix4fv(mA.model, false, new Float32Array(TM));
+            drawRenderable(anim, tf.f0, tf.f1, tf.blend);
+            gl.uniform1f(mA.blend, 0);
+            continue;
+          }
           const pool = props.get(model);
-          const o = bo[bone];
-          if (!pool || !pool.loaded || !o) continue;
-          const TM = mul(M, mTranslate(o[0], o[1], o[2]));
+          if (!pool || !pool.loaded) continue;
+          const TM = followMatrix(M, b, pool, bone, null);
           gl.uniformMatrix4fv(mA.mvp, false, new Float32Array(mul(mvp, TM)));
           gl.uniformMatrix4fv(mA.model, false, new Float32Array(TM));
           drawStatic(pool);
@@ -1401,6 +1841,7 @@ export function createMap3D(scene) {
         gl.uniform1f(wA.hasTex, g.tex ? 1 : 0);
         gl.uniform3fv(wA.flatColor, g.flatColor || NO_TEX_COLOR);
         gl.uniform2f(wA.texSize, g.texW, g.texH);
+        gl.uniformMatrix4fv(wA.model, false, moverMatrix(g.mover));
         gl.bindBuffer(gl.ARRAY_BUFFER, g.posBuf); gl.enableVertexAttribArray(wA.pos); gl.vertexAttribPointer(wA.pos, 3, gl.FLOAT, false, 0, 0);
         gl.bindBuffer(gl.ARRAY_BUFFER, g.uvBuf); gl.enableVertexAttribArray(wA.uv); gl.vertexAttribPointer(wA.uv, 2, gl.FLOAT, false, 0, 0);
         gl.bindBuffer(gl.ARRAY_BUFFER, g.lmBuf); gl.enableVertexAttribArray(wA.lmuv); gl.vertexAttribPointer(wA.lmuv, 2, gl.FLOAT, false, 0, 0);
@@ -1415,17 +1856,22 @@ export function createMap3D(scene) {
       const dt = fxLastT === null ? 1 / 60 : Math.max(0, Math.min(0.1, tNow - fxLastT));
       fxLastT = tNow;
       const live = [];
+      pushMapBursts(live);
+      for (const tp of scene.teleporters || []) {
+        if (scene.ps.t < tp.readyAt) continue;
+        const o = [tp.pos[0], tp.pos[1], (Number.isFinite(tp.pos[2]) ? tp.pos[2] : 0) + 6];
+        const set = fxEmitter('tele:' + Math.round(o[0]) + ',' + Math.round(o[1]), 'teleporter', o);
+        if (set) for (let i = 0; i < set.emitters.length; i++) { set.emitters[i].step(dt, o); live.push([set.layers[i].tex, set.emitters[i], !!set.layers[i].def.additive]); }
+      }
       for (const a of actors) {
         if (a.kind === 'tank') {
           if (a.tankSmoke === false) continue;
-          const hull = props.get(a.modelBase || TANK_HULL_MODEL);
-          const at = hull && hull.loaded && hull.attachOrigins ? hull.attachOrigins[TANK_SMOKE_ATTACH] : null;
+          const hull = props.get(propKey(a.modelBase || TANK_HULL_MODEL, a.modelSkin || 0));
+          const at = hull && hull.loaded && hull.attachMatrices ? hull.attachMatrices[TANK_SMOKE_ATTACH] : null;
           if (!at) continue;
           const gy0 = Number.isFinite(a.z) ? a.z : sampleHeight(a.x, a.y);
-          const M = mul(mul(mul(mTranslate(a.x, gy0, -a.y), mRotY(a.heading || 0)), ZUP2YUP), mScale(a.scale || 1));
-          const rx = M[0] * at[0] + M[4] * at[1] + M[8] * at[2] + M[12];
-          const ry = M[1] * at[0] + M[5] * at[1] + M[9] * at[2] + M[13];
-          const rz = M[2] * at[0] + M[6] * at[1] + M[10] * at[2] + M[14];
+          const M = mul(mul(mul(mul(mTranslate(a.x, gy0, -a.y), mRotY(a.heading || 0)), ZUP2YUP), mScale(a.scale || 1)), at);
+          const rx = M[12], ry = M[13], rz = M[14];
           const o = [rx, -rz, ry];
           const set = fxEmitter('tanksmoke:' + a.phase, 'tanksmoke', o);
           if (set) for (let i = 0; i < set.emitters.length; i++) { set.emitters[i].step(dt, o); live.push([set.layers[i].tex, set.emitters[i], !!set.layers[i].def.additive]); }
@@ -1511,6 +1957,7 @@ export function createMap3D(scene) {
         if (g.translucent) continue;
         gl.activeTexture(gl.TEXTURE0); if (g.tex) gl.bindTexture(gl.TEXTURE_2D, g.tex);
         gl.uniform1f(wA.hasTex, g.tex ? 1 : 0); gl.uniform2f(wA.texSize, g.texW, g.texH);
+        gl.uniformMatrix4fv(wA.model, false, moverMatrix(g.mover));
         gl.bindBuffer(gl.ARRAY_BUFFER, g.posBuf); gl.enableVertexAttribArray(wA.pos); gl.vertexAttribPointer(wA.pos, 3, gl.FLOAT, false, 0, 0);
         gl.bindBuffer(gl.ARRAY_BUFFER, g.uvBuf); gl.enableVertexAttribArray(wA.uv); gl.vertexAttribPointer(wA.uv, 2, gl.FLOAT, false, 0, 0);
         gl.bindBuffer(gl.ARRAY_BUFFER, g.lmBuf); gl.enableVertexAttribArray(wA.lmuv); gl.vertexAttribPointer(wA.lmuv, 2, gl.FLOAT, false, 0, 0);
@@ -1554,6 +2001,34 @@ export function createMap3D(scene) {
   function schedule() { if (!raf && !disposed) raf = requestAnimationFrame(draw); }
 
   let drag = null;
+  let killGhost = null;
+  let killGhostIdx = -1;
+
+  const placingTool = () => scene.tool === 'kill' || scene.tool === 'engineer';
+
+  function clearKillGhost() {
+    if (!killGhost && killGhostIdx < 0) return false;
+    killGhost = null;
+    killGhostIdx = -1;
+    if (scene.onHover) scene.onHover(null);
+    return true;
+  }
+
+  function trackKillGhost(e) {
+    if (!placingTool() || e.target !== canvas) return clearKillGhost() && schedule();
+    const g = pickGround(e.clientX, e.clientY);
+    if (!g) return clearKillGhost() && schedule();
+    const r = scene.ps.killRadius;
+    const idx = scene.killIndexAt ? scene.killIndexAt(g[0], g[1]) : -1;
+    if (killGhost && killGhostIdx === idx
+      && Math.round(g[0]) === killGhost[0] && Math.round(g[1]) === killGhost[1] && r === killGhost[2]) return;
+    killGhost = [Math.round(g[0]), Math.round(g[1]), r];
+    killGhostIdx = idx;
+    if (scene.onHover) scene.onHover(killGhost[0], killGhost[1]);
+    schedule();
+  }
+
+  canvas.addEventListener('mouseleave', () => { if (clearKillGhost()) schedule(); });
   canvas.addEventListener('mousedown', e => {
     if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
     e.preventDefault();
@@ -1563,12 +2038,17 @@ export function createMap3D(scene) {
       if (hit && scene.onKill) scene.onKill(hit[0], hit[1], e.button === 2 || e.shiftKey);
       return;
     }
+    if (scene.tool === 'engineer' && e.button === 0) {
+      const hit = pickGround(e.clientX, e.clientY);
+      if (hit && scene.onPlace) scene.onPlace(hit[0], hit[1]);
+      return;
+    }
     const pan = e.button === 2 || e.button === 1 || e.shiftKey;
     drag = { type: pan ? 'pan' : 'rot', x: e.clientX, y: e.clientY, yaw: c.yaw, pitch: c.pitch, panX: c.panX || 0, panY: c.panY || 0, panZ: c.panZ || 0 };
   });
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   const onMove = e => {
-    if (!drag) return;
+    if (!drag) { trackKillGhost(e); return; }
     const cam = scene.cam;
     if (drag.type === 'pan') {
       const rx = Math.cos(cam.yaw), rz = -Math.sin(cam.yaw);

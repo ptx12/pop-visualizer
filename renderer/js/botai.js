@@ -3,6 +3,7 @@ import { buildPipeline } from './sim/systems.js';
 import { behaviours, selectBehaviour } from './sim/behaviours.js';
 import { instantiateSpawner } from './sim/spawners.js';
 import { isGatebot } from './popmodel.js';
+import { inKillZone } from './killzones.js';
 import { createEventBus, seedWaveEvents } from './sim/events.js';
 import { waveStartOutputs, wavespawnOutputs } from './gating.js';
 import { RANGES, healTarget } from './sim/systems/healing.js';
@@ -27,6 +28,7 @@ const CHARGE_SPEED = 750;
 const CHARGE_TIME = 1.5;
 const CHARGE_REGEN = 8.3;
 const TF_NAV_SPAWN_ROOM_BLUE = 0x4;
+const TF_NAV_SPAWN_ROOM_RED = 0x2;
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
 const AVOID_COST = 25;
@@ -168,6 +170,20 @@ function areaWeights(mapData, volumes) {
   return w;
 }
 
+const NAV_MAX_JUMP_HEIGHT = 57;
+
+export function navAreaZ(a, x, y) {
+  const dx = a.se[0] - a.nw[0];
+  const dy = a.se[1] - a.nw[1];
+  const u = Math.abs(dx) < 1e-9 ? 0 : Math.max(0, Math.min(1, (x - a.nw[0]) / dx));
+  const v = Math.abs(dy) < 1e-9 ? 0 : Math.max(0, Math.min(1, (y - a.nw[1]) / dy));
+  const neZ = Number.isFinite(a.neZ) ? a.neZ : a.nw[2];
+  const swZ = Number.isFinite(a.swZ) ? a.swZ : a.se[2];
+  const north = a.nw[2] + u * (neZ - a.nw[2]);
+  const south = swZ + u * (a.se[2] - swZ);
+  return north + v * (south - north);
+}
+
 export function buildNavGraph(mapData, volumes, allowWasm = true) {
   const weights = areaWeights(mapData, volumes || []);
   if (allowWasm && navWasmReady()) {
@@ -193,7 +209,8 @@ export function buildNavGraph(mapData, volumes, allowWasm = true) {
     for (const a of byId.values()) {
       const cx = Math.min(Math.max(p[0], a.nw[0]), a.se[0]);
       const cy = Math.min(Math.max(p[1], a.nw[1]), a.se[1]);
-      const dz = ((a.nw[2] + a.se[2]) / 2 - (p[2] ?? (a.nw[2] + a.se[2]) / 2));
+      const az = navAreaZ(a, p[0], p[1]);
+      const dz = az - (p[2] ?? az);
       const d = (cx - p[0]) ** 2 + (cy - p[1]) ** 2 + dz * dz * 0.4;
       if (d < bestD) { bestD = d; best = a; }
     }
@@ -201,17 +218,8 @@ export function buildNavGraph(mapData, volumes, allowWasm = true) {
   }
 
   function areaAt(p, hintId) {
-    if (hintId != null) {
-      const h = byId.get(hintId);
-      if (h && p[0] >= h.nw[0] && p[0] <= h.se[0] && p[1] >= h.nw[1] && p[1] <= h.se[1]) return h;
-      if (h) {
-        for (const n of h.connect) {
-          const a = byId.get(n);
-          if (a && p[0] >= a.nw[0] && p[0] <= a.se[0] && p[1] >= a.nw[1] && p[1] <= a.se[1]) return a;
-        }
-      }
-    }
-    return nearestArea(p);
+    const hit = areaContaining(p[0], p[1], p[2], hintId);
+    return hit || nearestArea(p);
   }
 
   function flowField(targetId) {
@@ -295,19 +303,40 @@ export function buildNavGraph(mapData, volumes, allowWasm = true) {
 
   const holds = (a, x, y) => a && x >= a.nw[0] && x <= a.se[0] && y >= a.nw[1] && y <= a.se[1];
 
-  function areaContaining(x, y, hintId) {
-    const h = byId.get(hintId);
-    if (holds(h, x, y)) return h;
-    if (h) for (const n of h.connect) {
-      const a = byId.get(n);
-      if (holds(a, x, y)) return a;
-    }
-    for (const a of byId.values()) if (holds(a, x, y)) return a;
-    return null;
+  function betterGround(best, cand, x, y, z) {
+    if (!best) return true;
+    const limit = z + NAV_MAX_JUMP_HEIGHT;
+    const cz = navAreaZ(cand, x, y);
+    const bz = navAreaZ(best, x, y);
+    const cOk = cz <= limit;
+    const bOk = bz <= limit;
+    if (cOk !== bOk) return cOk;
+    return cOk ? cz > bz : cz < bz;
   }
 
-  function settle(px, py, nx, ny, curId, crossing) {
-    const hit = areaContaining(nx, ny, curId);
+  function areaContaining(x, y, z, hintId) {
+    const flat = !Number.isFinite(z);
+    let best = null;
+    const consider = a => {
+      if (!holds(a, x, y)) return false;
+      if (flat) { best = a; return true; }
+      if (betterGround(best, a, x, y, z)) best = a;
+      return false;
+    };
+    const h = byId.get(hintId);
+    if (h) {
+      if (holds(h, x, y)) return h;
+      for (const n of h.connect) {
+        const c = byId.get(n);
+        if (holds(c, x, y)) return c;
+      }
+    }
+    for (const a of byId.values()) if (consider(a)) return best;
+    return best;
+  }
+
+  function settle(px, py, pz, nx, ny, curId, crossing) {
+    const hit = areaContaining(nx, ny, pz, curId);
     if (hit) return { pos: [nx, ny], area: hit };
     if (crossing != null) {
       const c = byId.get(crossing);
@@ -318,14 +347,14 @@ export function buildNavGraph(mapData, volumes, allowWasm = true) {
         if (inSpan) return { pos: [nx, ny], area: a };
       }
     }
-    const here = areaContaining(px, py, curId) || byId.get(curId);
+    const here = areaContaining(px, py, pz, curId) || byId.get(curId);
     if (!here) return { pos: [nx, ny], area: null };
     const cx = Math.min(Math.max(nx, here.nw[0]), here.se[0]);
     const cy = Math.min(Math.max(ny, here.nw[1]), here.se[1]);
     return { pos: [cx, cy], area: here };
   }
 
-  return { byId, centers, nearestArea, areaAt, flowField, nextToward, portal, center, settle };
+  return { byId, centers, nearestArea, areaAt, flowField, nextToward, portal, center, settle, areaContaining };
 }
 
 export function buildTrackChains(mapData, extraTankPaths = []) {
@@ -340,7 +369,7 @@ export function buildTrackChains(mapData, extraTankPaths = []) {
       if (chains.has(key)) return chains.get(key);
       const pts = extraByName.get(key);
       const cum = [0];
-      for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1], pts[i][2] - pts[i - 1][2]));
+      for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
       const chain = { poly: pts, cum };
       chains.set(key, chain);
       return chain;
@@ -352,17 +381,19 @@ export function buildTrackChains(mapData, extraTankPaths = []) {
     if (chains.has(key)) return chains.get(key);
     let cur = trackMap.get(key);
     const pts = [];
+    const names = [];
     const seen = new Set();
     while (cur && !seen.has(cur.name)) {
       seen.add(cur.name);
       pts.push(cur.origin);
+      names.push(cur.name);
       cur = trackMap.get(cur.target);
     }
     let chain = null;
     if (pts.length > 1) {
       const cum = [0];
-      for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1], pts[i][2] - pts[i - 1][2]));
-      chain = { poly: pts, cum };
+      for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+      chain = { poly: pts, cum, names };
     }
     chains.set(key, chain);
     return chain;
@@ -378,7 +409,11 @@ export function chainPointAt(chain, dist) {
   while (lo < cum.length - 1 && cum[lo + 1] < dist) lo++;
   const seg = cum[lo + 1] - cum[lo] || 1;
   const f = (dist - cum[lo]) / seg;
-  return [poly[lo][0] + (poly[lo + 1][0] - poly[lo][0]) * f, poly[lo][1] + (poly[lo + 1][1] - poly[lo][1]) * f];
+  return [
+    poly[lo][0] + (poly[lo + 1][0] - poly[lo][0]) * f,
+    poly[lo][1] + (poly[lo + 1][1] - poly[lo][1]) * f,
+    poly[lo][2] + (poly[lo + 1][2] - poly[lo][2]) * f
+  ];
 }
 
 export function objectiveCandidates(mapData, chains) {
@@ -409,6 +444,8 @@ function findObjective(mapData, chains, idx) {
   const cands = objectiveCandidates(mapData, chains);
   return (cands[idx] || cands[0]).pos;
 }
+
+const PREREQ_Z_SLACK = 64;
 
 export function createBotSim(wave, sim, mapData, opts = {}) {
   const te = opts.templateEntities;
@@ -447,6 +484,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   const flagHome = mapData.flags[0] || null;
   const objArea = hasNav ? nav.nearestArea(objective) : null;
   const hatchField = objArea ? nav.flowField(objArea.id) : null;
+  let outsideSpawnMax;
   const hatchFieldOf = a => (objArea ? navOf(a).flowField(objArea.id) : null);
   let hatchMaxDist = 1;
   if (hatchField) {
@@ -500,10 +538,98 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   const sniperSpots = mapData.hints.filter(h => h.kind === 'bot_hint_sniper_spot');
   const gates = (mapData.gates || []).filter(g => g.origin).map(g => ({
     def: g, pos: g.origin, progress: 0, capturedAt: null,
-    open: !g.startsLocked, holders: 0
+    open: !g.startsLocked, openAt: g.startsLocked ? null : 0, holders: 0, log: []
   }));
   const gateOpen = g => g.open && g.capturedAt === null;
   const nextGate = () => gates.find(gateOpen) || null;
+  const gateCappable = (g, t) => g.openAt !== null && t >= g.openAt;
+
+  const gatePropEvents = [];
+  const filterDefs = mapData.filters || {};
+  const botTags = a => new Set((a.bot && a.bot.tags) || []);
+  function passesFilter(name, a, depth = 0) {
+    if (!name) return true;
+    const f = filterDefs[name];
+    if (!f || depth > 8) return true;
+    let ok;
+    if (f.kind === 'tag') {
+      const tags = botTags(a);
+      ok = f.requireAll ? f.tags.every(t => tags.has(t)) : f.tags.some(t => tags.has(t));
+    } else if (f.kind === 'team') {
+      ok = f.team === '3';
+    } else if (f.kind === 'multi') {
+      ok = f.any
+        ? f.filters.some(s => passesFilter(s, a, depth + 1))
+        : f.filters.every(s => passesFilter(s, a, depth + 1));
+    } else ok = true;
+    return f.negated ? !ok : ok;
+  }
+
+  const prereqs = (mapData.prerequisites || []).filter(p => (p.task === 'moveto' && p.entity) || p.task === 'wait');
+  const prereqEvents = new Map();
+  const addPrereqEvent = (name, on, at) => {
+    if (!prereqEvents.has(name)) prereqEvents.set(name, []);
+    prereqEvents.get(name).push({ on, at });
+  };
+  const prereqLive = (p, t) => {
+    if (!p.name) return !p.startDisabled;
+    const list = prereqEvents.get(p.name);
+    if (!list || !list.length) return !p.startDisabled;
+    let state = !p.startDisabled;
+    let best = -Infinity;
+    for (const e of list) {
+      if (e.at > t || e.at < best) continue;
+      if (e.at > best) { best = e.at; state = e.on; }
+      else state = state && e.on;
+    }
+    return state;
+  };
+  const inPrereq = (p, pos, z) => {
+    const b = p.bounds;
+    return pos[0] >= b.mins[0] && pos[0] <= b.maxs[0]
+      && pos[1] >= b.mins[1] && pos[1] <= b.maxs[1]
+      && (z ?? 0) >= b.mins[2] - PREREQ_Z_SLACK && (z ?? 0) <= b.maxs[2] + PREREQ_Z_SLACK;
+  };
+  const prereqFor = (a, t) => {
+    if (!prereqs.length || !a.pos) return null;
+    for (const p of prereqs) {
+      if (!inPrereq(p, a.pos, a.z)) continue;
+      if (!prereqLive(p, t)) continue;
+      if (!passesFilter(p.filter, a)) continue;
+      return p;
+    }
+    return null;
+  };
+
+  const hintOffAt = new Map();
+  const hintOnAt = new Map();
+  {
+    const spawnState = mapData.hintsAtMapSpawn || { enable: [], disable: [] };
+    for (const n of spawnState.enable) hintOnAt.set(n, 0);
+    for (const n of spawnState.disable) hintOffAt.set(n, 0);
+    const start = mapData.hintsAtWaveStart || { enable: [], disable: [] };
+    for (const n of start.disable) hintOffAt.set(n, 0);
+    for (const n of start.enable) hintOnAt.set(n, 0);
+    const paths = mapData.bombPaths || [];
+    const chosen = opts.bombPath ? paths.find(p => p.key === opts.bombPath) : null;
+    if (chosen) {
+      for (const p of paths) for (const n of p.hintsOn || []) hintOffAt.set(n, 0);
+      for (const n of chosen.hintsOff || []) hintOffAt.set(n, 0);
+      for (const n of chosen.hintsOn || []) hintOnAt.set(n, 0);
+    }
+  }
+  const hintLive = (h, t) => {
+    const n = h && h.name;
+    if (!n) return !(h && h.startDisabled);
+    const on = hintOnAt.get(n);
+    const off = hintOffAt.get(n);
+    const onAt = on !== undefined && t >= on ? on : null;
+    const offAt = off !== undefined && t >= off ? off : null;
+    if (onAt === null && offAt === null) return !h.startDisabled;
+    if (offAt === null) return true;
+    if (onAt === null) return false;
+    return onAt >= offAt;
+  };
   const spawnMoves = new Map();
   let spawnPauseUntil = 0;
   const captureGate = (g, t) => {
@@ -514,8 +640,24 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       for (const off of fx.spawnsOff) spawnMoves.set(off.name, { off: true, at: t + off.delay });
       for (const on of fx.spawnsOn) spawnMoves.set(on.name, { off: false, at: t + on.delay });
     }
+    if (fx) {
+      for (const n of fx.hintsOn || []) hintOnAt.set(n, t);
+      for (const n of fx.hintsOff || []) hintOffAt.set(n, t);
+      for (const e of fx.prereqEvents || []) addPrereqEvent(e.name, e.on, t + e.at);
+      for (const e of fx.propEvents || []) {
+        gatePropEvents.push({ name: e.target, at: t + e.delay, effect: e.effect, param: e.param || '' });
+      }
+      applyGateEvents(fx.doorEvents, t);
+      applyGateEvents(fx.blockerEvents, t);
+      applyGateEvents(fx.triggerEvents, t);
+    }
     const nextIdx = gates.findIndex(x => x.def.previous === g.def.point);
-    if (nextIdx >= 0) gates[nextIdx].open = true;
+    if (nextIdx >= 0) {
+      const nx = gates[nextIdx];
+      const on = fx && (fx.gatesOn || []).find(x => x.trigger === nx.def.trigger);
+      nx.open = true;
+      nx.openAt = t + (on ? on.delay : 0);
+    }
   };
   const gateSpawnFor = (ws, t) => {
     if (!spawnMoves.size) return null;
@@ -536,6 +678,204 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     if (!mv || t < mv.at) return null;
     return !mv.off;
   };
+
+  const doorStates = (mapData.doors || []).map(def => ({
+    def, frac: def.spawnFrac, target: def.spawnFrac, closeAt: null,
+    keys: [{ t: 0, frac: def.spawnFrac }]
+  }));
+  const doorsByName = new Map();
+  for (const d of doorStates) {
+    if (!d.def.name) continue;
+    if (!doorsByName.has(d.def.name)) doorsByName.set(d.def.name, []);
+    doorsByName.get(d.def.name).push(d);
+  }
+  const blockerStates = (mapData.blockers || []).map(def => ({ def, on: !def.startDisabled }));
+  const blockersByName = new Map();
+  for (const b of blockerStates) {
+    if (!b.def.name) continue;
+    if (!blockersByName.has(b.def.name)) blockersByName.set(b.def.name, []);
+    blockersByName.get(b.def.name).push(b);
+  }
+  const toggledBlockers = new Set();
+  {
+    const scan = list => { for (const e of list || []) if (e.blocker) toggledBlockers.add(e.blocker); };
+    scan(mapData.blockersAtMapSpawn);
+    scan(mapData.blockersAtWaveStart);
+    for (const p of mapData.bombPaths || []) scan(p.blockerEvents);
+    for (const g of mapData.gates || []) scan(g.effects && g.effects.blockerEvents);
+  }
+  const solidBlockers = blockerStates.filter(b =>
+    b.def.cls === 'func_nav_blocker' || (b.def.name && toggledBlockers.has(b.def.name)));
+  const doorTriggers = (mapData.doorTriggers || []).map(def => ({ def, inside: false, enabled: !def.startDisabled }));
+  const triggersByName = new Map();
+  for (const tr of doorTriggers) {
+    if (!tr.def.name) continue;
+    if (!triggersByName.has(tr.def.name)) triggersByName.set(tr.def.name, []);
+    triggersByName.get(tr.def.name).push(tr);
+  }
+  const gateQueue = [];
+  const queueDoor = (name, input, at) => {
+    for (const d of doorsByName.get(name) || []) gateQueue.push({ door: d, input, at });
+  };
+  const queueBlocker = (name, on, at) => {
+    for (const b of blockersByName.get(name) || []) gateQueue.push({ blocker: b, on, at });
+  };
+  const queueTrigger = (name, on, at) => {
+    for (const tr of triggersByName.get(name) || []) gateQueue.push({ trigger: tr, on, at });
+  };
+  const doorFracAt = (d, t) => {
+    const k = d.keys;
+    for (let i = k.length - 1; i >= 0; i--) {
+      if (k[i].t > t) continue;
+      if (i + 1 >= k.length) return k[i].frac;
+      const a = k[i], b = k[i + 1];
+      if (b.t <= a.t) return b.frac;
+      return a.frac + (b.frac - a.frac) * Math.max(0, Math.min(1, (t - a.t) / (b.t - a.t)));
+    }
+    return k[0].frac;
+  };
+  const doorOutputDefs = mapData.doorOutputs || {};
+  const fireDoorOutputs = (d, key, t) => {
+    const rec = d.def.name ? doorOutputDefs[d.def.name] : null;
+    const fx = rec && rec[key];
+    if (!fx) return;
+    for (const e of fx.props || []) {
+      gatePropEvents.push({ name: e.target, at: t + e.delay, effect: e.effect, param: e.param || '' });
+    }
+    for (const e of fx.doors || []) queueDoor(e.door, e.input, t + e.at);
+    for (const e of fx.blockers || []) queueBlocker(e.blocker, e.on, t + e.at);
+  };
+  const setDoorTarget = (d, target, at) => {
+    if (d.target === target) return;
+    const from = doorFracAt(d, at);
+    d.target = target;
+    d.frac = from;
+    while (d.keys.length > 1 && d.keys[d.keys.length - 1].t >= at) d.keys.pop();
+    d.keys.push({ t: at, frac: from });
+    d.keys.push({ t: at + d.def.duration * Math.abs(target - from), frac: target });
+    d.closeAt = null;
+    fireDoorOutputs(d, target > from ? 'onOpen' : 'onClose', at);
+  };
+  const applyGateEvents = (list, base) => {
+    for (const e of list || []) {
+      const at = base + (e.at != null ? e.at : e.delay || 0);
+      if (e.door) queueDoor(e.door, e.input, at);
+      else if (e.blocker) queueBlocker(e.blocker, e.on, at);
+      else if (e.name) queueTrigger(e.name, e.on, at);
+    }
+  };
+  {
+    applyGateEvents(mapData.doorsAtMapSpawn, 0);
+    applyGateEvents(mapData.blockersAtMapSpawn, 0);
+    applyGateEvents(mapData.doorsAtWaveStart, 0);
+    applyGateEvents(mapData.blockersAtWaveStart, 0);
+    applyGateEvents(mapData.triggersAtWaveStart, 0);
+    const paths = mapData.bombPaths || [];
+    const chosen = opts.bombPath ? paths.find(p => p.key === opts.bombPath) : null;
+    if (chosen) {
+      applyGateEvents(chosen.doorEvents, 0);
+      applyGateEvents(chosen.blockerEvents, 0);
+      applyGateEvents(chosen.triggerEvents, 0);
+    }
+  }
+  function stepGates(t) {
+    for (let i = gateQueue.length - 1; i >= 0; i--) {
+      const q = gateQueue[i];
+      if (q.at > t) continue;
+      gateQueue.splice(i, 1);
+      if (q.blocker) { q.blocker.on = q.on; continue; }
+      if (q.trigger) { q.trigger.enabled = q.on; continue; }
+      const d = q.door;
+      const target = q.input === 'toggle' ? (d.target >= 1 ? 0 : 1) : q.input === 'open' ? 1 : 0;
+      setDoorTarget(d, target, Math.max(0, q.at));
+    }
+    for (const d of doorStates) {
+      const prev = d.frac;
+      d.frac = doorFracAt(d, t);
+      if (d.frac >= 1 && prev < 1) fireDoorOutputs(d, 'onFullyOpen', t);
+      else if (d.frac <= 0 && prev > 0) fireDoorOutputs(d, 'onFullyClosed', t);
+      if (!d.def.autoReturn) continue;
+      if (d.target === 1 && d.frac >= 1 && prev < 1 && d.closeAt === null) d.closeAt = t + d.def.wait;
+      if (d.closeAt !== null && t >= d.closeAt) { d.closeAt = null; queueDoor(d.def.name, 'close', t); }
+    }
+  }
+  function stepDoorTriggers(t) {
+    if (!doorTriggers.length) return;
+    for (const tr of doorTriggers) {
+      if (!tr.enabled) { tr.inside = false; continue; }
+      const b = tr.def.bounds;
+      let inside = false;
+      for (const a of live) {
+        if (a.kind !== 'bot' || !a.pos) continue;
+        if (a.pos[0] < b.mins[0] || a.pos[0] > b.maxs[0] || a.pos[1] < b.mins[1] || a.pos[1] > b.maxs[1]) continue;
+        if ((a.z ?? 0) < b.mins[2] - PREREQ_Z_SLACK || (a.z ?? 0) > b.maxs[2] + PREREQ_Z_SLACK) continue;
+        if (!passesFilter(tr.def.filter, a)) continue;
+        inside = true;
+        break;
+      }
+      if (inside === tr.inside) continue;
+      tr.inside = inside;
+      for (const e of inside ? tr.def.onEnter : tr.def.onLeave) queueDoor(e.door, e.input, t + e.delay);
+    }
+  }
+  function segmentHitsBox(p0, p1, mins, maxs) {
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 3; i++) {
+      const a = i === 2 ? mins[2] - PREREQ_Z_SLACK : mins[i];
+      const b = maxs[i];
+      const d = p1[i] - p0[i];
+      if (Math.abs(d) < 1e-9) {
+        if (p0[i] < a || p0[i] > b) return false;
+        continue;
+      }
+      let t0 = (a - p0[i]) / d, t1 = (b - p0[i]) / d;
+      if (t0 > t1) { const s = t0; t0 = t1; t1 = s; }
+      if (t0 > lo) lo = t0;
+      if (t1 < hi) hi = t1;
+      if (lo > hi) return false;
+    }
+    return true;
+  }
+
+  function doorFrame(d, x, y, z) {
+    let px = x, py = y, pz = z;
+    if (d.frac > 0) {
+      if (d.def.kind === 'linear') {
+        const m = d.def.travel * d.frac;
+        px -= d.def.dir[0] * m; py -= d.def.dir[1] * m; pz -= d.def.dir[2] * m;
+      } else {
+        const h = d.def.hinge, a = -d.def.degrees * d.frac * Math.PI / 180;
+        const c = Math.cos(a), s = Math.sin(a);
+        const ax = d.def.axis;
+        if (ax[2]) {
+          const dx = x - h[0], dy = y - h[1];
+          px = h[0] + dx * c - dy * s; py = h[1] + dx * s + dy * c;
+        } else if (ax[0]) {
+          const dy = y - h[1], dz = z - h[2];
+          py = h[1] + dy * c - dz * s; pz = h[2] + dy * s + dz * c;
+        } else {
+          const dz = z - h[2], dx = x - h[0];
+          pz = h[2] + dz * c - dx * s; px = h[0] + dz * s + dx * c;
+        }
+      }
+    }
+    return [px, py, pz];
+  }
+  const solidDoors = doorStates.filter(d => d.def.solid && d.def.touchOpens);
+  function gateBlocked(from, to, t) {
+    for (const b of solidBlockers) {
+      if (!b.on) continue;
+      if (!segmentHitsBox(from, to, b.def.bounds.mins, b.def.bounds.maxs)) continue;
+      return true;
+    }
+    for (const d of solidDoors) {
+      if (!segmentHitsBox(doorFrame(d, from[0], from[1], from[2]), doorFrame(d, to[0], to[1], to[2]),
+        d.def.bounds.mins, d.def.bounds.maxs)) continue;
+      if (t !== undefined && d.target < 1) queueDoor(d.def.name, 'open', t);
+      return true;
+    }
+    return false;
+  }
   const teleporters = [];
   const teleporterFor = ws => {
     const names = (ws.where || []).map(w => String(w).toLowerCase());
@@ -607,7 +947,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
           if (actors.length >= ACTOR_CAP) { capHit = true; break; }
           continue;
         }
-        if (!pendingSpawn || !pendingSquadId) pendingSpawn = pickSpawn(ws.where);
+        if (!pendingSpawn || !pendingSquadId) pendingSpawn = ws.spawnAt ? { origin: ws.spawnAt, name: '(placed)' } : pickSpawn(ws.where);
         const spawn = pendingSpawn;
         actors.push({
           kind: 'bot', ws, bot: entry.bot, spawnT: ev.t, simDieT: ev.dieT != null ? ev.dieT : ev.t + r.life,
@@ -641,7 +981,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       a.dieT = a.chain && a.chain.cum.length && !a.tank.immobile ? a.spawnT + a.chain.cum[a.chain.cum.length - 1] / (a.speed || 75) : a.simDieT;
     }
     if (a.kind === 'bot' && deathModel === 'hatch' && (a.bot.cls === 'spy' || a.bot.cls === 'engineer')) {
-      a.dieT = a.simDieT;
+      a.dieT = a.ws && a.ws.isProbe ? Math.max(a.simDieT, sim.waveEnd) : a.simDieT;
     }
   }
   const bombSamples = [];
@@ -661,6 +1001,13 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   for (const tr of mapData.tracks || []) if (tr.name) namedPoints.set(tr.name.toLowerCase(), tr.origin);
   for (const p of mapData.pathProps || []) if (p.name) namedPoints.set(p.name.toLowerCase(), p.origin);
   for (const h of mapData.hints || []) if (h.hint) namedPoints.set(String(h.hint).toLowerCase(), h.origin);
+  for (const h of mapData.hints || []) if (h.name && !namedPoints.has(h.name)) namedPoints.set(h.name, h.origin);
+  for (const p of mapData.prerequisites || []) {
+    if (!p.name || namedPoints.has(p.name) || !p.bounds) continue;
+    namedPoints.set(p.name, [0, 1, 2].map(i => (p.bounds.mins[i] + p.bounds.maxs[i]) / 2));
+  }
+  for (const g of mapData.gates || []) if (g.point && !namedPoints.has(g.point)) namedPoints.set(g.point, g.origin);
+  const prereqTarget = p => (p && p.entity ? namedPoints.get(p.entity) || null : null);
 
   function resolvePoint(spec) {
     if (!spec) return null;
@@ -751,6 +1098,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     if (home && a.kind !== 'tank') {
       a.pos[0] = Math.min(Math.max(a.pos[0], home.nw[0]), home.se[0]);
       a.pos[1] = Math.min(Math.max(a.pos[1], home.nw[1]), home.se[1]);
+      a.z = navAreaZ(home, a.pos[0], a.pos[1]);
     }
     a.areaId = home ? home.id : null;
     a.homeArea = a.areaId;
@@ -759,7 +1107,19 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     a.jx = Math.cos(jang) * jr;
     a.jy = Math.sin(jang) * jr;
     a.zs = [];
-    if (a.kind === 'tank') { a.state = 'tank'; return; }
+    if (a.kind === 'tank') {
+      if (a.chain) {
+        const p = chainPointAt(a.chain, 0);
+        a.pos = [p[0], p[1]];
+        if (Number.isFinite(p[2])) a.z = p[2];
+        if (hasNav) {
+          const na = nav.areaAt([a.pos[0], a.pos[1], a.z], null);
+          if (na) { a.areaId = na.id; a.z = navAreaZ(na, a.pos[0], a.pos[1]); }
+        }
+      }
+      a.state = 'tank';
+      return;
+    }
     pipeline.spawn(a, t);
     const ias = a.bot.interrupts || [];
     if (ias.length) {
@@ -814,10 +1174,10 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     const nx = a.pos[0] + dx / d * stepLen;
     const ny = a.pos[1] + dy / d * stepLen;
     if (hasNav && g.settle) {
-      const s = g.settle(a.pos[0], a.pos[1], nx, ny, a.areaId, crossing);
+      const s = g.settle(a.pos[0], a.pos[1], a.z, nx, ny, a.areaId, crossing);
       a.pos[0] = s.pos[0];
       a.pos[1] = s.pos[1];
-      if (s.area) { a.areaId = s.area.id; a.z = (s.area.nw[2] + s.area.se[2]) / 2; }
+      if (s.area) { a.areaId = s.area.id; a.z = navAreaZ(s.area, a.pos[0], a.pos[1]); }
     } else {
       a.pos[0] = nx;
       a.pos[1] = ny;
@@ -848,15 +1208,33 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     const stepLen = speed * dt;
     const nx = a.pos[0] + dx / (d || 1) * Math.min(d, stepLen);
     const ny = a.pos[1] + dy / (d || 1) * Math.min(d, stepLen);
-    const s = g.settle(a.pos[0], a.pos[1], nx, ny, a.areaId, next);
+    const s = g.settle(a.pos[0], a.pos[1], a.z, nx, ny, a.areaId, next);
     a.pos[0] = s.pos[0];
     a.pos[1] = s.pos[1];
-    if (s.area) { a.areaId = s.area.id; a.z = (s.area.nw[2] + s.area.se[2]) / 2; }
+    if (s.area) { a.areaId = s.area.id; a.z = navAreaZ(s.area, a.pos[0], a.pos[1]); }
     return Math.hypot(targetPt[0] - a.pos[0], targetPt[1] - a.pos[1]);
   }
 
   function areaOf(a) {
     return a.areaId == null ? null : navOf(a).byId.get(a.areaId);
+  }
+
+  function groundActor(a) {
+    if (!hasNav || !a.pos) return;
+    const g = navOf(a);
+    const cur = a.areaId == null ? null : g.byId.get(a.areaId);
+    if (cur && holds(cur, a.pos[0], a.pos[1])) {
+      a.z = navAreaZ(cur, a.pos[0], a.pos[1]);
+      return;
+    }
+    const hit = g.areaAt([a.pos[0], a.pos[1], a.z], a.areaId);
+    if (hit && holds(hit, a.pos[0], a.pos[1])) {
+      a.areaId = hit.id;
+      a.z = navAreaZ(hit, a.pos[0], a.pos[1]);
+      return;
+    }
+    const near = cur || g.nearestArea([a.pos[0], a.pos[1]]);
+    if (near) a.z = navAreaZ(near, a.pos[0], a.pos[1]);
   }
 
   function holds(ar, x, y) {
@@ -865,6 +1243,8 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
   function nudge(a, dx, dy) {
     const nx = a.pos[0] + dx, ny = a.pos[1] + dy;
+    const z = a.z ?? 0;
+    if (gateBlocked([a.pos[0], a.pos[1], z], [nx, ny, z]) && !gateBlocked([a.pos[0], a.pos[1], z], [a.pos[0], a.pos[1], z])) return;
     if (!hasNav || a.areaId == null) { a.pos[0] = nx; a.pos[1] = ny; return; }
     const g = navOf(a);
     const cur = areaOf(a);
@@ -873,7 +1253,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     if (holds(near, nx, ny)) {
       a.pos[0] = nx; a.pos[1] = ny;
       a.areaId = near.id;
-      a.z = (near.nw[2] + near.se[2]) / 2;
+      a.z = navAreaZ(near, nx, ny);
       return;
     }
     if (!cur) return;
@@ -926,17 +1306,29 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
   function upgradeOverTime(a, t) {
     if (a.bot.isGiant || a.bot.noBombUpgrades || a.bombLevel >= 3) return;
-    if (a.bombUpgradeAt == null || inBlueSpawn(a)) {
+    const inSpawn = inBlueSpawn(a);
+    if (a.bombUpgradeAt == null || inSpawn) {
       a.bombUpgradeAt = t + BOMB_UPGRADE_1;
-      return;
+      a.chargeFrom = t;
+      a.chargeLogged = false;
+      if (inSpawn) return;
+    }
+    if (!a.chargeLogged) {
+      bombLog.push({
+        t: a.chargeFrom, kind: 'charge', from: a.chargeFrom, at: a.bombUpgradeAt,
+        level: a.bombLevel, cls: a.bot ? a.bot.cls : null, tauntUntil: a.tauntUntil || 0
+      });
+      a.chargeLogged = true;
     }
     if (t < a.bombUpgradeAt) return;
     a.bombLevel++;
     const taunt = BOMB_TAUNT_MIN + rng() * (BOMB_TAUNT_MAX - BOMB_TAUNT_MIN);
     a.tauntUntil = t + taunt;
     bombLog.push({ t, kind: 'upgrade', level: a.bombLevel, cls: a.bot ? a.bot.cls : null, tauntUntil: a.tauntUntil });
-    a.bombUpgradeAt = a.bombLevel === 1 ? t + BOMB_UPGRADE_2 + taunt
-      : a.bombLevel === 2 ? t + BOMB_UPGRADE_3 + taunt : Infinity;
+    a.bombUpgradeAt = a.bombLevel === 1 ? a.tauntUntil + BOMB_UPGRADE_2
+      : a.bombLevel === 2 ? a.tauntUntil + BOMB_UPGRADE_3 : Infinity;
+    a.chargeFrom = a.tauntUntil;
+    a.chargeLogged = false;
   }
 
   function chargeStep(a, t, dt, speed) {
@@ -957,6 +1349,35 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     a.dieT = t;
     a.alive = false;
     live.delete(a);
+  }
+
+  {
+    const defs = mapData.pathGates || [];
+    if (defs.length) {
+      const byNode = new Map();
+      for (const g of defs) {
+        const k = String(g.node || '').toLowerCase();
+        if (!k) continue;
+        if (!byNode.has(k)) byNode.set(k, []);
+        byNode.get(k).push(g);
+      }
+      const fired = new Set();
+      for (const a of actors) {
+        if (a.kind !== 'tank' || !a.chain || !a.chain.names || a.tank.immobile) continue;
+        const speed = a.speed || 75;
+        for (let i = 0; i < a.chain.names.length; i++) {
+          const node = String(a.chain.names[i] || '').toLowerCase();
+          const list = byNode.get(node);
+          if (!list || fired.has(node)) continue;
+          fired.add(node);
+          const passT = a.spawnT + (a.chain.cum[i] || 0) / speed;
+          for (const g of list) {
+            if (g.door) queueDoor(g.door, g.input, passT + (g.delay || 0));
+            else if (g.blocker) queueBlocker(g.blocker, g.on, passT + (g.delay || 0));
+          }
+        }
+      }
+    }
   }
 
   const live = new Set();
@@ -983,6 +1404,26 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     seedWaveEvents(events, wave, sim, { waveStartOutputs, wavespawnOutputs });
   } catch {}
 
+  {
+    const table = mapData.hintToggles || {};
+    const fired = [];
+    try {
+      for (const o of waveStartOutputs(wave)) fired.push([o, 0]);
+      for (const ws of wave.wavespawns) {
+        const r = sim.results.get(ws);
+        if (!r || !Number.isFinite(r.firstSpawn)) continue;
+        for (const o of wavespawnOutputs(ws, 'FirstSpawnOutput')) fired.push([o, r.firstSpawn]);
+      }
+    } catch {}
+    for (const [o, base] of fired) {
+      const t = table[String(o.target || '').toLowerCase()];
+      if (!t) continue;
+      const at = base + Math.max(0, o.delay || 0);
+      for (const n of t.disable) hintOffAt.set(n, at);
+      for (const n of t.enable) hintOnAt.set(n, at);
+    }
+  }
+
   const ctx = {
     wave, sim, mapData, opts, events,
     rng, deathModel, teamDPS, robotLimit,
@@ -993,7 +1434,35 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     nav, hasNav, navOf, graphFor, objective, objArea, chains,
     nests, teleExits, sniperSpots, teleporters, gates,
     teleporterBuildTime: Number.isFinite(opts.teleporterBuildTime) ? opts.teleporterBuildTime : 0,
-    deployBombTime: Number.isFinite(opts.deployBombTime) ? opts.deployBombTime : 0, gateOpen, nextGate, captureGate, redSpawns, spawnsByName, namedPoints,
+    deployBombTime: Number.isFinite(opts.deployBombTime) ? opts.deployBombTime : 0, gateOpen, nextGate, gateCappable, captureGate, redSpawns, spawnsByName, namedPoints,
+    hatchDistAt: p => {
+      if (!hatchField) return null;
+      const ar = nav.nearestArea(p);
+      if (!ar) return null;
+      const d = hatchField.dist.get(ar.id);
+      return d === undefined ? null : d;
+    },
+    hatchDistOutsideSpawns: () => {
+      if (!hatchField) return null;
+      if (outsideSpawnMax === undefined) {
+        outsideSpawnMax = null;
+        for (const [id, d] of hatchField.dist) {
+          const ar = nav.byId.get(id);
+          if (ar && (ar.tf & (TF_NAV_SPAWN_ROOM_BLUE | TF_NAV_SPAWN_ROOM_RED))) continue;
+          if (outsideSpawnMax === null || d > outsideSpawnMax) outsideSpawnMax = d;
+        }
+      }
+      return outsideSpawnMax;
+    },
+    hintLive, passesFilter,
+    navOrder: (a, t) => {
+      if (a.bot && a.bot.aggressive) return null;
+      const p = prereqFor(a, t);
+      if (!p) return null;
+      if (p.task === 'wait') return { prereq: p, wait: Math.max(0, p.value) };
+      const dest = prereqTarget(p);
+      return dest ? { prereq: p, dest } : null;
+    },
     clsOf, eligible, zoneW, sameArea, killActor, nudge, areaOf, holds, placeActor,
     hatchFieldOf, bombFieldOf, resolvePoint,
     moveAlong, moveField, takeBomb, dropBomb, upgradeOverTime
@@ -1045,6 +1514,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
         }
       }
     }
+    stepGates(t);
     for (const g of gates) g.holders = 0;
     for (const a of live) {
       if (t >= a.dieT || a.done) {
@@ -1053,32 +1523,20 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       }
       const dt = STEP;
       if (a.kind === 'tank') {
-        if (a.chain && !a.tank.immobile) {
-          const p = chainPointAt(a.chain, a.speed * (t - a.spawnT));
+        if (a.chain) {
+          const p = chainPointAt(a.chain, a.tank.immobile ? 0 : a.speed * (t - a.spawnT));
           a.pos = [p[0], p[1]];
-        } else if (a.chain && a.tank.immobile) {
-          const p = chainPointAt(a.chain, 0);
-          a.pos = [p[0], p[1]];
+          if (Number.isFinite(p[2])) a.z = p[2];
         } else a.pos = a.pos || (a.spawnPos ? a.spawnPos.slice(0, 2) : objective.slice(0, 2));
-        let tculled = false;
-        for (const kp of killPoints) {
-          const dx = kp[0] - a.pos[0], dy = kp[1] - a.pos[1];
-          const rr = kp[2] || 200;
-          if (dx * dx + dy * dy < rr * rr) { killActor(a, t); tculled = true; break; }
-        }
-        if (tculled) continue;
+        if (inKillZone(killPoints, a.pos[0], a.pos[1])) { killActor(a, t); continue; }
         if (hasNav) {
-          const na = nav.areaAt(a.pos, a.areaId);
-          if (na) { a.areaId = na.id; a.z = (na.nw[2] + na.se[2]) / 2; }
+          const na = nav.areaAt([a.pos[0], a.pos[1], a.z], a.areaId);
+          if (na) { a.areaId = na.id; a.z = navAreaZ(na, a.pos[0], a.pos[1]); }
         }
         continue;
       }
       if (a.kind === 'prop') {
-        for (const kp of killPoints) {
-          const dx = kp[0] - a.pos[0], dy = kp[1] - a.pos[1];
-          const rr = kp[2] || 200;
-          if (dx * dx + dy * dy < rr * rr) { killActor(a, t); break; }
-        }
+        if (inKillZone(killPoints, a.pos[0], a.pos[1])) killActor(a, t);
         continue;
       }
       const cls = clsOf(a);
@@ -1105,15 +1563,19 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       }
 
       const behaviour = behaviours.get(a.state);
+      const wasX = a.pos[0], wasY = a.pos[1], wasZ = a.z, wasArea = a.areaId;
       if (behaviour) behaviour.step(a, ctx, t, dt, speed);
-
-      let culled = false;
-      for (const kp of killPoints) {
-        const dx = kp[0] - a.pos[0], dy = kp[1] - a.pos[1];
-        const rr = kp[2] || 200;
-        if (dx * dx + dy * dy < rr * rr) { killActor(a, t); culled = true; break; }
+      if (a.pos[0] !== wasX || a.pos[1] !== wasY) {
+        const from = [wasX, wasY, wasZ ?? 0];
+        const to = [a.pos[0], a.pos[1], a.z ?? 0];
+        if (gateBlocked(from, to, t) && !gateBlocked(from, from)) {
+          a.pos[0] = wasX; a.pos[1] = wasY; a.z = wasZ; a.areaId = wasArea;
+          if (hasFlag) bomb.pos = a.pos.slice();
+        }
       }
-      if (culled) continue;
+
+      groundActor(a);
+      if (inKillZone(killPoints, a.pos[0], a.pos[1])) { killActor(a, t); continue; }
       if (a.state !== 'deployBomb' && bomb.carrier !== a && !(objArea && a.homeArea === objArea.id)) {
         const hx = objective[0] - a.pos[0], hy = objective[1] - a.pos[1];
         const atHatch = hx * hx + hy * hy < HATCH_DESPAWN * HATCH_DESPAWN
@@ -1126,6 +1588,18 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
 
     }
 
+    for (const g of gates) {
+      if (g.capturedAt !== null) continue;
+      if (gateCappable(g, t) && g.holders >= g.def.capCount) {
+        g.progress += STEP;
+        if (g.progress >= g.def.capTime) captureGate(g, t);
+      }
+      const last = g.log.length ? g.log[g.log.length - 1] : null;
+      if (!last || last.holders !== g.holders || last.progress !== g.progress) {
+        g.log.push({ t, holders: g.holders, progress: g.progress });
+      }
+    }
+    stepDoorTriggers(t);
     pipeline.run(t, STEP);
     si++;
     return true;
@@ -1139,6 +1613,37 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
   }
 
   let finalized = null;
+  function tankBreaks() {
+    const defs = mapData.breakables || [];
+    if (!defs.length) return gatePropEvents.slice().sort((x, y) => x.at - y.at);
+    const byNode = new Map();
+    for (const b of defs) {
+      const k = String(b.node || '').toLowerCase();
+      if (!k) continue;
+      if (!byNode.has(k)) byNode.set(k, []);
+      byNode.get(k).push(b);
+    }
+    const events = [];
+    const fired = new Set();
+    for (const a of actors) {
+      if (a.kind !== 'tank' || !a.chain || !a.chain.names || a.tank.immobile) continue;
+      const speed = a.speed || 75;
+      for (let i = 0; i < a.chain.names.length; i++) {
+        const node = String(a.chain.names[i] || '').toLowerCase();
+        const list = byNode.get(node);
+        if (!list || fired.has(node)) continue;
+        fired.add(node);
+        const passT = a.spawnT + (a.chain.cum[i] || 0) / speed;
+        for (const b of list) {
+          events.push({ name: b.target, at: passT + (b.delay || 0), effect: b.effect, param: b.param || '' });
+        }
+      }
+    }
+    for (const e of gatePropEvents) events.push(e);
+    events.sort((x, y) => x.at - y.at);
+    return events;
+  }
+
   function result() {
     if (finalized) return finalized;
     stepMany(Infinity);
@@ -1150,6 +1655,12 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     }
     finalized = {
       actors, objective, chains, nav, end: Math.max(endT, 10), teamDPS, deathModel, teleporters, gates,
+      propEvents: tankBreaks(),
+      doors: doorStates.map(d => ({
+        model: d.def.model, name: d.def.name, kind: d.def.kind, keys: d.keys,
+        dir: d.def.dir || null, travel: d.def.travel || 0,
+        axis: d.def.axis || null, degrees: d.def.degrees || 0, hinge: d.def.hinge || null
+      })),
       spawnPauseUntil,
       bomb: { samples: bombSamples, deliveredAt: bomb.deliveredAt, home: bomb.home, log: bombLog, maxLevel: BOMB_MAX_LEVEL },
       hatchDist: hatchField ? hatchField.dist : null, hatchMaxDist,

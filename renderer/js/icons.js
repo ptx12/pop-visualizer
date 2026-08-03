@@ -74,8 +74,15 @@ export function iconURL(name) {
   return hit || null;
 }
 
+export const HUD_ICONS = ['bomb_carried', 'bomb_dropped',
+  'hud_mvm_bomb_upgrade_1', 'hud_mvm_bomb_upgrade_1_disabled',
+  'hud_mvm_bomb_upgrade_2', 'hud_mvm_bomb_upgrade_2_disabled',
+  'hud_mvm_bomb_upgrade_3', 'hud_mvm_bomb_upgrade_3_disabled',
+  'tournament_panel_brown', 'tournament_panel_tan', 'tournament_panel_blu',
+  'bomb_carrier_upgrade_base', 'bomb_carrier_upgrade_frame', 'bomb_carrier_upgrade_meter'];
+
 export function collectIconNames(model) {
-  const names = new Set(['leaderboard_class_tank', 'leaderboard_class_sentry_buster']);
+  const names = new Set(['leaderboard_class_tank', 'leaderboard_class_sentry_buster', ...HUD_ICONS]);
   const addBot = bot => {
     const n = iconNameFor(bot);
     if (n) names.add(n);

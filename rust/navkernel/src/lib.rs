@@ -3,6 +3,7 @@ use std::collections::BinaryHeap;
 use std::collections::HashMap;
 
 const CELL: f64 = 200.0;
+const MAX_JUMP_HEIGHT: f64 = 57.0;
 const PORTAL_SNAP: f64 = 24.0;
 const STRAIGHT_MIN: f64 = 0.0;
 const Z_WEIGHT: f64 = 0.4;
@@ -12,6 +13,8 @@ struct Area {
     id: i32,
     nw: [f64; 3],
     se: [f64; 3],
+    ne_z: f64,
+    sw_z: f64,
     weight: f64,
     conn_start: u32,
     conn_len: u32,
@@ -27,6 +30,15 @@ impl Area {
     }
     fn contains(&self, x: f64, y: f64) -> bool {
         x >= self.nw[0] && x <= self.se[0] && y >= self.nw[1] && y <= self.se[1]
+    }
+    fn z_at(&self, x: f64, y: f64) -> f64 {
+        let dx = self.se[0] - self.nw[0];
+        let dy = self.se[1] - self.nw[1];
+        let u = if dx.abs() < 1e-9 { 0.0 } else { ((x - self.nw[0]) / dx).clamp(0.0, 1.0) };
+        let v = if dy.abs() < 1e-9 { 0.0 } else { ((y - self.nw[1]) / dy).clamp(0.0, 1.0) };
+        let north = self.nw[2] + u * (self.ne_z - self.nw[2]);
+        let south = self.sw_z + u * (self.se[2] - self.sw_z);
+        north + v * (south - north)
     }
 }
 
@@ -169,7 +181,7 @@ impl Nav {
         let consider = |a: &Area, best: &mut i32, best_d: &mut f64| {
             let cx = if x < a.nw[0] { a.nw[0] } else if x > a.se[0] { a.se[0] } else { x };
             let cy = if y < a.nw[1] { a.nw[1] } else if y > a.se[1] { a.se[1] } else { y };
-            let dz = if flat { 0.0 } else { (a.nw[2] + a.se[2]) * 0.5 - z };
+            let dz = if flat { 0.0 } else { a.z_at(x, y) - z };
             let ddx = cx - x;
             let ddy = cy - y;
             let d = ddx * ddx + ddy * ddy + dz * dz * Z_WEIGHT;
@@ -221,56 +233,70 @@ impl Nav {
         best
     }
 
-    fn area_at(&self, x: f64, y: f64, z: f64, hint: i32) -> i32 {
+    fn better_ground(&self, best: i32, cand: usize, x: f64, y: f64, z: f64) -> bool {
+        let cz = self.areas[cand].z_at(x, y);
+        let bi = match self.index(best) {
+            Some(i) => i,
+            None => return true,
+        };
+        let bz = self.areas[bi].z_at(x, y);
+        let limit = z + MAX_JUMP_HEIGHT;
+        let c_ok = cz <= limit;
+        let b_ok = bz <= limit;
+        if c_ok != b_ok {
+            return c_ok;
+        }
+        if c_ok { cz > bz } else { cz < bz }
+    }
+
+    fn ground_at(&self, x: f64, y: f64, z: f64, hint: i32) -> i32 {
+        let flat = !(z == z);
+        let mut best = -1;
+        let consider = |ai: usize, best: &mut i32| {
+            if !self.areas[ai].contains(x, y) {
+                return false;
+            }
+            if flat {
+                *best = self.areas[ai].id;
+                return true;
+            }
+            if *best < 0 || self.better_ground(*best, ai, x, y, z) {
+                *best = self.areas[ai].id;
+            }
+            false
+        };
         if let Some(hi) = self.index(hint) {
             if self.areas[hi].contains(x, y) {
                 return self.areas[hi].id;
             }
-            for &n in self.neighbors(hi) {
-                if let Some(ni) = self.index(n as i32) {
+            for &nid in self.neighbors(hi) {
+                if let Some(ni) = self.index(nid as i32) {
                     if self.areas[ni].contains(x, y) {
                         return self.areas[ni].id;
                     }
                 }
             }
+        }
+        if let Some(cell) = self.grid.cell_of(x, y) {
+            for &ai in &self.grid.cells[cell] {
+                if consider(ai as usize, &mut best) {
+                    return best;
+                }
+            }
+        }
+        best
+    }
+
+    fn area_at(&self, x: f64, y: f64, z: f64, hint: i32) -> i32 {
+        let hit = self.ground_at(x, y, z, hint);
+        if hit >= 0 {
+            return hit;
         }
         self.nearest(x, y, z)
     }
 
     fn area_containing(&self, x: f64, y: f64, z: f64, hint: i32) -> i32 {
-        if let Some(hi) = self.index(hint) {
-            if self.areas[hi].contains(x, y) {
-                return self.areas[hi].id;
-            }
-            for &n in self.neighbors(hi) {
-                if let Some(ni) = self.index(n as i32) {
-                    if self.areas[ni].contains(x, y) {
-                        return self.areas[ni].id;
-                    }
-                }
-            }
-        }
-        let flat = !(z == z);
-        let mut best = -1;
-        let mut best_dz = f64::INFINITY;
-        if let Some(cell) = self.grid.cell_of(x, y) {
-            for &ai in &self.grid.cells[cell] {
-                let ai = ai as usize;
-                if !self.areas[ai].contains(x, y) {
-                    continue;
-                }
-                if flat {
-                    return self.areas[ai].id;
-                }
-                let az = (self.areas[ai].nw[2] + self.areas[ai].se[2]) * 0.5;
-                let dz = if az > z { az - z } else { z - az };
-                if dz < best_dz {
-                    best_dz = dz;
-                    best = self.areas[ai].id;
-                }
-            }
-        }
-        best
+        self.ground_at(x, y, z, hint)
     }
 
     fn clamp_into(&self, area: i32, x: f64, y: f64) -> [f64; 2] {
@@ -427,18 +453,20 @@ pub extern "C" fn nav_build(
     conns_ptr: *const i32,
     conns_len: usize,
 ) -> i32 {
-    let vals = unsafe { std::slice::from_raw_parts(areas_ptr, area_count * 10) };
+    let vals = unsafe { std::slice::from_raw_parts(areas_ptr, area_count * 12) };
     let conn_in = unsafe { std::slice::from_raw_parts(conns_ptr, conns_len) };
     let mut areas = Vec::with_capacity(area_count);
     let mut max_id = 0i32;
     for i in 0..area_count {
-        let b = i * 10;
+        let b = i * 12;
         let id = vals[b] as i32;
         max_id = max_id.max(id);
         areas.push(Area {
             id,
             nw: [vals[b + 1], vals[b + 2], vals[b + 3]],
             se: [vals[b + 4], vals[b + 5], vals[b + 6]],
+            ne_z: vals[b + 10],
+            sw_z: vals[b + 11],
             weight: vals[b + 7],
             conn_start: vals[b + 8] as u32,
             conn_len: vals[b + 9] as u32,
@@ -677,7 +705,7 @@ pub extern "C" fn move_along(
     let step_len = d.min(speed * dt);
     let (p, fa) = n.settle(px, py, pz, px + dx / d * step_len, py + dy / d * step_len, area, crossing);
     let fz = match n.index(fa) {
-        Some(ai) => (n.areas[ai].nw[2] + n.areas[ai].se[2]) * 0.5,
+        Some(ai) => n.areas[ai].z_at(p[0], p[1]),
         None => pz,
     };
     write_actor(p[0], p[1], fz, fa, straight);
@@ -753,7 +781,7 @@ pub extern "C" fn move_field(
     );
     let (nx, ny) = (p[0], p[1]);
     let fz = match n.index(fa) {
-        Some(ai) => (n.areas[ai].nw[2] + n.areas[ai].se[2]) * 0.5,
+        Some(ai) => n.areas[ai].z_at(nx, ny),
         None => pz,
     };
     let rdx = tx - nx;

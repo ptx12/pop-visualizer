@@ -1,6 +1,7 @@
 import { parse } from '../renderer/js/kv.js';
 import { buildModel } from '../renderer/js/popmodel.js';
 import { traits, registerTraits, knownBotKeys, knownBotFlags } from '../renderer/js/sim/traits.js';
+import { botModelBase } from '../renderer/js/botmodels.js';
 
 let pass = 0, fail = 0;
 const check = (name, cond, detail) => {
@@ -152,6 +153,59 @@ check('RafMod CustomWeaponModel block captures slot + model',
     botOf('Class Demoman CustomWeaponModel { Slot 2 Model "models/weapons/c_models/c_atom_launcher/c_atom_launcher.mdl" }')));
 check('RafMod StripItemSlot is captured',
   botOf('Class Heavy StripItemSlot 0 StripItemSlot 1').stripSlots.join() === '0,1');
+
+const gateBody = `Class Scout EventChangeAttributes {
+  Default { Tag bot_gatebot Item "MvM GateBot Light Scout" WeaponRestrictions MeleeOnly Attributes IgnoreFlag }
+  RevertGateBotsBehavior { Item "MvM GateBot Light Scout" }
+}`;
+const gateBot = botOf(gateBody);
+check('the Default EventChangeAttributes state is applied at spawn, as the game does',
+  gateBot.tags.includes('bot_gatebot'), JSON.stringify(gateBot.tags));
+check('items inside the Default state reach the bot so gate hats render',
+  gateBot.items.includes('MvM GateBot Light Scout'), JSON.stringify(gateBot.items));
+check('WeaponRestrictions inside the Default state is honoured',
+  String(gateBot.restriction).toLowerCase() === 'meleeonly', String(gateBot.restriction));
+check('Attributes inside the Default state are honoured',
+  gateBot.attrs.some(a => /ignoreflag/i.test(a)), JSON.stringify(gateBot.attrs));
+check('non-default states are still recorded but not applied at spawn',
+  gateBot.eventAttributes.map(s => s.event).join(',') === 'Default,RevertGateBotsBehavior',
+  gateBot.eventAttributes.map(s => s.event).join(','));
+
+const styleBot = botOf(`Class Scout EventChangeAttributes {
+  Default { Item "MvM GateBot Light Scout" ItemAttributes { ItemName "TF_WEAPON_SCATTERGUN" "damage penalty" 0.5 } }
+  RevertGateBotsBehavior {
+    Item "MvM GateBot Light Scout"
+    ItemAttributes { ItemName "MvM GateBot Light Scout" "item style override" 1 }
+    ItemAttributes { ItemName "TF_WEAPON_SCATTERGUN" "damage penalty" 0.5 }
+  }
+}`);
+check('a style override in a non-default state is kept separate from the spawn look',
+  JSON.stringify(styleBot.itemStyles) === '{}'
+  && styleBot.revertItemStyles['mvm gatebot light scout'] === 1,
+  JSON.stringify(styleBot.itemStyles) + ' / ' + JSON.stringify(styleBot.revertItemStyles));
+check('an ItemAttributes block with no style override adds no style entry',
+  Object.keys(styleBot.revertItemStyles).length === 1, JSON.stringify(styleBot.revertItemStyles));
+
+const spawnStyle = botOf('Class Scout Item "MvM GateBot Light Scout" ItemAttributes { ItemName "MvM GateBot Light Scout" "item style override" 1 }');
+check('a style override applied at spawn lands on the spawn look',
+  spawnStyle.itemStyles['mvm gatebot light scout'] === 1, JSON.stringify(spawnStyle.itemStyles));
+
+const modelOf = body => botModelBase(botOf(body));
+check('a MiniBoss gets the giant model CTFBotSpawner picks for it',
+  modelOf('Class Soldier Attributes MiniBoss') === 'models/bots/soldier_boss/bot_soldier_boss',
+  modelOf('Class Soldier Attributes MiniBoss'));
+check('Scale at tf_mvm_miniboss_scale also gets the giant model',
+  modelOf('Class Soldier Scale 1.75') === 'models/bots/soldier_boss/bot_soldier_boss',
+  modelOf('Class Soldier Scale 1.75'));
+check('Scale below tf_mvm_miniboss_scale keeps the normal model',
+  modelOf('Class Soldier Scale 1.7') === 'models/bots/soldier/bot_soldier',
+  modelOf('Class Soldier Scale 1.7'));
+check('a class with no giant model in the game keeps its normal one',
+  modelOf('Class Medic Attributes MiniBoss') === 'models/bots/medic/bot_medic',
+  modelOf('Class Medic Attributes MiniBoss'));
+check('an explicit Model still wins over the giant model',
+  modelOf('Class Soldier Attributes MiniBoss Model "models/custom/thing.mdl"') === 'models/custom/thing',
+  modelOf('Class Soldier Attributes MiniBoss Model "models/custom/thing.mdl"'));
 
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');

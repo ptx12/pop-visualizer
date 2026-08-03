@@ -137,7 +137,7 @@ registerTraits([
     apply(info, value) { const v = positive(value); if (v) info.chargeRechargeMult *= v; }
   },
 
-  { id: 'miniboss', flag: 'miniboss', apply(info) { info.isGiant = true; } },
+  { id: 'miniboss', flag: 'miniboss', apply(info) { info.isGiant = true; info.isMiniBoss = true; } },
   { id: 'usebosshealthbar', flag: 'usebosshealthbar', apply(info) { info.isBoss = true; } },
   { id: 'alwayscrit', flag: 'alwayscrit', apply(info) { info.alwaysCrit = true; } },
   { id: 'ignoreflag', flag: 'ignoreflag', apply(info) { info.ignoreFlag = true; } },
@@ -190,7 +190,10 @@ registerTraits([
     if (v === 'push') info.aggressive = true;
     if (v === 'mobber') info.mobber = true;
   } },
-  { id: 'action', key: 'action', apply(info, value) { info.action = String(value || '').trim(); } },
+  { id: 'action', key: 'action', apply(info, value) {
+    info.action = String(value || '').trim();
+    if (/^mobber$/i.test(info.action)) info.mobber = true;
+  } },
   { id: 'teleportwhere', key: 'teleportwhere', apply(info, value) { if (value) info.teleportWhere.push(String(value)); } },
   { id: 'nobombupgrades', key: 'nobombupgrades', apply(info, value) { info.noBombUpgrades = String(value) !== '0'; } },
   { id: 'nopushaway', key: 'nopushaway', apply(info, value) { info.noPushAway = String(value) !== '0'; } },
