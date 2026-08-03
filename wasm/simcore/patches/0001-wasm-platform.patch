@@ -1,0 +1,115 @@
+diff --git a/src/public/mathlib/mathlib.h b/src/public/mathlib/mathlib.h
+index 01107d1..672abd1 100644
+--- a/src/public/mathlib/mathlib.h
++++ b/src/public/mathlib/mathlib.h
+@@ -1174,7 +1174,7 @@ inline float SimpleSplineRemapValClamped( float val, float A, float B, float C,
+ 
+ FORCEINLINE int RoundFloatToInt(float f)
+ {
+-#if defined( PLATFORM_INTEL )
++#if defined( PLATFORM_INTEL ) || defined( PLATFORM_WASM )
+ 	return _mm_cvtss_si32(_mm_load_ss(&f));
+ #elif defined( _X360 )
+ #ifdef Assert
+@@ -1218,7 +1218,7 @@ FORCEINLINE unsigned long RoundFloatToUnsignedLong(float f)
+ 	return pResult[1];
+ #else  // !X360
+ 	
+-#if defined( PLATFORM_WINDOWS_PC64 )
++#if defined( PLATFORM_WINDOWS_PC64 ) || defined( PLATFORM_WASM )
+ 	uint nRet = ( uint ) f;
+ 	if ( nRet & 1 )
+ 	{
+diff --git a/src/public/mathlib/ssemath.h b/src/public/mathlib/ssemath.h
+index afe35dd..cc3f6ff 100644
+--- a/src/public/mathlib/ssemath.h
++++ b/src/public/mathlib/ssemath.h
+@@ -10,6 +10,9 @@
+ #include <xboxmath.h>
+ #else
+ #include <xmmintrin.h>
++#if defined( PLATFORM_WASM )
++#include <emmintrin.h>
++#endif
+ #endif
+ 
+ #include <mathlib/vector.h>
+@@ -2464,7 +2467,7 @@ FORCEINLINE i32x4 IntShiftLeftWordSIMD(const i32x4 &vSrcA, const i32x4 &vSrcB)
+ // like this.
+ FORCEINLINE void ConvertStoreAsIntsSIMD(intx4 * RESTRICT pDest, const fltx4 &vSrc)
+ {
+-#if defined( COMPILER_MSVC64 )
++#if defined( COMPILER_MSVC64 ) || defined( PLATFORM_WASM )
+ 
+ 	(*pDest)[0] = SubFloat( vSrc, 0 );
+ 	(*pDest)[1] = SubFloat( vSrc, 1 );
+diff --git a/src/public/tier0/platform.h b/src/public/tier0/platform.h
+index b0f9c18..243998d 100644
+--- a/src/public/tier0/platform.h
++++ b/src/public/tier0/platform.h
+@@ -86,6 +86,8 @@
+ #elif defined(_M_IX86) || defined(__i386__)
+   #define PLATFORM_INTEL
+   #define PLATFORM_X86 32
++#elif defined(__wasm__) || defined(__EMSCRIPTEN__)
++  #define PLATFORM_WASM 1
+ #else
+ 	#error Unknown processor architecture.
+ #endif
+@@ -1255,6 +1257,8 @@ inline uint64 Plat_Rdtsc()
+ 	uint32 lo, hi;
+ 	__asm__ __volatile__ ( "rdtsc" : "=a" (lo), "=d" (hi));
+ 	return ( ( ( uint64 )hi ) << 32 ) | lo;
++#elif defined( PLATFORM_WASM )
++	return 0;
+ #else
+ 	#error
+ #endif
+diff --git a/src/public/tier0/threadtools.h b/src/public/tier0/threadtools.h
+index 9b702fb..ea1855f 100644
+--- a/src/public/tier0/threadtools.h
++++ b/src/public/tier0/threadtools.h
+@@ -147,7 +147,8 @@ inline void ThreadPause()
+ #if defined( COMPILER_PS3 )
+ 	__db16cyc();
+ #elif defined( COMPILER_GCC )
+-	#if defined( PLATFORM_INTEL )
++	#if defined( PLATFORM_WASM )
++	#elif defined( PLATFORM_INTEL )
+ 		__asm __volatile( "pause" );
+ 	#elif defined( PLATFORM_ARM )
+ 		pause();
+diff --git a/src/public/tier1/utlblockmemory.h b/src/public/tier1/utlblockmemory.h
+index 8d86c59..79d790f 100644
+--- a/src/public/tier1/utlblockmemory.h
++++ b/src/public/tier1/utlblockmemory.h
+@@ -137,8 +137,13 @@ void CUtlBlockMemory<T,I>::Swap( CUtlBlockMemory< T, I > &mem )
+ {
+ 	V_swap( m_pMemory, mem.m_pMemory );
+ 	V_swap( m_nBlocks, mem.m_nBlocks );
+-	V_swap( m_nIndexMask, mem.m_nIndexMask );
+-	V_swap( m_nIndexShift, mem.m_nIndexShift );
++	int nTmpMask = m_nIndexMask, nTmpOtherMask = mem.m_nIndexMask;
++	V_swap( nTmpMask, nTmpOtherMask );
++	m_nIndexMask = nTmpMask; mem.m_nIndexMask = nTmpOtherMask;
++
++	int nTmpShift = m_nIndexShift, nTmpOtherShift = mem.m_nIndexShift;
++	V_swap( nTmpShift, nTmpOtherShift );
++	m_nIndexShift = nTmpShift; mem.m_nIndexShift = nTmpOtherShift;
+ }
+ 
+ 
+diff --git a/src/public/vscript/variant.h b/src/public/vscript/variant.h
+index dbc2e42..cacfaad 100644
+--- a/src/public/vscript/variant.h
++++ b/src/public/vscript/variant.h
+@@ -417,7 +417,9 @@ template< class CValueAllocator >
+ template< typename T > 
+ inline void CVariantBase<CValueAllocator>::CopyData( const T &src, bool bForceCopy )
+ {
++#if !defined( PLATFORM_WASM )
+ 	COMPILE_TIME_ASSERT( ( ExtendedFieldType_t )VariantDeduceType( T ) != FIELD_TYPEUNKNOWN );
++#endif
+ 
+ 	Free();
+ 	m_type = VariantDeduceType( T );

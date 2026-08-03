@@ -25,7 +25,7 @@
   "type": "module",
   "scripts": {
     "start": "electron .",
-    "test": "node test/roundtrip.mjs && node test/model.mjs && node test/hardening.mjs && node test/navkernel.mjs && node test/vtfkernel.mjs && node test/lzmakernel.mjs && node test/bakekernel.mjs && node test/mapentities.mjs && node test/interrupt.mjs && node test/wavegates.mjs && node test/mvmrules.mjs && node test/separation.mjs && node test/truncation.mjs && node test/registry.mjs && node test/spawners.mjs && node test/traits.mjs && node test/events.mjs && node test/pointtemplates.mjs && node test/vmt.mjs && node test/gamefs.mjs && node test/navpick.mjs && node test/tonemap.mjs && node test/rafmod.mjs && node test/mapassets.mjs && node test/botanims.mjs",
+    "test": "node test/roundtrip.mjs && node test/model.mjs && node test/hardening.mjs && node test/navkernel.mjs && node test/vtfkernel.mjs && node test/lzmakernel.mjs && node test/bakekernel.mjs && node test/collision.mjs && node test/mapentities.mjs && node test/interrupt.mjs && node test/wavegates.mjs && node test/mvmrules.mjs && node test/separation.mjs && node test/truncation.mjs && node test/registry.mjs && node test/spawners.mjs && node test/traits.mjs && node test/events.mjs && node test/bombupgrade.mjs && node test/doorcycle.mjs && node test/engineerhint.mjs && node test/pointtemplates.mjs && node test/vmt.mjs && node test/gamefs.mjs && node test/navpick.mjs && node test/tonemap.mjs && node test/rafmod.mjs && node test/mapassets.mjs && node test/botanims.mjs",
     "dev": "node test/devserver.mjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
