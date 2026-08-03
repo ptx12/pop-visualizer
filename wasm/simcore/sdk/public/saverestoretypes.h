@@ -513,7 +513,15 @@ inline const char *CSaveRestoreSegment::StringFromSymbol( int token )
 
 // Newer GCC versions provide this in this header, older did by default.
 #if !defined( _rotr ) && defined( COMPILER_GCC )
+#if defined( __wasm__ ) || defined( __EMSCRIPTEN__ )
+static inline unsigned int _rotr( unsigned int val, int shift )
+{
+	shift &= 31;
+	return shift ? ( ( val >> shift ) | ( val << ( 32 - shift ) ) ) : val;
+}
+#else
 #include <x86intrin.h>
+#endif
 #endif
 
 inline unsigned int CSaveRestoreSegment::HashString( const char *pszToken )
