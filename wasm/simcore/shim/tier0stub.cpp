@@ -73,3 +73,6 @@ class CSimMemAlloc : public IMemAlloc {
 
 static CSimMemAlloc g_SimMemAlloc;
 IMemAlloc *g_pMemAlloc = &g_SimMemAlloc;
+
+#include "edict.h"
+CGlobalVars *gpGlobals = 0;
