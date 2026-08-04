@@ -34,7 +34,7 @@ for (const map of maps) {
     waveIndex: 0, seconds: 25, tfPath: TF_DIR
   });
 
-  const nav = run.nav;
+  const nav = run.navStats;
   if (!nav) { check(`${map}: the nav statistics are exported`, false, 'no nav block on the result'); continue; }
 
   check(`${map}: the mesh loaded`, nav.areas > 0, `${nav.areas} areas`);

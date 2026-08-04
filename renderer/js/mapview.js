@@ -3,7 +3,7 @@ import { state, simFor, emit, onChange, deathModel, navTogglesFor, bombPathRerol
 import { CLASS_INFO, botDisplayName, missionActiveOn } from './popmodel.js';
 import { getTFPath, iconURL, iconNameFor, classIconName, tankIconName } from './icons.js';
 import { native } from './native.js';
-import { botMaxSpeed, buildTrackChains, dpsProfile, objectiveCandidates, bombPathGroups, isSentryBuster, STEP, RNG_SEED_BASE } from './navpaths.js';
+import { botMaxSpeed, buildTrackChains, dpsProfile, objectiveCandidates, bombPathGroups, isSentryBuster, navGroundZ, STEP, RNG_SEED_BASE } from './navpaths.js';
 import { createBotSim, actorPosAt, actorZAt, actorDistAt, actorYawAt } from './botplayback.js';
 import { setStatus, clearStatus, clearStatusPrefix } from './statusbar.js';
 import { startTask } from './tasks.js';
@@ -589,6 +589,9 @@ function buildTankHUD(ai) {
 }
 
 const TELEPORTER_MODEL = 'models/buildables/teleporter';
+const SENTRY_MODELS = ['models/buildables/sentry1', 'models/buildables/sentry2', 'models/buildables/sentry3'];
+const OBJ_TELEPORTER = 1;
+const OBJ_SENTRYGUN = 2;
 
 let buildTimes = null;
 let buildTimesReq = null;
@@ -1549,9 +1552,13 @@ export function renderMapView(container, file, waveIndex) {
   if (teleBuild === null) resolveBuildTimes().then(v => { if (v) emit('map'); });
   const deployAnim = animDurationSync(DEPLOY_ANIM_MODEL, 'deploybomb');
   if (deployAnim === null) resolveAnimDuration(DEPLOY_ANIM_MODEL, 'deploybomb').then(v => { if (v) emit('map'); });
+  const engineerProbes = probesFor(file, waveIndex)
+    .filter(pr => pr && Array.isArray(pr.pos) && pr.pos.every(v => Number.isFinite(v)))
+    .map(pr => [pr.pos[0], pr.pos[1], pr.pos[2]]);
   const aiKey = [waveIndex, model, zMode, paintV, objIdx, bombPath, teleBuild || 0, deployAnim || 0, JSON.stringify(killPts),
-    toggles.enabled.join(','), toggles.disabled.join(',')].join('|');
+    JSON.stringify(engineerProbes), toggles.enabled.join(','), toggles.disabled.join(',')].join('|');
   const aiOpts = {
+    engineers: engineerProbes,
     deathModel: model, zonesMode: zMode, killPoints: killPts, objectiveIdx: objIdx, bombPath,
     enabledNames: toggles.enabled, disabledNames: toggles.disabled,
     extraSpawnPoints: file.model.extraSpawnPoints || [],
@@ -2022,8 +2029,7 @@ export function renderMapView(container, file, waveIndex) {
       });
     }
     if (ps.tool === 'engineer' && ps.hover && engineerSpec) {
-      const area = ai.nav && ai.nav.nearestArea([ps.hover[0], ps.hover[1]]);
-      const gz = area ? (area.nw[2] + area.se[2]) / 2 : 0;
+      const gz = navGroundZ(mapData, ps.hover[0], ps.hover[1]) ?? 0;
       const ghostBot = { cls: 'engineer', items: [], attrs: [], tags: [], loadout: {}, combat: {} };
       const base = botModelBase(ghostBot);
       const act = botActivity(ghostBot);
@@ -2035,11 +2041,15 @@ export function renderMapView(container, file, waveIndex) {
         heading: 0, scale: 1, phase: 0
       });
     }
-    for (const tp of ai.teleporters || []) {
-      if (t < tp.readyAt) continue;
+    for (const b of ai.buildings || []) {
+      if (t < b.bornT) continue;
+      const model = b.type === OBJ_SENTRYGUN
+        ? SENTRY_MODELS[Math.max(0, Math.min(2, b.level - 1))]
+        : b.type === OBJ_TELEPORTER ? TELEPORTER_MODEL : null;
+      if (!model) continue;
       out.push({
-        x: tp.pos[0], y: tp.pos[1], z: tp.pos[2], size: 0.6, r: 0.42, g: 0.66, b: 0.92,
-        kind: 'building', modelBase: TELEPORTER_MODEL, modelSkin: BLU_SKIN, heading: 0, scale: 1
+        x: b.pos[0], y: b.pos[1], z: b.pos[2], size: 0.6, r: 0.42, g: 0.66, b: 0.92,
+        kind: 'building', modelBase: model, modelSkin: BLU_SKIN, heading: 0, scale: 1
       });
     }
     if (ai.bomb && ai.bomb.samples && ai.bomb.samples.length) {
@@ -2060,8 +2070,8 @@ export function renderMapView(container, file, waveIndex) {
   }
   function placeEngineer(wx, wy) {
     if (!engineerSpec) return;
-    const area = ai.nav && ai.nav.nearestArea([wx, wy]);
-    const z = area ? (area.nw[2] + area.se[2]) / 2 : 0;
+    const z = navGroundZ(mapData, wx, wy);
+    if (z === null) return;
     addProbe(file, waveIndex, { ...engineerSpec, pos: [wx, wy, z] });
     emit('map');
   }
@@ -2101,7 +2111,7 @@ export function renderMapView(container, file, waveIndex) {
       hintRings: engineerNests.map(h => [h.origin[0], h.origin[1]]),
       propEvents: ai.propEvents || null,
       doors: ai.doors || mapData.doors || null,
-      teleporters: ai.teleporters || null,
+      teleporters: (ai.buildings || []).filter(b => b.type === OBJ_TELEPORTER),
       mapParticles: new Map((mapData.particles || []).map(p => [p.name, p])),
       onHover: (wx, wy) => {
         ps.hover = wx == null ? null : [wx, wy];
@@ -2809,8 +2819,8 @@ export function renderMapView(container, file, waveIndex) {
   }
 
   function drawTeleporters(t) {
-    for (const tp of ai.teleporters || []) {
-      if (t < tp.readyAt) continue;
+    for (const tp of (ai.buildings || []).filter(b => b.type === OBJ_TELEPORTER)) {
+      if (t < tp.bornT) continue;
       const [sx, sy] = toScreen(tp.pos[0], tp.pos[1]);
       const r = Math.max(5, 42 * vs.scale);
       ctx.beginPath();

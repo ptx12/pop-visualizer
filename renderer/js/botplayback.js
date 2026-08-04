@@ -155,7 +155,7 @@ function lerpAngle(a, b, f) {
 }
 
 export function createBotSim(wave, sim, mapData, opts = {}) {
-  const state = { done: false, actors: [], waveSpawns: [], end: 0, bomb: null, bombs: [], nav: null, note: null, requested: false };
+  const state = { done: false, actors: [], waveSpawns: [], end: 0, bomb: null, bombs: [], buildings: [], engineers: null, navStats: null, note: null, requested: false };
 
   const request = () => {
     state.requested = true;
@@ -173,7 +173,8 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       killPoints: (Array.isArray(opts.killPoints) ? opts.killPoints : [])
         .filter(kp => Array.isArray(kp) && Number.isFinite(kp[0]) && Number.isFinite(kp[1]))
         .map(kp => [kp[0], kp[1], killRadiusOf(kp)]),
-      deathModel: opts.deathModel || null
+      deathModel: opts.deathModel || null,
+      engineers: Array.isArray(opts.engineers) ? opts.engineers : []
     }).then(res => {
       const r = res || {};
       state.actors = (r.actors || []).map(a => prepare(a, wave, opts.missions));
@@ -181,7 +182,9 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       state.end = r.end || 0;
       state.bomb = r.bomb || null;
       state.bombs = r.bombs || [];
-      state.nav = r.nav || null;
+      state.buildings = r.buildings || [];
+      state.engineers = r.engineers || null;
+      state.navStats = r.navStats || null;
       state.note = r.note || null;
       state.done = true;
     }).catch(err => {
@@ -205,7 +208,9 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
         end: state.end,
         bomb: state.bomb,
         bombs: state.bombs,
-        nav: state.nav,
+        buildings: state.buildings,
+        engineers: state.engineers,
+        navStats: state.navStats,
         note: state.note,
         unavailable: !state.actors.length,
         source: 'source'

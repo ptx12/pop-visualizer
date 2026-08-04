@@ -141,7 +141,7 @@ function popfilesOnDisk(dir) {
   return out;
 }
 
-export async function simulateWave({ bspPath, mapName, popShortName, popPath, popDir, waveIndex = 0, seconds = 120, killPoints = [], extraEntities = [], tfPath }) {
+export async function simulateWave({ bspPath, mapName, popShortName, popPath, popDir, waveIndex = 0, seconds = 120, killPoints = [], extraEntities = [], engineers = [], tfPath }) {
   const resolvedTF = tfPath || await (await import('./tfpath.js')).detectTFPath();
   if (!resolvedTF) return { actors: [], end: 0, note: 'Team Fortress 2 was not found.' };
   if (!fs.existsSync(bspPath)) return { actors: [], end: 0, note: 'The map bsp was not found.' };
@@ -237,6 +237,23 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
   ex.sim_ents_full_frame(1);
   ex.sim_bots_add(push('red'), push('scout'));
 
+  const MISSION_ENGINEER = 5;
+  const TF_TEAM_PVE_INVADERS = 3;
+  const engineerSpots = (engineers || []).filter(e => Array.isArray(e) && e.length >= 3 && e.every(v => Number.isFinite(v)));
+  const engineerIndices = [];
+  const invaderSpawn = typeof ex.sim_spawn_name === 'function'
+    ? cstr(ex.sim_spawn_name(TF_TEAM_PVE_INVADERS, 0)) : '';
+  if (engineerSpots.length && typeof ex.sim_bots_add_at === 'function') {
+    for (const spot of engineerSpots) {
+      const teleportWhere = typeof spot[3] === 'string' && spot[3] ? spot[3] : invaderSpawn;
+      const index = ex.sim_bots_add_at(push('blue'), push('engineer'), spot[0], spot[1], spot[2],
+        MISSION_ENGINEER, teleportWhere ? push(teleportWhere) : 0);
+      if (index > 0) engineerIndices.push(index);
+    }
+  }
+  const engineerNests = typeof ex.sim_hint_count === 'function'
+    ? ex.sim_hint_count(push('bot_hint_engineer_nest')) : 0;
+
   const zones = (killPoints || []).filter(k => Array.isArray(k) && Number.isFinite(k[0]) && Number.isFinite(k[1]) && k[2] > 0);
   const killZonesActive = zones.length > 0 && typeof ex.sim_killzones_set === 'function';
   if (killZonesActive) {
@@ -252,6 +269,8 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
 
   const out = ex.sim_ents_alloc(64 * 12 * 4);
   const tankOut = ex.sim_ents_alloc(16 * 9 * 4);
+  const objOut = ex.sim_ents_alloc(32 * 8 * 4);
+  const buildings = new Map();
   const actors = new Map();
   const limit = Math.round(Math.min(Math.max(seconds, 10), MAX_SECONDS) / TICK_INTERVAL);
 
@@ -321,6 +340,23 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
         b.states.add(ex.sim_bomb_state_at(b.slot));
         const who = ex.sim_bomb_carrier_at(b.slot);
         if (who && !b.carriers.includes(who)) b.carriers.push(who);
+      }
+    }
+
+    if (typeof ex.sim_objects_state === 'function') {
+      const objCount = ex.sim_objects_state(objOut, 32);
+      const of = new Float32Array(ex.memory.buffer, objOut, objCount * 8);
+      for (let i = 0; i < objCount; i++) {
+        const o = of.subarray(i * 8, i * 8 + 8);
+        const key = o[0] | 0;
+        let rec = buildings.get(key);
+        if (!rec) {
+          rec = { entindex: key, type: o[4] | 0, team: o[5] | 0, pos: [o[1], o[2], o[3]], bornT: t, level: o[6] | 0, builtT: null };
+          buildings.set(key, rec);
+        }
+        rec.pos = [o[1], o[2], o[3]];
+        rec.level = Math.max(rec.level, o[6] | 0);
+        if (rec.builtT === null && o[7] === 0) rec.builtT = t;
       }
     }
 
@@ -474,8 +510,10 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
     killed,
     tracked: actors.size,
     killZones: zones.length,
-    nav: navStats,
+    navStats,
     bombs,
+    buildings: [...buildings.values()],
+    engineers: { requested: engineerSpots.length, spawned: engineerIndices.length, nests: engineerNests, teleportWhere: invaderSpawn },
     bomb: bombLog.length ? { log: bombLog, maxLevel: 3, deliveredAt } : null,
     note: list.length ? null : 'The wave produced no robots in the simulated window.'
   };
@@ -502,6 +540,7 @@ export async function register() {
         waveIndex: o.waveIndex || 0,
         seconds: o.seconds || 120,
         killPoints: o.killPoints,
+        engineers: o.engineers,
         tfPath
       });
     } catch (err) {

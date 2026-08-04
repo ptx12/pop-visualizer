@@ -173,6 +173,24 @@ export function navAreaZ(a, x, y) {
   return north + v * (south - north);
 }
 
+export function nearestNavArea(mapData, x, y) {
+  const areas = mapData && mapData.nav && mapData.nav.areas;
+  if (!areas || !areas.length) return null;
+  let best = null, bestD = Infinity;
+  for (const a of areas) {
+    const cx = Math.min(Math.max(x, a.nw[0]), a.se[0]);
+    const cy = Math.min(Math.max(y, a.nw[1]), a.se[1]);
+    const d = (cx - x) ** 2 + (cy - y) ** 2;
+    if (d < bestD) { bestD = d; best = a; }
+  }
+  return best;
+}
+
+export function navGroundZ(mapData, x, y) {
+  const area = nearestNavArea(mapData, x, y);
+  return area ? navAreaZ(area, x, y) : null;
+}
+
 export function buildNavGraph(mapData, volumes, allowWasm = true) {
   const weights = areaWeights(mapData, volumes || []);
   if (allowWasm && navWasmReady()) {

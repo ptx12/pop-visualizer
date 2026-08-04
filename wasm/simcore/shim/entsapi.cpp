@@ -20,6 +20,7 @@
 #include "player_vs_environment/tf_tank_boss.h"
 #include "entity_capture_flag.h"
 #include "nav_mesh/tf_nav_area.h"
+#include "tf_obj.h"
 
 #include <emscripten/emscripten.h>
 #include <stdlib.h>
@@ -698,6 +699,97 @@ EMSCRIPTEN_KEEPALIVE int sim_bots_add( const char *pTeam, const char *pClass )
 
 	SimInvalidateIndex();
 	return pBot->entindex();
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bots_add_at( const char *pTeam, const char *pClass, float x, float y, float z,
+	int mission, const char *pTeleportWhere )
+{
+	if ( !s_bInitialized )
+		return 0;
+
+	CTFBot *pBot = NextBotCreatePlayerBot< CTFBot >( pClass && pClass[ 0 ] ? pClass : "TFBot" );
+	if ( !pBot )
+		return 0;
+
+	pBot->HandleCommand_JoinTeam( pTeam && pTeam[ 0 ] ? pTeam : "auto" );
+	pBot->SetDifficulty( CTFBot::NORMAL );
+	pBot->HandleCommand_JoinClass( pClass && pClass[ 0 ] ? pClass : pBot->GetNextSpawnClassname() );
+
+	Vector where( x, y, z );
+	pBot->Teleport( &where, NULL, NULL );
+
+	if ( pTeleportWhere && pTeleportWhere[ 0 ] )
+	{
+		CUtlStringList names;
+		names.CopyAndAddToTail( pTeleportWhere );
+		pBot->SetTeleportWhere( names );
+	}
+
+	if ( mission > 0 )
+		pBot->SetMission( (CTFBot::MissionType)mission );
+
+	SimInvalidateIndex();
+	return pBot->entindex();
+}
+
+EMSCRIPTEN_KEEPALIVE const char *sim_spawn_name( int team, int slot )
+{
+	if ( !s_bInitialized || slot < 0 )
+		return "";
+
+	int seen = 0;
+	CBaseEntity *pEnt = NULL;
+	while ( ( pEnt = gEntList.FindEntityByClassname( pEnt, "info_player_teamspawn" ) ) != NULL )
+	{
+		if ( team > 0 && pEnt->GetTeamNumber() != team )
+			continue;
+		const char *pName = STRING( pEnt->GetEntityName() );
+		if ( !pName || !pName[ 0 ] )
+			continue;
+		if ( seen == slot )
+			return pName;
+		seen++;
+	}
+	return "";
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_hint_count( const char *pClassname )
+{
+	if ( !s_bInitialized || !pClassname || !pClassname[ 0 ] )
+		return 0;
+
+	int count = 0;
+	CBaseEntity *pEnt = NULL;
+	while ( ( pEnt = gEntList.FindEntityByClassname( pEnt, pClassname ) ) != NULL )
+		count++;
+	return count;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_objects_state( float *pOut, int maxObjects )
+{
+	if ( !s_bInitialized || !pOut || maxObjects <= 0 )
+		return 0;
+
+	int written = 0;
+	for ( int i = 0; i < IBaseObjectAutoList::AutoList().Count() && written < maxObjects; i++ )
+	{
+		CBaseObject *pObj = static_cast< CBaseObject * >( IBaseObjectAutoList::AutoList()[ i ] );
+		if ( !pObj )
+			continue;
+
+		const Vector &origin = pObj->GetAbsOrigin();
+		float *p = pOut + written * 8;
+		p[ 0 ] = (float)pObj->entindex();
+		p[ 1 ] = origin.x;
+		p[ 2 ] = origin.y;
+		p[ 3 ] = origin.z;
+		p[ 4 ] = (float)pObj->ObjectType();
+		p[ 5 ] = (float)pObj->GetTeamNumber();
+		p[ 6 ] = (float)pObj->GetUpgradeLevel();
+		p[ 7 ] = pObj->IsBuilding() ? 1.0f : 0.0f;
+		written++;
+	}
+	return written;
 }
 
 EMSCRIPTEN_KEEPALIVE int sim_bomb_upgrade_level()
