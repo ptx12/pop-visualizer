@@ -42,26 +42,36 @@ static bool s_bInitialized = false;
 static char *s_pEntityLump = NULL;
 static char s_szLastTraceSurface[ 128 ] = "";
 
-static int SimEntityCount();
+static CUtlVector< CBaseEntity * > s_EntityIndex;
+static bool s_bIndexValid = false;
+
+static void SimInvalidateIndex()
+{
+	s_bIndexValid = false;
+}
+
+static void SimRebuildIndex()
+{
+	if ( s_bIndexValid )
+		return;
+	s_EntityIndex.RemoveAll();
+	for ( CBaseEntity *pEnt = gEntList.FirstEnt(); pEnt; pEnt = gEntList.NextEnt( pEnt ) )
+		s_EntityIndex.AddToTail( pEnt );
+	s_bIndexValid = true;
+}
 
 static CBaseEntity *SimEntityByIndex( int index )
 {
-	int i = 0;
-	for ( CBaseEntity *pEnt = gEntList.FirstEnt(); pEnt; pEnt = gEntList.NextEnt( pEnt ) )
-	{
-		if ( i == index )
-			return pEnt;
-		++i;
-	}
-	return NULL;
+	SimRebuildIndex();
+	if ( index < 0 || index >= s_EntityIndex.Count() )
+		return NULL;
+	return s_EntityIndex[ index ];
 }
 
 static int SimEntityCount()
 {
-	int count = 0;
-	for ( CBaseEntity *pEnt = gEntList.FirstEnt(); pEnt; pEnt = gEntList.NextEnt( pEnt ) )
-		++count;
-	return count;
+	SimRebuildIndex();
+	return s_EntityIndex.Count();
 }
 
 extern "C" {
@@ -107,6 +117,7 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_load_lump( const char *pLump, int length )
 	memcpy( s_pEntityLump, pLump, length );
 	s_pEntityLump[ length ] = 0;
 
+	SimInvalidateIndex();
 	MapEntity_ParseAllEntities( s_pEntityLump, NULL, false );
 
 	return SimEntityCount();
@@ -124,6 +135,7 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_reset()
 
 	g_EventQueue.Clear();
 	gEntList.Clear();
+	SimInvalidateIndex();
 
 	gpGlobals->tickcount = 0;
 	gpGlobals->curtime = 0.0f;
@@ -259,6 +271,7 @@ EMSCRIPTEN_KEEPALIVE void sim_ents_frame()
 
 	Physics_RunThinkFunctions( true );
 	g_EventQueue.ServiceEvents();
+	SimInvalidateIndex();
 }
 
 EMSCRIPTEN_KEEPALIVE float sim_ents_curtime()
@@ -284,6 +297,19 @@ EMSCRIPTEN_KEEPALIVE float sim_ents_origin( int index, int axis )
 	if ( !pEnt || axis < 0 || axis > 2 )
 		return 0.0f;
 	return pEnt->GetAbsOrigin()[ axis ];
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_ents_pose( int index, float *pOut )
+{
+	CBaseEntity *pEnt = SimEntityByIndex( index );
+	if ( !pEnt || !pOut )
+		return 0;
+
+	const Vector &vecOrigin = pEnt->GetAbsOrigin();
+	const QAngle &angles = pEnt->GetAbsAngles();
+	pOut[ 0 ] = vecOrigin.x; pOut[ 1 ] = vecOrigin.y; pOut[ 2 ] = vecOrigin.z;
+	pOut[ 3 ] = angles.x; pOut[ 4 ] = angles.y; pOut[ 5 ] = angles.z;
+	return 1;
 }
 
 EMSCRIPTEN_KEEPALIVE float sim_ents_angles( int index, int axis )
@@ -335,6 +361,25 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_fire_input_index( int index, const char *pInpu
 
 	g_EventQueue.AddEvent( pEnt, pInput, value, delay, NULL, NULL );
 	return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_ents_accepts_input( int index, const char *pInput )
+{
+	CBaseEntity *pEnt = SimEntityByIndex( index );
+	if ( !pEnt || !pInput || !pInput[ 0 ] )
+		return 0;
+
+	for ( datamap_t *dmap = pEnt->GetDataDescMap(); dmap != NULL; dmap = dmap->baseMap )
+	{
+		for ( int i = 0; i < dmap->dataNumFields; i++ )
+		{
+			if ( !( dmap->dataDesc[ i ].flags & FTYPEDESC_INPUT ) )
+				continue;
+			if ( Q_stricmp( dmap->dataDesc[ i ].externalName, pInput ) == 0 )
+				return 1;
+		}
+	}
+	return 0;
 }
 
 EMSCRIPTEN_KEEPALIVE int sim_ents_movetype( int index )

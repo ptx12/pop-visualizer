@@ -14,6 +14,7 @@ import { extractMapEntities } from './mapentities.js';
 import { rankNavCandidates, nearNavNames } from '../shared/navpick.js';
 import { flushGameFS, setExtraAssetRoots, getExtraAssetRoots } from '../shared/gamefs.js';
 import { readTonemapSettings, tonemapWithDefaults } from '../shared/tonemap.js';
+import { loadEntitySim, entitySimMovers, flushEntitySims } from '../shared/entssim.js';
 
 const bspTrackCache = lru(24);
 const mapDataCache = lru(12);
@@ -29,6 +30,7 @@ export function flushMapCaches() {
   flushLumpCache();
   flushGameFS();
   flushMaterialCaches();
+  flushEntitySims();
 }
 
 export async function mapDirs(tfPath, popDir) {
@@ -201,7 +203,8 @@ async function mapDataFor(best, tfPath, popDir) {
     if (!text) return null;
     const ents = parseEntities(text);
     const models = readModels(best.full);
-    const ent = extractMapEntities(ents, models);
+    await loadEntitySim(best.full, best.name);
+    const ent = extractMapEntities(ents, models, entitySimMovers(best.full));
     const navLookup = await loadNavFor(best, tfPath, popDir);
     result = {
       map: best.name,
@@ -275,7 +278,8 @@ export function register() {
       const baked = await bakeTopDown(best.full, makeMaterialLoader(tfPath, best.full), {
         nav: data ? data.nav : (await loadNavFor(best, tfPath, popDir)).nav,
         spawns: data ? data.spawns : [],
-        tracks: data ? data.tracks : []
+        tracks: data ? data.tracks : [],
+        moverTracks: entitySimMovers(best.full)
       });
       if (baked) {
         result = { width: baked.width, height: baked.height, bounds: baked.bounds, rgba: Buffer.from(baked.rgba.buffer, baked.rgba.byteOffset, baked.rgba.byteLength) };
@@ -300,7 +304,8 @@ export function register() {
         nav: data ? data.nav : (await loadNavFor(best, tfPath, popDir)).nav,
         spawns: data ? data.spawns : [],
         tracks: data ? data.tracks : [],
-        tonemap
+        tonemap,
+        moverTracks: entitySimMovers(best.full)
       });
       if (w) {
         const buf = a => Buffer.from(a.buffer, a.byteOffset, a.byteLength);

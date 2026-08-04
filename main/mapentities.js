@@ -351,7 +351,7 @@ const BLOCKER_CLASSES = new Set(['func_brush', 'func_nav_blocker']);
 const SOLIDITY_NEVER = '1';
 const SOLIDITY_ALWAYS = '2';
 
-export function buildDoors(ents, models) {
+export function buildDoors(ents, models, movers = null) {
   const out = [];
   for (const en of ents) {
     const raw = String(en.model || '');
@@ -359,7 +359,7 @@ export function buildDoors(ents, models) {
     const mi = parseInt(raw.slice(1), 10);
     const model = models[mi];
     if (!model) continue;
-    const door = doorRecord(en, model, mi);
+    const door = movers ? movers.get(mi) || null : doorRecord(en, model, mi);
     if (!door) continue;
     const eo = vec(en.origin) || [0, 0, 0];
     out.push({
@@ -620,7 +620,7 @@ function truthy(...values) {
   return false;
 }
 
-export function extractMapEntities(ents, models) {
+export function extractMapEntities(ents, models, movers = null) {
   const brushBox = en => {
     const m = models[parseInt(String(en.model || '').slice(1), 10)];
     if (!m) return null;
@@ -727,7 +727,7 @@ export function extractMapEntities(ents, models) {
   const prerequisites = buildPrerequisites(ents, brushBox);
   const prereqNames = new Set(prerequisites.map(p => p.name).filter(Boolean));
   const graph = entityOutputs(ents);
-  const doors = buildDoors(ents, models);
+  const doors = buildDoors(ents, models, movers);
   const doorNames = new Set(doors.map(d => d.name).filter(Boolean));
   const blockers = buildBlockers(ents, brushBox);
   const blockerNames = new Set(blockers.map(b => b.name).filter(Boolean));

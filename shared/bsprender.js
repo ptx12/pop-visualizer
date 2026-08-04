@@ -122,7 +122,8 @@ export function extractWorldFaces(bspPath, opts = {}) {
   const points = [...(opts.spawns || []).map(s => s.origin), ...(opts.tracks || []).map(t => t.origin)];
   const ceilAt = buildNavCeil(opts.nav, points);
   const cull = ceilAt ? (cx, cy) => !ceilAt.inBounds(cx, cy) : null;
-  const { faces, bounds, movers } = extractFaces(bspPath, cull, { keepAll: true, lightmap: true, movers: true });
+  const { faces, bounds, movers } = extractFaces(bspPath, cull,
+    { keepAll: true, lightmap: true, movers: true, moverTracks: opts.moverTracks || null });
   if (!faces.length || !bounds) return null;
 
   const atlas = packLightmaps(faces);
@@ -315,7 +316,7 @@ export function extractFaces(bspPath, cull = null, opts = {}) {
   const faceMover = new Int32Array(numFaces).fill(-1);
   let movers = [];
   try {
-    const { models, drawn, xform, doors, doorOf } = brushModelDrawn(bspPath);
+    const { models, drawn, xform, doors, doorOf } = brushModelDrawn(bspPath, opts.moverTracks || null);
     movers = doors;
     if (models.length > 1) {
       faceDrawn.fill(0);
@@ -625,7 +626,7 @@ export async function bakeTopDown(bspPath, loadTexture, opts = {}) {
   const clearance = Number.isFinite(opts.roofClearance) ? opts.roofClearance : ROOF_CLEARANCE;
   const cull = ceilAt ? (cx, cy) => !ceilAt.inBounds(cx, cy) : null;
   const roof = ceilAt ? { at: ceilAt, clearance } : null;
-  const { faces, bounds } = extractFaces(bspPath, cull);
+  const { faces, bounds } = extractFaces(bspPath, cull, { moverTracks: opts.moverTracks || null });
   if (!faces.length || !bounds) return null;
 
   const lums = [];

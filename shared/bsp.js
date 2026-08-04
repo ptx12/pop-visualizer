@@ -506,7 +506,7 @@ export function doorRecord(e, model, mi, vec3 = defaultVec3) {
   };
 }
 
-export function brushModelDrawn(bspPath) {
+export function brushModelDrawn(bspPath, movers = null) {
   const models = readModels(bspPath);
   const drawn = new Uint8Array(models.length);
   const xform = new Array(models.length).fill(null);
@@ -536,7 +536,7 @@ export function brushModelDrawn(bspPath) {
     const a = vec3(e.angles);
     const m = angleRotation(a[0], a[1], a[2]);
     if (m || o[0] || o[1] || o[2]) xform[mi] = { o, m };
-    const door = doorRecord(e, models[mi], mi, vec3);
+    const door = movers ? movers.get(mi) || null : doorRecord(e, models[mi], mi, vec3);
     if (door) { doorOf[mi] = doors.length; doors.push(door); }
   }
   return { models, drawn, xform, doors, doorOf };
