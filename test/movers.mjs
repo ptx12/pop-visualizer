@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
-import { loadEntitySim, entitySimMovers } from '../shared/entssim.js';
-import { readEntityLump, parseEntities, readModels, doorRecord } from '../shared/bsp.js';
+import { loadEntitySim, entitySimMovers, entitySimPathChain } from '../shared/entssim.js';
+import { readEntityLump, parseEntities, readModels, doorRecord, pathTracks, chainLength } from '../shared/bsp.js';
 
 let pass = 0, fail = 0;
 const check = (name, cond, detail) => {
@@ -40,6 +40,7 @@ function moveDirVector(s) {
 let totalMovers = 0, uniform = 0, durationExact = 0, spawnPoseMatches = 0;
 let lipCorrected = 0, lipCases = 0;
 const templatePhantoms = [];
+let chainsChecked = 0, chainsAgree = 0, linkedBothWays = 0, linkedNodes = 0, forwardLinks = 0;
 
 for (const map of maps) {
   const bspPath = `${MAPS_DIR}/${map}.bsp`;
@@ -95,6 +96,23 @@ for (const map of maps) {
   const lookup = entitySimMovers(bspPath);
   check(`${map} exposes its movers by brush model index`,
     !!lookup && movers.every(m => lookup.get(m.model) === m));
+
+  const jsTracks = pathTracks(ents);
+  for (const [name] of jsTracks) {
+    const a = chainLength(jsTracks, name);
+    const b = entitySimPathChain(bspPath, name);
+    if (!a || !b) continue;
+    chainsChecked++;
+    if (a.distance === b.distance && a.nodes === b.nodes &&
+        a.endNode.toLowerCase() === b.endNode.toLowerCase()) chainsAgree++;
+  }
+  for (const node of sim.paths.values()) {
+    linkedNodes++;
+    if (node.next < 0) continue;
+    forwardLinks++;
+    const next = sim.paths.get(node.next);
+    if (next && next.prev === node.index) linkedBothWays++;
+  }
 }
 
 check('the stock maps have movers to check', totalMovers > 0, totalMovers + ' movers');
@@ -108,6 +126,13 @@ check('linear travel carries the engine bbox correction CBaseDoor::Spawn applies
   lipCases > 0 && lipCorrected === lipCases, `${lipCorrected}/${lipCases}`);
 check('doors that only exist as point_template sources are not reported as movers',
   templatePhantoms.length > 0, templatePhantoms.join(', ') || 'none found');
+
+check('CPathTrack::Link built a real path graph', linkedNodes > 0, linkedNodes + ' nodes');
+check('every forward link has the matching back link Link() sets',
+  forwardLinks > 0 && linkedBothWays === forwardLinks,
+  `${linkedBothWays}/${forwardLinks} linked pairs`);
+check('the real path graph gives the same chain lengths as the entity lump',
+  chainsChecked > 0 && chainsAgree === chainsChecked, `${chainsAgree}/${chainsChecked}`);
 
 const decoy = maps.includes('mvm_decoy') ? await loadEntitySim(`${MAPS_DIR}/mvm_decoy.bsp`, 'mvm_decoy') : null;
 if (decoy) {

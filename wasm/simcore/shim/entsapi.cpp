@@ -5,6 +5,7 @@
 #include "edict.h"
 #include "igamesystem.h"
 #include "gameinterface.h"
+#include "pathtrack.h"
 
 #include <emscripten/emscripten.h>
 #include <stdlib.h>
@@ -74,6 +75,16 @@ static int SimEntityCount()
 	return s_EntityIndex.Count();
 }
 
+static void SimActivateEntities()
+{
+	for ( CBaseEntity *pClass = gEntList.FirstEnt(); pClass != NULL; pClass = gEntList.NextEnt( pClass ) )
+	{
+		if ( pClass && !pClass->IsDormant() )
+			pClass->Activate();
+	}
+	SimInvalidateIndex();
+}
+
 extern "C" {
 
 EMSCRIPTEN_KEEPALIVE void *sim_ents_alloc( int size )
@@ -119,6 +130,7 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_load_lump( const char *pLump, int length )
 
 	SimInvalidateIndex();
 	MapEntity_ParseAllEntities( s_pEntityLump, NULL, false );
+	SimActivateEntities();
 
 	return SimEntityCount();
 }
@@ -141,6 +153,7 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_reset()
 	gpGlobals->curtime = 0.0f;
 
 	MapEntity_ParseAllEntities( s_pEntityLump, NULL, false );
+	SimActivateEntities();
 
 	return SimEntityCount();
 }
@@ -361,6 +374,83 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_fire_input_index( int index, const char *pInpu
 
 	g_EventQueue.AddEvent( pEnt, pInput, value, delay, NULL, NULL );
 	return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_ents_handle( int index )
+{
+	CBaseEntity *pEnt = SimEntityByIndex( index );
+	return pEnt ? pEnt->GetRefEHandle().ToInt() : -1;
+}
+
+static CBaseEntity *SimEntityByHandle( int handle )
+{
+	if ( handle < 0 )
+		return NULL;
+	return gEntList.GetBaseEntity( CBaseHandle::UnsafeFromIndex( handle ) );
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_ents_pose_handle( int handle, float *pOut )
+{
+	CBaseEntity *pEnt = SimEntityByHandle( handle );
+	if ( !pEnt || !pOut )
+		return 0;
+
+	const Vector &vecOrigin = pEnt->GetAbsOrigin();
+	const QAngle &angles = pEnt->GetAbsAngles();
+	pOut[ 0 ] = vecOrigin.x; pOut[ 1 ] = vecOrigin.y; pOut[ 2 ] = vecOrigin.z;
+	pOut[ 3 ] = angles.x; pOut[ 4 ] = angles.y; pOut[ 5 ] = angles.z;
+	return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_ents_fire_input_handle( int handle, const char *pInput, const char *pParam, float delay )
+{
+	CBaseEntity *pEnt = SimEntityByHandle( handle );
+	if ( !pEnt || !pInput )
+		return 0;
+
+	variant_t value;
+	if ( pParam && pParam[ 0 ] )
+		value.SetString( MAKE_STRING( pParam ) );
+
+	g_EventQueue.AddEvent( pEnt, pInput, value, delay, NULL, NULL );
+	return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_ents_index_of( CBaseEntity *pEnt )
+{
+	if ( !pEnt )
+		return -1;
+	SimRebuildIndex();
+	for ( int i = 0; i < s_EntityIndex.Count(); ++i )
+	{
+		if ( s_EntityIndex[ i ] == pEnt )
+			return i;
+	}
+	return -1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_ents_path_link( int index, int which )
+{
+	CBaseEntity *pEnt = SimEntityByIndex( index );
+	CPathTrack *pPath = dynamic_cast< CPathTrack * >( pEnt );
+	if ( !pPath )
+		return -1;
+
+	CPathTrack *pLink = NULL;
+	if ( which == 0 )
+		pLink = pPath->GetNext();
+	else if ( which == 1 )
+		pLink = pPath->GetPrevious();
+	else
+		pLink = pPath->m_paltpath;
+
+	return sim_ents_index_of( pLink );
+}
+
+EMSCRIPTEN_KEEPALIVE float sim_ents_path_radius( int index )
+{
+	CPathTrack *pPath = dynamic_cast< CPathTrack * >( SimEntityByIndex( index ) );
+	return pPath ? pPath->GetRadius() : 0.0f;
 }
 
 EMSCRIPTEN_KEEPALIVE int sim_ents_accepts_input( int index, const char *pInput )

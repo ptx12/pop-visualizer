@@ -14,7 +14,7 @@ import { extractMapEntities } from './mapentities.js';
 import { rankNavCandidates, nearNavNames } from '../shared/navpick.js';
 import { flushGameFS, setExtraAssetRoots, getExtraAssetRoots } from '../shared/gamefs.js';
 import { readTonemapSettings, tonemapWithDefaults } from '../shared/tonemap.js';
-import { loadEntitySim, entitySimMovers, flushEntitySims } from '../shared/entssim.js';
+import { loadEntitySim, entitySimMovers, entitySimPathChain, flushEntitySims } from '../shared/entssim.js';
 
 const bspTrackCache = lru(24);
 const mapDataCache = lru(12);
@@ -225,17 +225,19 @@ export function register() {
     if (!tfPath) return null;
     const best = await findBSPFor(popName, tfPath, popDir);
     if (!best) return null;
-    const tracks = bspTracksFor(best.full);
-    if (!tracks) return { map: best.name, results: {}, unreadable: true };
+    const sim = await loadEntitySim(best.full, best.name);
+    const tracks = sim ? null : bspTracksFor(best.full);
+    if (!sim && !tracks) return { map: best.name, results: {}, unreadable: true };
+    const chain = name => (sim ? entitySimPathChain(best.full, name) : chainLength(tracks, name));
     const results = {};
     for (const rawStart of starts || []) {
       const start = String(rawStart).toLowerCase();
       let matched = start;
-      let r = chainLength(tracks, start);
+      let r = chain(start);
       if (!r) {
         const alt = start.replace(/_([a-z])(\d+)$/, '_$2');
         if (alt !== start) {
-          r = chainLength(tracks, alt);
+          r = chain(alt);
           if (r) matched = alt;
         }
       }

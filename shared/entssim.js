@@ -158,13 +158,42 @@ function describeMotion(track) {
 export async function loadEntitySim(bspPath, mapName) {
   if (cache.has(bspPath)) return cache.get(bspPath);
   const result = await buildEntitySim(bspPath, mapName);
-  if (result) result.movers = result.moverTracks();
+  if (result) {
+    result.movers = result.moverTracks();
+    result.paths = result.pathGraph();
+  }
   cache.set(bspPath, result);
   return result;
 }
 
 export function getEntitySim(bspPath) {
   return cache.get(bspPath) || null;
+}
+
+export function entitySimPathChain(bspPath, startName) {
+  const sim = cache.get(bspPath);
+  if (!sim || !sim.paths || !sim.paths.size) return null;
+  const wanted = String(startName || '').toLowerCase();
+  let node = null;
+  for (const n of sim.paths.values()) {
+    if (n.name.toLowerCase() === wanted) { node = n; break; }
+  }
+  if (!node) return null;
+
+  const seen = new Set([node.index]);
+  let distance = 0;
+  let count = 1;
+  let last = node;
+  while (last.next >= 0 && !seen.has(last.next)) {
+    const next = sim.paths.get(last.next);
+    if (!next) break;
+    seen.add(next.index);
+    distance += Math.hypot(next.origin[0] - last.origin[0], next.origin[1] - last.origin[1],
+      next.origin[2] - last.origin[2]);
+    last = next;
+    count++;
+  }
+  return { distance: Math.round(distance), nodes: count, endNode: last.name };
 }
 
 export function entitySimMovers(bspPath) {
@@ -239,6 +268,10 @@ async function buildEntitySim(bspPath, mapName) {
     if (!ex.sim_ents_pose(index, outPose)) return [0, 0, 0, 0, 0, 0];
     return Array.from(new Float32Array(ex.memory.buffer, outPose, 6));
   };
+  const poseOf = handle => {
+    if (!ex.sim_ents_pose_handle(handle, outPose)) return null;
+    return Array.from(new Float32Array(ex.memory.buffer, outPose, 6));
+  };
 
   const sim = {
     map: name,
@@ -306,23 +339,59 @@ async function buildEntitySim(bspPath, mapName) {
         surface: host.cstr(ex.sim_ents_trace_surface())
       };
     },
-    moverTracks() { return sampleMovers(sim, ex, pose); }
+    handle(index) { return ex.sim_ents_handle(index); },
+    poseOf,
+    fireInputOn(handle, input, param, delay = 0) {
+      return ex.sim_ents_fire_input_handle(handle, host.push(input),
+        param ? host.push(param) : 0, delay) === 1;
+    },
+    findByModel(model) {
+      const n = ex.sim_ents_count();
+      for (let i = 0; i < n; i++) {
+        if (host.cstr(ex.sim_ents_model(i)) === model) return i;
+      }
+      return -1;
+    },
+    moverTracks() { return sampleMovers(sim, ex, pose); },
+    pathGraph() {
+      const nodes = new Map();
+      const n = ex.sim_ents_count();
+      for (let i = 0; i < n; i++) {
+        if (host.cstr(ex.sim_ents_classname(i)) !== 'path_track') continue;
+        const e = sim.entity(i);
+        nodes.set(i, {
+          index: i,
+          name: e.targetname,
+          origin: e.origin,
+          radius: ex.sim_ents_path_radius(i),
+          next: ex.sim_ents_path_link(i, 0),
+          prev: ex.sim_ents_path_link(i, 1),
+          alt: ex.sim_ents_path_link(i, 2)
+        });
+      }
+      return nodes;
+    }
   };
 
   return sim;
 }
 
-function sampleOne(sim, ex, pose, index, input) {
+function sampleOne(sim, ex, model, input) {
   sim.reset();
-  const start = pose(index);
-  if (!sim.fireInput(index, input)) return null;
+  const index = sim.findByModel(model);
+  if (index < 0) return null;
+  const handle = sim.handle(index);
+  const start = sim.poseOf(handle);
+  if (!start) return null;
+  if (!sim.fireInputOn(handle, input)) return null;
 
   const track = [{ t: ex.sim_ents_curtime(), pose: start }];
   let still = 0;
   let moved = false;
   for (let f = 0; f < MAX_SAMPLE_FRAMES; f++) {
     sim.frame();
-    const p = pose(index);
+    const p = sim.poseOf(handle);
+    if (!p) break;
     const last = track[track.length - 1].pose;
     if (poseEqual(p, last)) {
       if (moved && ++still >= SETTLE_FRAMES) break;
@@ -351,17 +420,20 @@ function sampleMovers(sim, ex, pose) {
   }
 
   for (const entity of movers) {
+    entity.openInputs = OPEN_INPUTS.filter(i => sim.acceptsInput(entity.index, i));
+    entity.closeInputs = CLOSE_INPUTS.filter(i => sim.acceptsInput(entity.index, i));
+  }
+
+  for (const entity of movers) {
     let track = null;
     let opened = true;
-    for (const input of OPEN_INPUTS) {
-      if (!sim.acceptsInput(entity.index, input)) continue;
-      track = sampleOne(sim, ex, pose, entity.index, input);
+    for (const input of entity.openInputs) {
+      track = sampleOne(sim, ex, entity.model, input);
       if (track) break;
     }
     if (!track) {
-      for (const input of CLOSE_INPUTS) {
-        if (!sim.acceptsInput(entity.index, input)) continue;
-        track = sampleOne(sim, ex, pose, entity.index, input);
+      for (const input of entity.closeInputs) {
+        track = sampleOne(sim, ex, entity.model, input);
         if (track) { opened = false; break; }
       }
     }
