@@ -3,6 +3,7 @@
 #include "enginecallback.h"
 #include "networkstringtable_gamedll.h"
 #include "physics_shared.h"
+#include "nav_mesh.h"
 #include "utlvector.h"
 
 #include <stdlib.h>
@@ -172,6 +173,7 @@ extern IResponseSystem *g_pResponseSystem;
 INetworkStringTableContainer *SimEngine_StringTables();
 void SimEngine_InstallTrace();
 IPhysicsObjectPairHash *SimEngine_CreateObjectPairHash();
+ICvar *SimEngine_CreateCvar();
 extern IPhysicsObjectPairHash *g_EntityCollisionHash;
 
 extern ISoundEmitterSystemBase *soundemitterbase;
@@ -190,9 +192,6 @@ void SimEngine_InstallDefaults()
 	g_pVoiceServer = &s_VoiceServer;
 	networkstringtable = SimEngine_StringTables();
 	scriptmanager = &s_ScriptManager;
-	lagcompensation = &s_LagCompensation;
-	te = &s_TempEnts;
-	g_pResponseSystem = &s_ResponseSystem;
 	scenefilecache = &s_SceneFileCache;
 	g_pFullFileSystem = &s_FileSystem;
 	filesystem = &s_FileSystem;
@@ -200,6 +199,10 @@ void SimEngine_InstallDefaults()
 	physprops = &s_PhysicsSurfaceProps;
 	physenv = &s_PhysicsEnvironment;
 	g_EntityCollisionHash = SimEngine_CreateObjectPairHash();
+	g_pCVar = SimEngine_CreateCvar();
+	ConVar_Register();
+	if ( !TheNavMesh )
+		TheNavMesh = NavMeshFactory();
 }
 
 void SimEngine_SetStudioHdr( const char *pModelName, void *pData )

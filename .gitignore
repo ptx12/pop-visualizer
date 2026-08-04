@@ -13,3 +13,4 @@ docs/*.md
 
 test/.fixture*
 test/.entities_named.mjs
+__pycache__/

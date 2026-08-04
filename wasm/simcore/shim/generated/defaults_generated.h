@@ -24,6 +24,7 @@
 #include "scenefilecache/ISceneFileCache.h"
 #include "filesystem.h"
 #include "vphysics_interface.h"
+#include "icvar.h"
 
 class CSimDefault_IMDLCache : public IMDLCache
 {
@@ -643,6 +644,45 @@ public:
 	IPhysicsObject * UnserializeObjectFromBuffer( void *pGameData, unsigned char *pBuffer, unsigned int bufferSize, bool enableCollisions ) override { return 0; }
 	void EnableConstraintNotify( bool bEnable ) override {  }
 	void DebugCheckContacts( void ) override {  }
+};
+class CSimDefault_ICvar : public ICvar
+{
+public:
+	bool Connect( CreateInterfaceFn factory ) override { return false; }
+	void Disconnect(  ) override {  }
+	void * QueryInterface( const char *pInterfaceName ) override { return 0; }
+	InitReturnVal_t Init(  ) override { return InitReturnVal_t(); }
+	void Shutdown(  ) override {  }
+	CVarDLLIdentifier_t AllocateDLLIdentifier(  ) override { return CVarDLLIdentifier_t(); }
+	void RegisterConCommand( ConCommandBase *pCommandBase ) override {  }
+	void UnregisterConCommand( ConCommandBase *pCommandBase ) override {  }
+	void UnregisterConCommands( CVarDLLIdentifier_t id ) override {  }
+	const char* GetCommandLineValue( const char *pVariableName ) override { return 0; }
+	ConCommandBase * FindCommandBase( const char *name ) override { return 0; }
+	const ConCommandBase * FindCommandBase( const char *name ) const override { return 0; }
+	ConVar * FindVar( const char *var_name ) override { return 0; }
+	const ConVar * FindVar( const char *var_name ) const override { return 0; }
+	ConCommand * FindCommand( const char *name ) override { return 0; }
+	const ConCommand * FindCommand( const char *name ) const override { return 0; }
+	ConCommandBase * GetCommands( void ) override { return 0; }
+	const ConCommandBase * GetCommands( void ) const override { return 0; }
+	void InstallGlobalChangeCallback( FnChangeCallback_t callback ) override {  }
+	void RemoveGlobalChangeCallback( FnChangeCallback_t callback ) override {  }
+	void CallGlobalChangeCallbacks( ConVar *var, const char *pOldString, float flOldValue ) override {  }
+	void InstallConsoleDisplayFunc( IConsoleDisplayFunc* pDisplayFunc ) override {  }
+	void RemoveConsoleDisplayFunc( IConsoleDisplayFunc* pDisplayFunc ) override {  }
+	void ConsoleColorPrintf( const Color& clr, const char *pFormat, ... ) const override {  }
+	void ConsolePrintf( const char *pFormat, ... ) const override {  }
+	void ConsoleDPrintf( const char *pFormat, ... ) const override {  }
+	void RevertFlaggedConVars( int nFlag ) override {  }
+	void InstallCVarQuery( ICvarQuery *pQuery ) override {  }
+	bool IsMaterialThreadSetAllowed(  ) const override { return false; }
+	void QueueMaterialThreadSetValue( ConVar *pConVar, const char *pValue ) override {  }
+	void QueueMaterialThreadSetValue( ConVar *pConVar, int nValue ) override {  }
+	void QueueMaterialThreadSetValue( ConVar *pConVar, float flValue ) override {  }
+	bool HasQueuedMaterialThreadConVarSets(  ) const override { return false; }
+	int ProcessQueuedMaterialThreadConVarSets(  ) override { return int(); }
+	ICVarIteratorInternal * FactoryInternalIterator( void ) override { return 0; }
 };
 
 #endif

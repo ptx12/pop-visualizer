@@ -1,0 +1,6 @@
+#ifndef SIMCORE_PROTOBUF_CONFIG_H
+#define SIMCORE_PROTOBUF_CONFIG_H
+
+#define HAVE_PTHREAD 1
+
+#endif

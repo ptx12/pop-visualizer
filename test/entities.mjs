@@ -42,7 +42,16 @@ function fdWrite(fd, iov, iovcnt, pnum) {
 }
 
 const mod = await WebAssembly.instantiate(readFileSync(wasmPath), {
-  env: { emscripten_notify_memory_growth: () => {} },
+  env: {
+      emscripten_notify_memory_growth: () => {},
+      __syscall_getcwd(buf, size) {
+        if (!buf || size < 2) return -34;
+        const bytes = new Uint8Array(ex.memory.buffer);
+        bytes[buf] = 47;
+        bytes[buf + 1] = 0;
+        return 2;
+      },
+    },
   wasi_snapshot_preview1: {
     proc_exit: () => {}, fd_write: fdWrite, fd_close: () => 0, fd_seek: () => 0,
     environ_sizes_get: () => 0, environ_get: () => 0, clock_time_get: () => 0,
@@ -161,9 +170,20 @@ for (let i = 0; i < count; i++) {
 
 check('worldspawn exists exactly once', byClass.get('worldspawn') === 1,
   String(byClass.get('worldspawn')));
-check('the engine creates its own entities alongside the map', byClass.has('soundent') && byClass.has('player_manager'),
+check('the engine creates its own entities alongside the map',
+  byClass.has('soundent') && (byClass.has('tf_player_manager') || byClass.has('player_manager')),
   [...byClass.keys()].join(', '));
 check('entities carry targetnames from the lump', names.size > 5, names.size + ' named');
+
+const MVM_CLASSES = ['tf_gamerules', 'info_populator', 'tf_logic_mann_vs_machine', 'tf_objective_resource',
+  'info_player_teamspawn', 'func_capturezone', 'item_teamflag'];
+const missingMvm = MVM_CLASSES.filter(c => !byClass.has(c));
+check('the mann vs machine entities spawn from the real TF classes', missingMvm.length === 0,
+  missingMvm.join(', ') || 'all present');
+
+const hintClasses = [...byClass.keys()].filter(c => c.startsWith('bot_hint_') || c.startsWith('func_nav_') || c === 'func_tfbot_hint');
+check('bot hint and nav entities spawn instead of failing to resolve', hintClasses.length > 0,
+  hintClasses.join(', '));
 
 const distinct = byClass.size;
 console.log(`  distinct classnames: ${distinct}`);

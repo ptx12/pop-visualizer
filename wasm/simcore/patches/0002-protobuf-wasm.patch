@@ -1,0 +1,11 @@
+diff --git a/src/thirdparty/protobuf-2.6.1/src/google/protobuf/stubs/atomicops.h b/src/thirdparty/protobuf-2.6.1/src/google/protobuf/stubs/atomicops.h
+--- a/src/thirdparty/protobuf-2.6.1/src/google/protobuf/stubs/atomicops.h
++++ b/src/thirdparty/protobuf-2.6.1/src/google/protobuf/stubs/atomicops.h
+@@ -216,7 +216,7 @@
+
+ // On some platforms we need additional declarations to make AtomicWord
+ // compatible with our other Atomic* types.
+-#if defined(GOOGLE_PROTOBUF_OS_APPLE)
++#if defined(GOOGLE_PROTOBUF_OS_APPLE) || defined(__wasm32__)
+ #include <google/protobuf/stubs/atomicops_internals_atomicword_compat.h>
+ #endif

@@ -58,6 +58,13 @@ function makeHost() {
       clock_time_get: () => 0
     }
   };
+  imports.env.__syscall_getcwd = (buf, size) => {
+    if (!buf || size < 2) return -34;
+    const bytes = new Uint8Array(ex.memory.buffer);
+    bytes[buf] = 47;
+    bytes[buf + 1] = 0;
+    return 2;
+  };
   return {
     imports,
     spew,

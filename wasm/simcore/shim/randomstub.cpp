@@ -130,44 +130,58 @@ float CGaussianRandomStream::RandomFloat( float flMean, float flStdDev )
 	return ( m_flRandomValue * flStdDev ) + flMean;
 }
 
-static CUniformRandomStream s_UniformStream;
-static CGaussianRandomStream s_GaussianStream( &s_UniformStream );
-static IUniformRandomStream *s_pUniformStream = &s_UniformStream;
+static CUniformRandomStream &DefaultUniformStream()
+{
+	static CUniformRandomStream s_UniformStream;
+	return s_UniformStream;
+}
+
+static CGaussianRandomStream &DefaultGaussianStream()
+{
+	static CGaussianRandomStream s_GaussianStream( &DefaultUniformStream() );
+	return s_GaussianStream;
+}
+
+static IUniformRandomStream *&ActiveUniformStream()
+{
+	static IUniformRandomStream *s_pUniformStream = &DefaultUniformStream();
+	return s_pUniformStream;
+}
 
 void RandomSeed( int iSeed )
 {
-	s_pUniformStream->SetSeed( iSeed );
+	ActiveUniformStream()->SetSeed( iSeed );
 }
 
 float RandomFloat( float flMinVal, float flMaxVal )
 {
-	return s_pUniformStream->RandomFloat( flMinVal, flMaxVal );
+	return ActiveUniformStream()->RandomFloat( flMinVal, flMaxVal );
 }
 
 float RandomFloatExp( float flMinVal, float flMaxVal, float flExponent )
 {
-	return s_pUniformStream->RandomFloatExp( flMinVal, flMaxVal, flExponent );
+	return ActiveUniformStream()->RandomFloatExp( flMinVal, flMaxVal, flExponent );
 }
 
 int RandomInt( int iMinVal, int iMaxVal )
 {
-	return s_pUniformStream->RandomInt( iMinVal, iMaxVal );
+	return ActiveUniformStream()->RandomInt( iMinVal, iMaxVal );
 }
 
 float RandomGaussianFloat( float flMean, float flStdDev )
 {
-	return s_GaussianStream.RandomFloat( flMean, flStdDev );
+	return DefaultGaussianStream().RandomFloat( flMean, flStdDev );
 }
 
 void InstallUniformRandomStream( IUniformRandomStream *pStream )
 {
-	s_pUniformStream = pStream ? pStream : &s_UniformStream;
-	s_GaussianStream.AttachToStream( s_pUniformStream );
+	ActiveUniformStream() = pStream ? pStream : &DefaultUniformStream();
+	DefaultGaussianStream().AttachToStream( ActiveUniformStream() );
 }
 
 extern IUniformRandomStream *random_valve;
 
 static struct CSimRandomInstaller
 {
-	CSimRandomInstaller() { random_valve = &s_UniformStream; }
+	CSimRandomInstaller() { random_valve = &DefaultUniformStream(); }
 } s_SimRandomInstaller;

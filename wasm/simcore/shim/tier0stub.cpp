@@ -77,7 +77,6 @@ IMemAlloc *g_pMemAlloc = &g_SimMemAlloc;
 #include "edict.h"
 
 #include "server_class.h"
-ServerClass *g_pServerClassHead = 0;
 
 #include "engine/IVModelInfo.h"
 

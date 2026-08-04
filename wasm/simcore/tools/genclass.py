@@ -27,6 +27,7 @@ HEADERS = [
     "scenefilecache/ISceneFileCache.h",
     "filesystem.h",
     "vphysics_interface.h",
+    "icvar.h",
 ]
 
 DEFAULT_TARGETS = [
@@ -51,6 +52,7 @@ DEFAULT_TARGETS = [
     "IPhysicsCollision",
     "IPhysicsSurfaceProps",
     "IPhysicsEnvironment",
+    "ICvar",
 ]
 
 ENGINE_SKIP = {
@@ -156,11 +158,63 @@ def match_open_paren(decl, close):
     return -1
 
 
+def strip_nested_classes(body):
+    out = []
+    i = 0
+    pat = re.compile(r"\b(?:class|struct|union)\b[^{;]*\{")
+    while True:
+        m = pat.search(body, i)
+        if not m:
+            out.append(body[i:])
+            break
+        out.append(body[i:m.start()])
+        depth = 0
+        j = m.end() - 1
+        while j < len(body):
+            if body[j] == "{":
+                depth += 1
+            elif body[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    j += 1
+                    break
+            j += 1
+        while j < len(body) and body[j].isspace():
+            j += 1
+        if j < len(body) and body[j] == ";":
+            j += 1
+        i = j
+    return "".join(out)
+
+
+def strip_attributes(decl):
+    while True:
+        at = decl.find("__attribute__")
+        if at < 0:
+            return decl
+        i = decl.find("(", at)
+        if i < 0:
+            return decl[:at].strip()
+        depth = 0
+        j = i
+        while j < len(decl):
+            if decl[j] == "(":
+                depth += 1
+            elif decl[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    j += 1
+                    break
+            j += 1
+        decl = (decl[:at] + " " + decl[j:]).strip()
+
+
 def parse_methods(body):
+    body = strip_nested_classes(body)
     body = re.sub(r"\s+", " ", body)
     found = []
     for m in re.finditer(r"\bvirtual\s+(.+?)\s*=\s*0\s*;", body):
-        decl = m.group(1).strip()
+        decl = strip_attributes(m.group(1).strip())
         inner = None
         for extra in re.finditer(r"\bvirtual\s+", decl):
             inner = extra.end()
