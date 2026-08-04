@@ -10,3 +10,6 @@ rust/target/
 rust/*/target/
 wasm/*/build/
 docs/*.md
+
+test/.fixture*
+test/.entities_named.mjs
