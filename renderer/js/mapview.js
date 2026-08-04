@@ -690,7 +690,7 @@ function buildGateHUD(mapData, wave, ai, bspPath) {
   if (!gates.length) return null;
   const gatebots = wave ? (wave.gatebotCount || 0) : 0;
   const live = (ai && ai.gates) || [];
-  const stateOf = g => live.find(x => x.def && x.def.point === g.point) || null;
+  const stateOf = g => live.find(x => x.index === g.index) || null;
   const hud = el('div', { class: 'gate-hud' });
   const strip = el('div', { class: 'gate-strip' });
   const cells = [];

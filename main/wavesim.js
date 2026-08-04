@@ -141,7 +141,7 @@ function popfilesOnDisk(dir) {
   return out;
 }
 
-export async function simulateWave({ bspPath, mapName, popShortName, popPath, popDir, waveIndex = 0, seconds = 120, killPoints = [], extraEntities = [], engineers = [], tfPath }) {
+export async function simulateWave({ bspPath, mapName, popShortName, popPath, popDir, waveIndex = 0, seconds = 120, killPoints = [], extraEntities = [], engineers = [], cvars = {}, tfPath }) {
   const resolvedTF = tfPath || await (await import('./tfpath.js')).detectTFPath();
   if (!resolvedTF) return { actors: [], end: 0, note: 'Team Fortress 2 was not found.' };
   if (!fs.existsSync(bspPath)) return { actors: [], end: 0, note: 'The map bsp was not found.' };
@@ -237,6 +237,14 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
   ex.sim_ents_full_frame(1);
   ex.sim_bots_add(push('red'), push('scout'));
 
+  const cvarsApplied = {};
+  if (typeof ex.sim_cvar_set === 'function') {
+    for (const [name, value] of Object.entries(cvars || {})) {
+      if (value === undefined || value === null) continue;
+      if (ex.sim_cvar_set(push(name), push(String(value))) === 1) cvarsApplied[name] = String(value);
+    }
+  }
+
   const MISSION_ENGINEER = 5;
   const TF_TEAM_PVE_INVADERS = 3;
   const engineerSpots = (engineers || []).filter(e => Array.isArray(e) && e.length >= 3 && e.every(v => Number.isFinite(v)));
@@ -271,6 +279,8 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
   const tankOut = ex.sim_ents_alloc(16 * 9 * 4);
   const objOut = ex.sim_ents_alloc(32 * 8 * 4);
   const buildings = new Map();
+  const pointOut = ex.sim_ents_alloc(16 * 4 * 4);
+  const points = new Map();
   const actors = new Map();
   const limit = Math.round(Math.min(Math.max(seconds, 10), MAX_SECONDS) / TICK_INTERVAL);
 
@@ -343,6 +353,28 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
       }
     }
 
+    if (typeof ex.sim_points_state === 'function') {
+      const pc = ex.sim_points_state(pointOut, 16);
+      const pf = new Float32Array(ex.memory.buffer, pointOut, pc * 4);
+      for (let i = 0; i < pc; i++) {
+        const q = pf.subarray(i * 4, i * 4 + 4);
+        const idx = q[0] | 0;
+        let rec = points.get(idx);
+        if (!rec) {
+          rec = { index: idx, owner: q[1] | 0, startOwner: q[1] | 0, maxProgress: 0, capturedAt: null, capturedBy: 0 };
+          points.set(idx, rec);
+        }
+        rec.maxProgress = Math.max(rec.maxProgress, q[2]);
+        if (q[1] !== rec.owner) {
+          rec.owner = q[1] | 0;
+          if (rec.capturedAt === null && rec.owner !== rec.startOwner) {
+            rec.capturedAt = t;
+            rec.capturedBy = rec.owner;
+          }
+        }
+      }
+    }
+
     if (typeof ex.sim_objects_state === 'function') {
       const objCount = ex.sim_objects_state(objOut, 32);
       const of = new Float32Array(ex.memory.buffer, objOut, objCount * 8);
@@ -405,6 +437,14 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
       if (ex.sim_bots_has_flag(index) === 1) {
         a.carriedBomb = true;
         if (a.bombT == null) a.bombT = t;
+        const prev = a.track.length ? a.track[a.track.length - 1] : null;
+        if (prev && a.wasCarrying) {
+          a.carryDist = (a.carryDist || 0) + Math.hypot(b[1] - prev[1], b[2] - prev[2], b[3] - prev[3]);
+          a.carryTime = (a.carryTime || 0) + (t - prev[0]);
+        }
+        a.wasCarrying = true;
+      } else {
+        a.wasCarrying = false;
       }
       a.track.push([t, b[1], b[2], b[3], b[5]]);
       a.lastT = t;
@@ -451,7 +491,9 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
   for (const a of list) {
     if (!Number.isFinite(a.dieT)) a.dieT = a.lastT < end - gone ? a.lastT : Infinity;
     a.state = Number.isFinite(a.dieT) ? 'died' : 'active';
+    if (a.carryTime > 0) a.carrySpeed = a.carryDist / a.carryTime;
     delete a.lastT;
+    delete a.wasCarrying;
   }
 
   const waveSpawns = [];
@@ -511,8 +553,10 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
     tracked: actors.size,
     killZones: zones.length,
     navStats,
+    cvars: cvarsApplied,
     bombs,
     buildings: [...buildings.values()],
+    gates: [...points.values()],
     engineers: { requested: engineerSpots.length, spawned: engineerIndices.length, nests: engineerNests, teleportWhere: invaderSpawn },
     bomb: bombLog.length ? { log: bombLog, maxLevel: 3, deliveredAt } : null,
     note: list.length ? null : 'The wave produced no robots in the simulated window.'
@@ -541,6 +585,7 @@ export async function register() {
         seconds: o.seconds || 120,
         killPoints: o.killPoints,
         engineers: o.engineers,
+        cvars: o.cvars,
         tfPath
       });
     } catch (err) {

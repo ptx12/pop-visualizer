@@ -732,6 +732,31 @@ EMSCRIPTEN_KEEPALIVE int sim_bots_add_at( const char *pTeam, const char *pClass,
 	return pBot->entindex();
 }
 
+EMSCRIPTEN_KEEPALIVE int sim_points_count()
+{
+	return TFObjectiveResource() ? TFObjectiveResource()->GetNumControlPoints() : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_points_state( float *pOut, int maxPoints )
+{
+	if ( !s_bInitialized || !pOut || maxPoints <= 0 || !TFObjectiveResource() )
+		return 0;
+
+	int count = TFObjectiveResource()->GetNumControlPoints();
+	if ( count > maxPoints )
+		count = maxPoints;
+
+	for ( int i = 0; i < count; i++ )
+	{
+		float *p = pOut + i * 4;
+		p[ 0 ] = (float)i;
+		p[ 1 ] = (float)TFObjectiveResource()->GetOwningTeam( i );
+		p[ 2 ] = TFObjectiveResource()->GetCPCapPercentage( i );
+		p[ 3 ] = (float)TFObjectiveResource()->GetCappingTeam( i );
+	}
+	return count;
+}
+
 EMSCRIPTEN_KEEPALIVE const char *sim_spawn_name( int team, int slot )
 {
 	if ( !s_bInitialized || slot < 0 )

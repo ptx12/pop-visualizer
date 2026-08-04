@@ -154,8 +154,19 @@ function lerpAngle(a, b, f) {
   return a + d * f;
 }
 
+function valveCvarsFor(opts) {
+  const out = {};
+  if (Number.isFinite(opts.flagCarrierPenalty) && opts.flagCarrierPenalty > 0) {
+    out.tf_mvm_bot_flag_carrier_movement_penalty = opts.flagCarrierPenalty;
+  }
+  if (Number.isFinite(opts.deployBombTime) && opts.deployBombTime > 0) {
+    out.tf_deploying_bomb_time = opts.deployBombTime;
+  }
+  return out;
+}
+
 export function createBotSim(wave, sim, mapData, opts = {}) {
-  const state = { done: false, actors: [], waveSpawns: [], end: 0, bomb: null, bombs: [], buildings: [], engineers: null, navStats: null, note: null, requested: false };
+  const state = { done: false, actors: [], waveSpawns: [], end: 0, bomb: null, bombs: [], buildings: [], gates: [], engineers: null, cvars: null, navStats: null, note: null, requested: false };
 
   const request = () => {
     state.requested = true;
@@ -174,7 +185,8 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
         .filter(kp => Array.isArray(kp) && Number.isFinite(kp[0]) && Number.isFinite(kp[1]))
         .map(kp => [kp[0], kp[1], killRadiusOf(kp)]),
       deathModel: opts.deathModel || null,
-      engineers: Array.isArray(opts.engineers) ? opts.engineers : []
+      engineers: Array.isArray(opts.engineers) ? opts.engineers : [],
+      cvars: valveCvarsFor(opts)
     }).then(res => {
       const r = res || {};
       state.actors = (r.actors || []).map(a => prepare(a, wave, opts.missions));
@@ -183,7 +195,9 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       state.bomb = r.bomb || null;
       state.bombs = r.bombs || [];
       state.buildings = r.buildings || [];
+      state.gates = r.gates || [];
       state.engineers = r.engineers || null;
+      state.cvars = r.cvars || null;
       state.navStats = r.navStats || null;
       state.note = r.note || null;
       state.done = true;
@@ -209,7 +223,9 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
         bomb: state.bomb,
         bombs: state.bombs,
         buildings: state.buildings,
+        gates: state.gates,
         engineers: state.engineers,
+        cvars: state.cvars,
         navStats: state.navStats,
         note: state.note,
         unavailable: !state.actors.length,
