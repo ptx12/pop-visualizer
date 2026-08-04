@@ -270,6 +270,7 @@ ENT_SOURCES=(
   "$HERE/shim/enginestub.cpp"
   "$HERE/shim/keyvaluesstub.cpp"
   "$HERE/shim/ssemath_wasm.cpp"
+  "$HERE/shim/entsapi.cpp"
 )
 
 EXPORTS='_sim_collision_load,_sim_collision_stats,_sim_disp_load,_sim_disp_count,_sim_trace_hull,_sim_trace_result,_sim_point_contents,_sim_alloc,_sim_free'
