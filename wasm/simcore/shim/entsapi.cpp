@@ -11,6 +11,7 @@
 
 extern CGlobalVars *gpGlobals;
 extern void Physics_RunThinkFunctions( bool simulating );
+extern void SimEngine_Init( int nMaxEdicts );
 
 static CGlobalVars s_SimGlobals( false );
 static bool s_bInitialized = false;
@@ -54,6 +55,8 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_init( float tickInterval )
 {
 	if ( s_bInitialized )
 		return 1;
+
+	SimEngine_Init( MAX_EDICTS );
 
 	gpGlobals = &s_SimGlobals;
 	gpGlobals->curtime = 0.0f;

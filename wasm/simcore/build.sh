@@ -270,6 +270,7 @@ ENT_SOURCES=(
   "$HERE/shim/enginestub.cpp"
   "$HERE/shim/keyvaluesstub.cpp"
   "$HERE/shim/ssemath_wasm.cpp"
+  "$HERE/shim/engineimpl.cpp"
   "$HERE/shim/entsapi.cpp"
 )
 
@@ -277,6 +278,8 @@ EXPORTS='_sim_collision_load,_sim_collision_stats,_sim_disp_load,_sim_disp_count
 
 mkdir -p "$OUT"
 mkdir -p "$OUT/generated"
+
+python "$HERE/tools/geniface.py" "$SDK" "$HERE/shim/generated" >/dev/null
 
 for nut in "$SDK"/game/server/*.nut; do
   base="$(basename "${nut%.nut}")"
