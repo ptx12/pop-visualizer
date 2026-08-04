@@ -179,11 +179,15 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
     return { actors: [], end: 0, note: 'The navigation mesh for ' + mapName + ' did not load.' };
   }
 
-  if (chosenShortName) ex.sim_pop_set_next(push(chosenShortName));
+  if (chosenShortName && ex.sim_pop_set_next(push(chosenShortName)) !== 1) {
+    return { actors: [], end: 0,
+      note: 'The population manager would not load ' + chosenShortName + '.pop.' };
+  }
   ex.sim_ents_full_frame(1);
   ex.sim_bots_add(push('red'), push('scout'));
 
   const out = ex.sim_ents_alloc(64 * 12 * 4);
+  const tankOut = ex.sim_ents_alloc(16 * 9 * 4);
   const actors = new Map();
   const limit = Math.round(Math.min(Math.max(seconds, 10), MAX_SECONDS) / TICK_INTERVAL);
 
@@ -242,6 +246,44 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
       a.scale = ex.sim_bots_scale(index);
       a.maxHealth = ex.sim_bots_max_health(index);
       a.isGiant = a.isGiant || ex.sim_bots_is_giant(index) === 1;
+      if (ex.sim_bots_has_flag(index) === 1) {
+        a.carriedBomb = true;
+        if (a.bombT == null) a.bombT = t;
+      }
+      a.track.push([t, b[1], b[2], b[3], b[5]]);
+      a.lastT = t;
+    }
+
+    const tanksWritten = ex.sim_tanks_state(tankOut, 16);
+    const tf = new Float32Array(ex.memory.buffer, tankOut, tanksWritten * 9);
+    for (let i = 0; i < tanksWritten; i++) {
+      const b = tf.subarray(i * 9, i * 9 + 9);
+      const entIndex = b[0];
+      const key = 'tank:' + ex.sim_tanks_handle(entIndex);
+      let a = actors.get(key);
+      if (!a) {
+        a = {
+          id: key,
+          kind: 'tank',
+          cls: null,
+          name: '',
+          wsIndex: -1,
+          wsName: '',
+          mission: 0,
+          isGiant: false,
+          scale: 1,
+          maxHealth: b[8],
+          spawnT: t,
+          dieT: Infinity,
+          track: []
+        };
+        actors.set(key, a);
+      }
+      if (a.wsIndex < 0) a.wsIndex = ex.sim_tanks_wavespawn(entIndex);
+      if (!a.pathLength) a.pathLength = ex.sim_tanks_path_length(entIndex);
+      a.health = b[7];
+      a.maxHealth = b[8];
+      a.currency = ex.sim_tanks_currency(entIndex);
       a.track.push([t, b[1], b[2], b[3], b[5]]);
       a.lastT = t;
     }

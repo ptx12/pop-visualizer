@@ -14,6 +14,14 @@
     polys: fx.mapGeo.polys, bounds: fx.mapGeo.bounds, zRange: fx.mapGeo.zRange,
     lit: fx.mapGeo.lit, data: new Uint8Array(new Float32Array(fx.mapGeo.data).buffer)
   } : null;
+  var waves = null;
+  try {
+    var wx = new XMLHttpRequest();
+    wx.open('GET', '/test/.fixture-waves.json', false);
+    wx.send(null);
+    if (wx.status === 200) waves = JSON.parse(wx.responseText);
+  } catch (err) { waves = null; }
+  window.__waves = waves;
   var nil = function () { return Promise.resolve(null); };
   window.popnative = {
     paths: function () { return Promise.resolve({ base: 'base', vanilla: 'vanilla', sep: '/', platform: 'win32' }); },
@@ -42,6 +50,16 @@
         img.onerror = function () { resolve(null); };
         img.src = '/test/.fixture-map.png';
       });
+    },
+    simulateWave: function (opts) {
+      var o = opts || {};
+      if (!waves || String(o.popName || waves.pop) !== waves.pop) {
+        return Promise.resolve({ actors: [], end: 0, note: 'No recorded run for ' + (o.popName || 'this popfile') + '.' });
+      }
+      var run = waves.runs[String(o.waveIndex || 0)];
+      if (!run) return Promise.resolve({ actors: [], end: 0, note: 'No recorded run for wave ' + ((o.waveIndex || 0) + 1) + '.' });
+      (run.actors || []).forEach(function (a) { if (a.dieT === null) a.dieT = Infinity; });
+      return Promise.resolve(run);
     },
     mapFaces3d: nil, mapProps: nil, mapLighting: nil,
     tankPath: nil, navUse: nil, mapFlush: nil, navKernel: nil,

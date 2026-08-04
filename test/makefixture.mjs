@@ -46,3 +46,24 @@ if (baked) {
 }
 writeFileSync(here + '.fixture.json', JSON.stringify(fx));
 console.log('fixture written for ' + map);
+
+const { parse } = await import('../renderer/js/kv.js');
+const { buildModel } = await import('../renderer/js/popmodel.js');
+const { simulateWave } = await import('../main/wavesim.js');
+
+const popShort = process.argv[3] || 'mvm_decoy_advanced';
+const popDir = here + '../vanilla';
+const popPath = `${popDir}/${popShort}.pop`;
+const model = buildModel(parse(readFileSync(popPath, 'utf8')), []);
+const runs = {};
+for (let i = 0; i < model.waves.length; i++) {
+  const hasTank = model.waves[i].wavespawns.some(ws => ws.isTank);
+  if (i !== 0 && !hasTank) continue;
+  const run = await simulateWave({ bspPath: bsp, mapName: map, popShortName: popShort,
+    popPath, popDir, waveIndex: i, seconds: hasTank ? 70 : 45, tfPath: TF });
+  runs[i] = run;
+  const tanks = (run.actors || []).filter(a => a.kind === 'tank').length;
+  console.log(`wave ${i + 1}: ${(run.actors || []).length} actors, ${tanks} tanks, ${run.end.toFixed(1)}s`);
+}
+writeFileSync(here + '.fixture-waves.json', JSON.stringify({ pop: popShort + '.pop', runs }));
+console.log('wave fixture written');

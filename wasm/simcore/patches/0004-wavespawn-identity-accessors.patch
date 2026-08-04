@@ -30,3 +30,20 @@ diff --git a/src/game/server/tf/player_vs_environment/tf_populators.h b/src/game
 +	CWaveSpawnPopulator *GetWaveSpawn( int index ) const { return m_waveSpawnVector.IsValidIndex( index ) ? m_waveSpawnVector[ index ] : NULL; }
 
  	void AddClassType( string_t iszClassIconName, int nCount, unsigned int iFlags );
+
+diff --git a/src/game/server/tf/player_vs_environment/tf_tank_boss.h b/src/game/server/tf/player_vs_environment/tf_tank_boss.h
+--- a/src/game/server/tf/player_vs_environment/tf_tank_boss.h
++++ b/src/game/server/tf/player_vs_environment/tf_tank_boss.h
+@@ -42,6 +42,7 @@
+ 	void SetWaveSpawnPopulator( CWaveSpawnPopulator *pWave ){ m_pWaveSpawnPopulator = pWave; }
++	CWaveSpawnPopulator *GetWaveSpawnPopulator( void ) const { return m_pWaveSpawnPopulator; }
+
+ 	virtual int GetCurrencyValue( void );
++	float GetTotalPathDistance( void ) const { return m_fTotalDistance; }
+
+CTFTankBoss computes its own normalized travel distance inline in TankBossThink
+(tf_tank_boss.cpp:740-744) but never stores it - the SetBossNormalizedTravelDistance
+calls around it are commented out in the release - so there is nothing to read back.
+GetTotalPathDistance exposes only the denominator, m_fTotalDistance, which the tank
+sums once from its path_track chain at spawn. The host divides its own measured
+track distance by it rather than duplicating Valve's inline arithmetic.

@@ -85,6 +85,14 @@ export function matchSpawner(actor, wave, missions) {
   return { ws, spec: entries[idx].bot, memberIdx: idx };
 }
 
+export function matchTank(actor, wave) {
+  const spawns = wave && Array.isArray(wave.wavespawns) ? wave.wavespawns : [];
+  const ws = actor.wsIndex >= 0 && actor.wsIndex < spawns.length ? spawns[actor.wsIndex] : null;
+  if (!ws) return { ws: { name: actor.wsName || '', node: null }, spec: null };
+  const entry = (ws.bots || []).find(e => e && e.tank);
+  return { ws, spec: entry ? entry.tank : null };
+}
+
 function prepare(actor, wave, missions) {
   const track = actor.track || [];
   const dist = new Float64Array(track.length);
@@ -92,22 +100,34 @@ function prepare(actor, wave, missions) {
     const a = track[i - 1], b = track[i];
     dist[i] = dist[i - 1] + Math.hypot(b[1] - a[1], b[2] - a[2], b[3] - a[3]);
   }
+  const travelled = dist.length ? dist[dist.length - 1] : 0;
+  const span = track.length > 1 ? track[track.length - 1][0] - track[0][0] : 0;
+
+  if (actor.kind === 'tank') {
+    const { ws, spec } = matchTank(actor, wave);
+    const tank = spec
+      ? { ...spec }
+      : {
+          kind: 'tank',
+          health: actor.maxHealth > 0 ? actor.maxHealth : null,
+          speed: span > 0 ? Math.round(travelled / span) : 0,
+          name: 'tankboss',
+          skin: 0,
+          scale: 1,
+          model: null,
+          immobile: false,
+          disableSmokestack: false
+        };
+    if (tank.health == null && actor.maxHealth > 0) tank.health = actor.maxHealth;
+    return { ...actor, tank, matched: !!spec, spawned: true, memberIdx: 0, ws, dist, travelled };
+  }
 
   const { ws, spec, memberIdx } = matchSpawner(actor, wave, missions);
   const bot = spec ? { ...spec } : synthesize(actor);
   if (bot.health == null && actor.maxHealth > 0) bot.health = actor.maxHealth;
   if (bot.scale == null) bot.scale = actor.scale > 0 ? actor.scale : (bot.isGiant ? 1.75 : 1);
 
-  return {
-    ...actor,
-    bot,
-    matched: !!spec,
-    spawned: true,
-    memberIdx,
-    ws,
-    dist,
-    travelled: dist.length ? dist[dist.length - 1] : 0
-  };
+  return { ...actor, bot, matched: !!spec, spawned: true, memberIdx, ws, dist, travelled };
 }
 
 function sample(a, t) {

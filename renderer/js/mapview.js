@@ -534,6 +534,9 @@ function tankPathLength(a) {
 
 function tankProgressAt(a, t) {
   if (a.tank && a.tank.immobile) return 0;
+  if (a.dist && a.pathLength > 0) {
+    return Math.max(0, Math.min(1, actorDistAt(a, t) / a.pathLength));
+  }
   const len = tankPathLength(a);
   if (!(len > 0)) return 0;
   return Math.max(0, Math.min(1, (a.speed || 0) * (t - a.spawnT) / len));

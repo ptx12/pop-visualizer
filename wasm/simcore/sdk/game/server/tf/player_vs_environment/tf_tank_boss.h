@@ -40,6 +40,8 @@ public:
 	void DefineOnBombDroppedOutput( EventInfo *eventInfo );
 
 	void SetWaveSpawnPopulator( CWaveSpawnPopulator *pWave ){ m_pWaveSpawnPopulator = pWave; }
+	CWaveSpawnPopulator *GetWaveSpawnPopulator( void ) const { return m_pWaveSpawnPopulator; }
+	float GetTotalPathDistance( void ) const { return m_fTotalDistance; }
 
 	virtual int GetCurrencyValue( void );
 

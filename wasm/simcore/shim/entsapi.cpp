@@ -17,6 +17,7 @@
 #include "tf_classdata.h"
 #include "tf_objective_resource.h"
 #include "player_vs_environment/tf_mann_vs_machine_logic.h"
+#include "player_vs_environment/tf_tank_boss.h"
 
 #include <emscripten/emscripten.h>
 #include <stdlib.h>
@@ -724,6 +725,18 @@ EMSCRIPTEN_KEEPALIVE int sim_pop_set_next( const char *pShortName )
 	if ( !TFGameRules() )
 		return 0;
 	TFGameRules()->SetNextMvMPopfile( pShortName ? pShortName : "" );
+
+	if ( !g_pPopulationManager || !pShortName || !pShortName[ 0 ] )
+		return 1;
+
+	CUtlString fullPath;
+	if ( !g_pPopulationManager->FindPopulationFileByShortName( pShortName, fullPath ) )
+		return 0;
+
+	if ( !g_pPopulationManager->IsValidPopfile( fullPath ) )
+		return 0;
+
+	g_pPopulationManager->SetPopulationFilename( fullPath );
 	return 1;
 }
 
@@ -873,9 +886,8 @@ static CWaveSpawnPopulator *SimWaveSpawnOf( int playerIndex )
 	return pBot ? pBot->GetWaveSpawnPopulator() : NULL;
 }
 
-EMSCRIPTEN_KEEPALIVE int sim_bots_wavespawn( int playerIndex )
+static int SimWaveSpawnOrdinal( CWaveSpawnPopulator *pSpawn )
 {
-	CWaveSpawnPopulator *pSpawn = SimWaveSpawnOf( playerIndex );
 	CWave *pWave = g_pPopulationManager ? g_pPopulationManager->GetCurrentWave() : NULL;
 	if ( !pSpawn || !pWave )
 		return -1;
@@ -886,6 +898,11 @@ EMSCRIPTEN_KEEPALIVE int sim_bots_wavespawn( int playerIndex )
 			return i;
 	}
 	return -1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bots_wavespawn( int playerIndex )
+{
+	return SimWaveSpawnOrdinal( SimWaveSpawnOf( playerIndex ) );
 }
 
 EMSCRIPTEN_KEEPALIVE int sim_bots_mission( int playerIndex )
@@ -899,6 +916,75 @@ EMSCRIPTEN_KEEPALIVE const char *sim_bots_wavespawn_name( int playerIndex )
 {
 	CWaveSpawnPopulator *pSpawn = SimWaveSpawnOf( playerIndex );
 	return pSpawn ? pSpawn->m_name.Get() : "";
+}
+
+static CTFTankBoss *SimTankByIndex( int entIndex )
+{
+	CBaseEntity *pEnt = NULL;
+	while ( ( pEnt = gEntList.FindEntityByClassname( pEnt, "tank_boss" ) ) != NULL )
+	{
+		if ( pEnt->entindex() == entIndex )
+			return dynamic_cast< CTFTankBoss * >( pEnt );
+	}
+	return NULL;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_tanks_state( float *pOut, int maxTanks )
+{
+	if ( !pOut || maxTanks <= 0 )
+		return 0;
+
+	int written = 0;
+	CBaseEntity *pEnt = NULL;
+	while ( written < maxTanks && ( pEnt = gEntList.FindEntityByClassname( pEnt, "tank_boss" ) ) != NULL )
+	{
+		const Vector &origin = pEnt->GetAbsOrigin();
+		const QAngle &angles = pEnt->GetAbsAngles();
+
+		float *p = pOut + written * 9;
+		p[ 0 ] = (float)pEnt->entindex();
+		p[ 1 ] = origin.x;
+		p[ 2 ] = origin.y;
+		p[ 3 ] = origin.z;
+		p[ 4 ] = angles.x;
+		p[ 5 ] = angles.y;
+		p[ 6 ] = angles.z;
+		p[ 7 ] = (float)pEnt->GetHealth();
+		p[ 8 ] = (float)pEnt->GetMaxHealth();
+		written++;
+	}
+	return written;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_tanks_handle( int entIndex )
+{
+	CTFTankBoss *pTank = SimTankByIndex( entIndex );
+	return pTank ? pTank->GetRefEHandle().ToInt() : -1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_tanks_wavespawn( int entIndex )
+{
+	CTFTankBoss *pTank = SimTankByIndex( entIndex );
+	return pTank ? SimWaveSpawnOrdinal( pTank->GetWaveSpawnPopulator() ) : -1;
+}
+
+EMSCRIPTEN_KEEPALIVE float sim_tanks_path_length( int entIndex )
+{
+	CTFTankBoss *pTank = SimTankByIndex( entIndex );
+	return pTank ? pTank->GetTotalPathDistance() : 0.0f;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bots_has_flag( int playerIndex )
+{
+	CBasePlayer *pPlayer = UTIL_PlayerByIndex( playerIndex );
+	CTFPlayer *pTFPlayer = pPlayer ? ToTFPlayer( pPlayer ) : NULL;
+	return ( pTFPlayer && pTFPlayer->HasTheFlag() ) ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_tanks_currency( int entIndex )
+{
+	CTFTankBoss *pTank = SimTankByIndex( entIndex );
+	return pTank ? pTank->GetCurrencyValue() : 0;
 }
 
 static CWaveSpawnPopulator *SimWaveSpawnAt( int waveIndex, int spawnIndex )

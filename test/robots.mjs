@@ -316,6 +316,69 @@ if (run.actors.length) {
   const names = [...new Set(run.actors.map(a => a.name))];
   console.log(`  identities: ${names.join(', ')}`);
   console.log(`  wavespawn ordinals: ${run.actors.map(a => a.wsIndex).join(',')}`);
+
+  const tankWave = model.waves.findIndex(w => w.wavespawns.some(w2 => w2.isTank));
+  if (tankWave < 0) {
+    console.log('  no tank wave in this popfile; skipping tank checks');
+  } else {
+    const { matchTank } = await import('../renderer/js/botplayback.js');
+    const tankRun = await simulateWave({
+      bspPath, mapName: map, popShortName: map, waveIndex: tankWave, seconds: 60, tfPath: TF_DIR
+    });
+    const tanks = tankRun.actors.filter(a => a.kind === 'tank');
+    check('CTFTankBoss spawns and reaches the renderer', tanks.length > 0,
+      `wave ${tankWave + 1}: ${tanks.length} tanks of ${tankRun.actors.length} actors`);
+
+    if (tanks.length) {
+      const t0 = tanks[0];
+      const moved = Math.hypot(
+        t0.track[t0.track.length - 1][1] - t0.track[0][1],
+        t0.track[t0.track.length - 1][2] - t0.track[0][2]);
+      check('the tank drives along its path_track chain', moved > 1024, Math.round(moved) + ' units');
+      check('the tank carries the health the popfile gives it', t0.maxHealth > 0, String(t0.maxHealth));
+
+      const linkedTank = matchTank(t0, model.waves[tankWave]);
+      check('the tank resolves to the Tank spawner in the popfile', !!linkedTank.spec,
+        linkedTank.spec ? `${linkedTank.spec.health} HP, ${linkedTank.spec.speed} HU/s` : 'unresolved');
+      if (linkedTank.spec) {
+        check('the simulated tank health matches the popfile Tank block',
+          t0.maxHealth === linkedTank.spec.health, `${t0.maxHealth} vs ${linkedTank.spec.health}`);
+      }
+      console.log(`  tank: ${Math.round(moved)} units over ${(t0.dieT === Infinity ? tankRun.end : t0.dieT).toFixed(1)}s, ${t0.maxHealth} HP, ws ${t0.wsIndex}`);
+    }
+  }
+
+  const altName = `${map}_advanced`;
+  const altPath = join(repo, 'vanilla', `${altName}.pop`);
+  if (!existsSync(altPath)) {
+    console.log('  no secondary popfile for ' + map + '; skipping popfile selection checks');
+  } else {
+    const alt = buildModel(parse(readFileSync(altPath, 'utf8')), []);
+    const altTankWave = alt.waves.findIndex(w => w.wavespawns.some(w2 => w2.isTank));
+    const altIndex = altTankWave < 0 ? 0 : altTankWave;
+    const altRun = await simulateWave({
+      bspPath, mapName: map, popShortName: altName, popPath: altPath,
+      popDir: join(repo, 'vanilla'), waveIndex: altIndex, seconds: 70, tfPath: TF_DIR
+    });
+    const valveTotals = (altRun.waveSpawns || []).map(s => s.totalCount);
+    const appTotals = alt.waves[altIndex].wavespawns.map(s => s.totalCount);
+    const defaultTotals = model.waves[altIndex].wavespawns.map(s => s.totalCount);
+    check('the requested popfile is the one the simulation runs',
+      valveTotals.length === appTotals.length && valveTotals.every((v, i) => v === appTotals[i]),
+      `valve [${valveTotals}] vs requested [${appTotals}] (map default is [${defaultTotals}])`);
+
+    if (altTankWave >= 0) {
+      const altTanks = altRun.actors.filter(a => a.kind === 'tank');
+      check('a tank spawns from the requested popfile too', altTanks.length > 0,
+        `${altName} wave ${altTankWave + 1}: ${altTanks.length} tanks of ${altRun.actors.length} actors`);
+      if (altTanks.length) {
+        const spec = alt.waves[altTankWave].wavespawns.find(w => w.isTank).bots.find(b => b.tank).tank;
+        check('the tank from the requested popfile carries its own health',
+          altTanks[0].maxHealth === spec.health, `${altTanks[0].maxHealth} vs ${spec.health}`);
+      }
+    }
+    console.log(`  ${altName} wave ${altIndex + 1}: ${altRun.actors.length} actors, wavespawn totals [${valveTotals}]`);
+  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
