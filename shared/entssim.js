@@ -2,6 +2,7 @@ import { readEntityLump, readLump } from './bsp.js';
 
 const TICK_INTERVAL = 1 / 66.6667;
 const MOVETYPE_PUSH = 7;
+const WAVE_START_RELAY = 'wave_start_relay';
 const OPEN_INPUTS = ['Open', 'Start'];
 const CLOSE_INPUTS = ['Close', 'Stop'];
 const SETTLE_FRAMES = 12;
@@ -161,6 +162,13 @@ export async function loadEntitySim(bspPath, mapName) {
   if (result) {
     result.movers = result.moverTracks();
     result.paths = result.pathGraph();
+    const timeline = result.moverTimeline(WAVE_START_RELAY);
+    for (const m of result.movers) {
+      const keys = timeline && timeline.keys.get(m.model);
+      m.keys = keys && keys.length ? keys : [{ t: 0, frac: m.spawnFrac }];
+    }
+    result.waveStartTruncated = !!(timeline && timeline.truncated);
+    result.reset();
   }
   cache.set(bspPath, result);
   return result;
@@ -353,6 +361,7 @@ async function buildEntitySim(bspPath, mapName) {
       return -1;
     },
     moverTracks() { return sampleMovers(sim, ex, pose); },
+    moverTimeline(seed) { return recordTimeline(sim, ex, sim.movers || [], seed || null); },
     pathGraph() {
       const nodes = new Map();
       const n = ex.sim_ents_count();
@@ -406,6 +415,81 @@ function sampleOne(sim, ex, model, input) {
   const t0 = track[0].t;
   for (const s of track) s.t -= t0;
   return track;
+}
+
+const OBSERVE_QUIET_SECONDS = 2;
+const OBSERVE_CAP_SECONDS = 60;
+const FRAC_EPSILON = 1e-4;
+
+function moverFraction(mover, p) {
+  const a = mover.track[0].pose;
+  if (mover.kind === 'rotate') {
+    if (!mover.degrees) return 0;
+    const i = mover.axis[1] ? 0 : mover.axis[2] ? 1 : 2;
+    return angleDelta(a[3 + i], p[3 + i]) / mover.degrees;
+  }
+  if (!(mover.travel > 0)) return 0;
+  return ((p[0] - a[0]) * mover.dir[0] + (p[1] - a[1]) * mover.dir[1] +
+    (p[2] - a[2]) * mover.dir[2]) / mover.travel;
+}
+
+function simplifyKeys(keys) {
+  if (keys.length < 3) return keys;
+  const out = [keys[0]];
+  for (let i = 1; i < keys.length - 1; i++) {
+    const a = out[out.length - 1], b = keys[i], c = keys[i + 1];
+    const span = c.t - a.t;
+    const predicted = span > 0 ? a.frac + (c.frac - a.frac) * ((b.t - a.t) / span) : a.frac;
+    if (Math.abs(b.frac - predicted) > FRAC_EPSILON) out.push(b);
+  }
+  out.push(keys[keys.length - 1]);
+  return out;
+}
+
+function recordTimeline(sim, ex, movers, seed) {
+  sim.reset();
+  const tracked = [];
+  for (const m of movers) {
+    const index = sim.findByModel('*' + m.model);
+    if (index < 0) continue;
+    tracked.push({ mover: m, handle: sim.handle(index), keys: [], last: null });
+  }
+  if (!tracked.length) return { keys: new Map(), truncated: false, seconds: 0 };
+
+  if (seed && !sim.fireInputNamed(seed, 'Trigger')) return null;
+
+  const t0 = ex.sim_ents_curtime();
+  for (const t of tracked) {
+    const p = sim.poseOf(t.handle);
+    t.last = p ? moverFraction(t.mover, p) : 0;
+    t.keys.push({ t: 0, frac: t.last });
+  }
+
+  const quietFrames = Math.ceil(OBSERVE_QUIET_SECONDS / TICK_INTERVAL);
+  const capFrames = Math.ceil(OBSERVE_CAP_SECONDS / TICK_INTERVAL);
+  let quiet = 0;
+  let truncated = true;
+  let frames = 0;
+  for (; frames < capFrames; frames++) {
+    sim.frame();
+    let changed = false;
+    const now = ex.sim_ents_curtime() - t0;
+    for (const t of tracked) {
+      const p = sim.poseOf(t.handle);
+      if (!p) continue;
+      const frac = moverFraction(t.mover, p);
+      if (Math.abs(frac - t.last) <= FRAC_EPSILON) continue;
+      changed = true;
+      t.last = frac;
+      t.keys.push({ t: now, frac });
+    }
+    if (changed) quiet = 0;
+    else if (++quiet >= quietFrames) { truncated = false; break; }
+  }
+
+  const keys = new Map();
+  for (const t of tracked) keys.set(t.mover.model, simplifyKeys(t.keys));
+  return { keys, truncated, seconds: frames * TICK_INTERVAL };
 }
 
 function sampleMovers(sim, ex, pose) {

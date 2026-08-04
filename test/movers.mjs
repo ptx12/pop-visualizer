@@ -41,6 +41,7 @@ let totalMovers = 0, uniform = 0, durationExact = 0, spawnPoseMatches = 0;
 let lipCorrected = 0, lipCases = 0;
 const templatePhantoms = [];
 let chainsChecked = 0, chainsAgree = 0, linkedBothWays = 0, linkedNodes = 0, forwardLinks = 0;
+let keyed = 0, monotonic = 0, inRange = 0, waveOpened = 0, waveDurationExact = 0;
 
 for (const map of maps) {
   const bspPath = `${MAPS_DIR}/${map}.bsp`;
@@ -69,6 +70,16 @@ for (const map of maps) {
     const dp = Math.hypot(spawned.origin[0] - restPose[0], spawned.origin[1] - restPose[1],
       spawned.origin[2] - restPose[2]);
     if (dp < 1e-3) spawnPoseMatches++;
+
+    if (Array.isArray(m.keys) && m.keys.length) keyed++;
+    const keys = m.keys || [];
+    if (keys.every((k, i) => i === 0 || k.t >= keys[i - 1].t)) monotonic++;
+    if (keys.every(k => k.frac >= -1e-3 && k.frac <= 1 + 1e-3)) inRange++;
+    if (keys.length > 1 && Math.abs(keys[keys.length - 1].frac - keys[0].frac) > 0.5) {
+      waveOpened++;
+      const elapsed = keys[keys.length - 1].t - keys[1].t;
+      if (Math.abs(elapsed - m.duration) < 2 * TICK_INTERVAL) waveDurationExact++;
+    }
 
     const e = byModel.get(m.model);
     const model = models[m.model];
@@ -126,6 +137,14 @@ check('linear travel carries the engine bbox correction CBaseDoor::Spawn applies
   lipCases > 0 && lipCorrected === lipCases, `${lipCorrected}/${lipCases}`);
 check('doors that only exist as point_template sources are not reported as movers',
   templatePhantoms.length > 0, templatePhantoms.join(', ') || 'none found');
+
+check('every mover carries a keyframe track the 3d view can read',
+  keyed === totalMovers, `${keyed}/${totalMovers}`);
+check('keyframes advance in time and stay within the open range',
+  monotonic === totalMovers && inRange === totalMovers,
+  `${monotonic} monotonic, ${inRange} in range, of ${totalMovers}`);
+check('a door the wave start opens takes exactly its own travel time',
+  waveOpened > 0 && waveDurationExact === waveOpened, `${waveDurationExact}/${waveOpened}`);
 
 check('CPathTrack::Link built a real path graph', linkedNodes > 0, linkedNodes + ' nodes');
 check('every forward link has the matching back link Link() sets',
