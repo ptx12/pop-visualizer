@@ -3,13 +3,14 @@ import { state, simFor, emit, onChange, deathModel, navTogglesFor, bombPathRerol
 import { CLASS_INFO, botDisplayName } from './popmodel.js';
 import { getTFPath, iconURL, iconNameFor, classIconName, tankIconName } from './icons.js';
 import { native } from './native.js';
-import { createBotSim, actorPosAt, actorZAt, actorDistAt, actorYawAt, botMaxSpeed, buildTrackChains, dpsProfile, objectiveCandidates, bombPathGroups, STEP, RNG_SEED_BASE } from './botai.js';
+import { botMaxSpeed, buildTrackChains, dpsProfile, objectiveCandidates, bombPathGroups, isSentryBuster, STEP, RNG_SEED_BASE } from './navpaths.js';
+import { createBotSim, actorPosAt, actorZAt, actorDistAt, actorYawAt } from './botplayback.js';
 import { setStatus, clearStatus, clearStatusPrefix } from './statusbar.js';
 import { startTask } from './tasks.js';
 import { createMap3D, BLU_SKIN } from './map3d.js';
 import { KILL_RADIUS, killRadiusOf, killPointAt, killPointsFor, saveKillPoints } from './killzones.js';
 import { botModelBase, botWeaponModels, botCosmeticModels, resolveBotItems, resolveWeaponRoles, botWeaponClass, botActivity , animDurationSync, resolveAnimDuration, SENTRY_BUSTER_MODEL } from './botmodels.js';
-import { isSentryBuster } from './sim/behaviours/support.js';
+
 import { initNavWasm } from './navwasm.js';
 import { primaryColor } from './timeline.js';
 import { simOptsPanel } from './inspector.js';
