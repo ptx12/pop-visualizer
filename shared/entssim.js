@@ -386,6 +386,43 @@ async function buildEntitySim(bspPath, mapName) {
         });
       }
       return nodes;
+    },
+    addFile(path, pathID, bytes) {
+      const buf = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      const p = ex.sim_ents_alloc(buf.length + 1);
+      new Uint8Array(ex.memory.buffer).set(buf, p);
+      new Uint8Array(ex.memory.buffer)[p + buf.length] = 0;
+      const ok = ex.sim_fs_add(host.push(String(path)), pathID ? host.push(String(pathID)) : 0,
+        p, buf.length) === 1;
+      ex.sim_ents_free(p);
+      return ok;
+    },
+    fileExists(path) { return ex.sim_fs_exists(host.push(String(path))) === 1; },
+    get fileCount() { return ex.sim_fs_count(); },
+    resetFiles() { ex.sim_fs_reset(); },
+    loadNav() { return ex.sim_nav_load(); },
+    get navAreaCount() { return ex.sim_nav_area_count(); },
+    loadPopfile(fullPath) { return ex.sim_pop_load(host.push(String(fullPath))) === 1; },
+    get popfile() { return host.cstr(ex.sim_pop_filename()); },
+    get waveCount() { return ex.sim_pop_wave_count(); },
+    wave(index) {
+      if (index < 0 || index >= ex.sim_pop_wave_count()) return null;
+      const classes = [];
+      const n = ex.sim_pop_wave_class_count(index);
+      for (let i = 0; i < n; i++) {
+        classes.push({
+          icon: host.cstr(ex.sim_pop_wave_class_icon(index, i)),
+          count: ex.sim_pop_wave_class_quantity(index, i),
+          flags: ex.sim_pop_wave_class_flags(index, i)
+        });
+      }
+      return {
+        index,
+        description: host.cstr(ex.sim_pop_wave_description(index)),
+        enemies: ex.sim_pop_wave_enemy_count(index),
+        currency: ex.sim_pop_wave_currency(index),
+        classes
+      };
     }
   };
 

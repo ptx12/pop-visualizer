@@ -159,7 +159,6 @@ static CSimDefault_ILagCompensationManager s_LagCompensation;
 static CSimDefault_ITempEntsSystem s_TempEnts;
 static CSimDefault_IResponseSystem s_ResponseSystem;
 static CSimDefault_ISceneFileCache s_SceneFileCache;
-static CSimDefault_IFileSystem s_FileSystem;
 static CSimDefault_IPhysicsCollision s_PhysicsCollision;
 static CSimDefault_IPhysicsSurfaceProps s_PhysicsSurfaceProps;
 static CSimDefault_IPhysicsEnvironment s_PhysicsEnvironment;
@@ -174,6 +173,7 @@ INetworkStringTableContainer *SimEngine_StringTables();
 void SimEngine_InstallTrace();
 IPhysicsObjectPairHash *SimEngine_CreateObjectPairHash();
 ICvar *SimEngine_CreateCvar();
+IFileSystem *SimEngine_CreateFileSystem();
 extern IPhysicsObjectPairHash *g_EntityCollisionHash;
 
 extern ISoundEmitterSystemBase *soundemitterbase;
@@ -193,8 +193,8 @@ void SimEngine_InstallDefaults()
 	networkstringtable = SimEngine_StringTables();
 	scriptmanager = &s_ScriptManager;
 	scenefilecache = &s_SceneFileCache;
-	g_pFullFileSystem = &s_FileSystem;
-	filesystem = &s_FileSystem;
+	g_pFullFileSystem = SimEngine_CreateFileSystem();
+	filesystem = g_pFullFileSystem;
 	physcollision = &s_PhysicsCollision;
 	physprops = &s_PhysicsSurfaceProps;
 	physenv = &s_PhysicsEnvironment;

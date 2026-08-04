@@ -76,6 +76,7 @@ public:
 
 	int	 GetWaveNumber( void ) { return m_iCurrentWaveIndex; }
 	int GetTotalWaveCount( void ) { return m_waveVector.Count(); }
+	CWave *GetWave( int index ) { return m_waveVector.IsValidIndex( index ) ? m_waveVector[ index ] : NULL; }
 
 	// Check Points
 	void ClearCheckpoint( void );

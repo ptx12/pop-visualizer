@@ -7,6 +7,9 @@
 #include "gameinterface.h"
 #include "pathtrack.h"
 #include "vstdlib/random.h"
+#include "nav_mesh.h"
+#include "player_vs_environment/tf_population_manager.h"
+#include "player_vs_environment/tf_populators.h"
 
 #include <emscripten/emscripten.h>
 #include <stdlib.h>
@@ -38,6 +41,10 @@ int SimEngine_LoadSurfaces( const uint8_t *texInfo, int texInfoLen,
 	const uint8_t *stringData, int stringDataLen );
 bool SimEngine_HasCollision();
 int SimEngine_UntracedVPhysicsCount();
+int SimEngine_FSAddFile( const char *pPath, const char *pPathID, const unsigned char *pData, int nSize );
+void SimEngine_FSReset();
+int SimEngine_FSFileCount();
+bool SimEngine_FSFileExists( const char *pPath );
 
 static CGlobalVars s_SimGlobals( false );
 static bool s_bInitialized = false;
@@ -170,6 +177,9 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_load_bsp( const uint8_t *planes, int planesLen
 {
 	if ( !s_bInitialized || s_pEntityLump )
 		return 0;
+
+	if ( pMapName && pMapName[ 0 ] )
+		gpGlobals->mapname = AllocPooledString( pMapName );
 
 	return SimEngine_LoadCollision( planes, planesLen, nodes, nodesLen, leafs, leafsLen,
 		leafSize, leafBrushes, leafBrushesLen, brushes, brushesLen, brushSides,
@@ -511,6 +521,124 @@ EMSCRIPTEN_KEEPALIVE const char *sim_ents_model( int index )
 {
 	CBaseEntity *pEnt = SimEntityByIndex( index );
 	return pEnt ? STRING( pEnt->GetModelName() ) : "";
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_fs_add( const char *pPath, const char *pPathID, const uint8_t *pData, int length )
+{
+	return SimEngine_FSAddFile( pPath, pPathID, pData, length ) >= 0 ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void sim_fs_reset()
+{
+	SimEngine_FSReset();
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_fs_count()
+{
+	return SimEngine_FSFileCount();
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_fs_exists( const char *pPath )
+{
+	return SimEngine_FSFileExists( pPath ) ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_nav_load()
+{
+	if ( !s_bInitialized || !TheNavMesh )
+		return -1;
+	return (int)TheNavMesh->Load();
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_nav_area_count()
+{
+	return TheNavMesh ? TheNavMesh->GetNavAreaCount() : 0;
+}
+
+static CWave *SimWaveByIndex( int index )
+{
+	if ( !g_pPopulationManager || index < 0 )
+		return NULL;
+	return g_pPopulationManager->GetWave( index );
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_pop_load( const char *pPopFile )
+{
+	if ( !s_bInitialized || !pPopFile || !pPopFile[ 0 ] )
+		return 0;
+
+	if ( !g_pPopulationManager )
+	{
+		CBaseEntity *pEnt = CreateEntityByName( "info_populator" );
+		if ( !pEnt )
+			return 0;
+		DispatchSpawn( pEnt );
+	}
+
+	if ( !g_pPopulationManager )
+		return 0;
+
+	g_pPopulationManager->SetPopulationFilename( pPopFile );
+	return g_pPopulationManager->Initialize() ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_pop_wave_count()
+{
+	return g_pPopulationManager ? g_pPopulationManager->GetTotalWaveCount() : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_pop_wave_enemy_count( int index )
+{
+	CWave *pWave = SimWaveByIndex( index );
+	return pWave ? pWave->GetEnemyCount() : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_pop_wave_currency( int index )
+{
+	CWave *pWave = SimWaveByIndex( index );
+	return pWave ? pWave->GetTotalCurrency() : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_pop_wave_class_count( int index )
+{
+	CWave *pWave = SimWaveByIndex( index );
+	return pWave ? pWave->GetNumClassTypes() : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE const char *sim_pop_wave_class_icon( int index, int slot )
+{
+	CWave *pWave = SimWaveByIndex( index );
+	if ( !pWave || slot < 0 || slot >= pWave->GetNumClassTypes() )
+		return "";
+	return STRING( pWave->GetClassIconName( slot ) );
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_pop_wave_class_quantity( int index, int slot )
+{
+	CWave *pWave = SimWaveByIndex( index );
+	if ( !pWave || slot < 0 || slot >= pWave->GetNumClassTypes() )
+		return 0;
+	return pWave->GetClassCount( slot );
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_pop_wave_class_flags( int index, int slot )
+{
+	CWave *pWave = SimWaveByIndex( index );
+	if ( !pWave || slot < 0 || slot >= pWave->GetNumClassTypes() )
+		return 0;
+	return (int)pWave->GetClassFlags( slot );
+}
+
+EMSCRIPTEN_KEEPALIVE const char *sim_pop_wave_description( int index )
+{
+	CWave *pWave = SimWaveByIndex( index );
+	const char *pDesc = pWave ? pWave->GetDescription() : NULL;
+	return pDesc ? pDesc : "";
+}
+
+EMSCRIPTEN_KEEPALIVE const char *sim_pop_filename()
+{
+	return g_pPopulationManager ? g_pPopulationManager->GetPopulationFilename() : "";
 }
 
 }

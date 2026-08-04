@@ -346,6 +346,7 @@ ENT_SOURCES=(
   "$HERE/shim/enginetrace.cpp"
   "$HERE/shim/objectpairhash.cpp"
   "$HERE/shim/cvarimpl.cpp"
+  "$HERE/shim/filesysimpl.cpp"
   "$HERE/shim/bspcollision.cpp"
   "$HERE/shim/dispcollision.cpp"
   "$SDK/public/builddisp.cpp"

@@ -1,0 +1,20 @@
+CPopulationManager keeps its parsed waves in the private m_waveVector and exposes
+only GetTotalWaveCount() and GetCurrentWave(), because the game itself never needs
+any other wave. CWave::GetNextWave() is declared in tf_populators.h but the Source
+SDK 2013 release ships no definition for it, so walking the list that way does not
+link.
+
+GetWave() is an additive const-style read accessor over the existing vector. It
+changes no behaviour and is used only by shim/entsapi.cpp to report every parsed
+wave to the host.
+
+diff --git a/src/game/server/tf/player_vs_environment/tf_population_manager.h b/src/game/server/tf/player_vs_environment/tf_population_manager.h
+--- a/src/game/server/tf/player_vs_environment/tf_population_manager.h
++++ b/src/game/server/tf/player_vs_environment/tf_population_manager.h
+@@ -76,6 +76,7 @@
+ 	int	 GetWaveNumber( void ) { return m_iCurrentWaveIndex; }
+ 	int GetTotalWaveCount( void ) { return m_waveVector.Count(); }
++	CWave *GetWave( int index ) { return m_waveVector.IsValidIndex( index ) ? m_waveVector[ index ] : NULL; }
+
+ 	// Check Points
+ 	void ClearCheckpoint( void );
