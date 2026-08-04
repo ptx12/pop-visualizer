@@ -208,5 +208,39 @@ check('robots are given real player classes', classes.size > 0 && !classes.has('
   [...classes].join(','));
 console.log(`  classes seen: ${[...classes].join(', ')}`);
 
+const { simulateWave } = await import('../main/wavesim.js');
+const { actorPosAt, actorZAt, actorYawAt, actorDistAt } = await import('../renderer/js/botplayback.js');
+
+const run = await simulateWave({
+  bspPath, mapName: map, popShortName: map, waveIndex: 0, seconds: 45, tfPath: TF_DIR
+});
+check('the wave runner returns actors for the renderer', run.actors.length > 0,
+  run.note || run.actors.length + ' actors');
+console.log(`  wave runner: ${run.actors.length} actors over ${run.end.toFixed(1)}s`);
+
+if (run.actors.length) {
+  check('every actor track is time ordered',
+    run.actors.every(a => a.track.every((p, i) => i === 0 || p[0] >= a.track[i - 1][0])));
+  check('wave time starts at zero, not at level load',
+    Math.min(...run.actors.map(a => a.spawnT)) < 1,
+    'earliest spawn ' + Math.min(...run.actors.map(a => a.spawnT)).toFixed(2) + 's');
+
+  const dist = new Float64Array(run.actors[0].track.length);
+  for (let i = 1; i < run.actors[0].track.length; i++) {
+    const p = run.actors[0].track[i - 1], q = run.actors[0].track[i];
+    dist[i] = dist[i - 1] + Math.hypot(q[1] - p[1], q[2] - p[2], q[3] - p[3]);
+  }
+  const a = { ...run.actors[0], dist };
+  const mid = (a.spawnT + a.dieT) / 2;
+  const pos = actorPosAt(a, mid);
+  check('the playback sampler reads a position back out of a track',
+    !!pos && Number.isFinite(pos[0]) && Number.isFinite(actorZAt(a, mid)),
+    pos ? pos.map(x => x.toFixed(0)).join(',') : 'null');
+  check('the sampler reports monotonic distance travelled',
+    actorDistAt(a, a.dieT) >= actorDistAt(a, mid) && actorDistAt(a, mid) > 0,
+    actorDistAt(a, a.dieT).toFixed(0) + ' units');
+  check('the sampler returns a finite heading', Number.isFinite(actorYawAt(a, mid)));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

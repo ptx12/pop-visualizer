@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('popnative', {
   listIcons: (dirs, tfPath) => ipcRenderer.invoke('icons:list', dirs, tfPath),
   imageSave: (name, bytes, targetPath) => ipcRenderer.invoke('image:save', name, bytes, targetPath),
   tankPath: (popName, tfPath, starts, popDir) => ipcRenderer.invoke('tank:path', popName, tfPath, starts, popDir),
+  simulateWave: opts => ipcRenderer.invoke('sim:wave', opts),
   mapData: (popName, tfPath, popDir) => ipcRenderer.invoke('map:data', popName, tfPath, popDir),
   mapGeo: (popName, tfPath, popDir) => ipcRenderer.invoke('map:geo', popName, tfPath, popDir),
   mapTexture: (popName, tfPath, popDir) => ipcRenderer.invoke('map:texture', popName, tfPath, popDir),

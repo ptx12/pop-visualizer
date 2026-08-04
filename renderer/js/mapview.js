@@ -1442,7 +1442,12 @@ function aiRunFor(file, wave, sim, mapData, key, opts) {
   };
   initNavWasm().then(() => {
     if (run.cancelled) return;
-    run.stepper = createBotSim(wave, sim, mapData, opts);
+    run.stepper = createBotSim(wave, sim, mapData, {
+      ...opts,
+      popName: file && file.name ? file.name : null,
+      popPath: file && file.path ? file.path : null,
+      popDir: file && file.path ? file.path.replace(/[\/][^\/]*$/, '') : null
+    });
     setTimeout(tick, 0);
   });
   return run;

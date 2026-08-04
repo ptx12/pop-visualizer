@@ -105,7 +105,7 @@ function bspTracksFor(bspPath) {
   return bspTrackCache.set(bspPath, tracks);
 }
 
-async function findBSPFor(popName, tfPath, popDir) {
+export async function findBSPFor(popName, tfPath, popDir) {
   const base = String(popName).toLowerCase().replace(/\.pop$/, '');
   const bsps = await listBSPs(tfPath, popDir);
   let best = null;

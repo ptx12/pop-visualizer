@@ -752,6 +752,27 @@ EMSCRIPTEN_KEEPALIVE int sim_pop_debug( float *pOut )
 	return 1;
 }
 
+EMSCRIPTEN_KEEPALIVE int sim_pop_jump_to_wave( int index )
+{
+	if ( !g_pPopulationManager || index < 0 || index >= g_pPopulationManager->GetTotalWaveCount() )
+		return 0;
+	g_pPopulationManager->JumpToWave( (uint32)index );
+	return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bots_handle( int playerIndex )
+{
+	CBasePlayer *pPlayer = UTIL_PlayerByIndex( playerIndex );
+	return pPlayer ? pPlayer->GetRefEHandle().ToInt() : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bots_is_giant( int playerIndex )
+{
+	CBasePlayer *pPlayer = UTIL_PlayerByIndex( playerIndex );
+	CTFBot *pBot = pPlayer ? ToTFBot( pPlayer ) : NULL;
+	return ( pBot && pBot->IsMiniBoss() ) ? 1 : 0;
+}
+
 EMSCRIPTEN_KEEPALIVE int sim_pop_wave_index()
 {
 	return g_pPopulationManager ? g_pPopulationManager->GetWaveNumber() : -1;
