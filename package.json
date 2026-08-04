@@ -51,6 +51,7 @@
       "preload.cjs",
       "renderer/**/*",
       "shared/**/*",
+      "wasm/simcore/build/*.wasm",
       "base/**/*",
       "vanilla/**/*",
       "tools/dockwatch.ps1",
