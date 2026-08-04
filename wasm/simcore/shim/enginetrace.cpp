@@ -145,6 +145,8 @@ static void SimTraceWorldModel( const Ray_t &ray, unsigned int fMask, int nModel
 	pTrace->plane.normal = vecNormal;
 	pTrace->plane.dist = res.planeDist;
 	pTrace->plane.type = 3;
+	pTrace->surface.name = res.surfaceName ? res.surfaceName : "";
+	pTrace->surface.flags = (unsigned short)res.surfaceFlags;
 
 	VectorMA( ray.m_Start, pTrace->fraction, ray.m_Delta, pTrace->endpos );
 	pTrace->endpos += ray.m_StartOffset;
@@ -472,6 +474,21 @@ int SimEngine_LoadDisplacements( const uint8_t *dispInfo, int dispInfoLen,
 	return simcore::DispCollision_Load( dispInfo, dispInfoLen, dispVerts, dispVertsLen,
 		dispTris, dispTrisLen, faces, facesLen, surfEdges, surfEdgesLen, edges, edgesLen,
 		verts, vertsLen );
+}
+
+int SimEngine_LoadSurfaces( const uint8_t *texInfo, int texInfoLen,
+	const uint8_t *texData, int texDataLen,
+	const uint8_t *stringTable, int stringTableLen,
+	const uint8_t *stringData, int stringDataLen )
+{
+	if ( !g_pSimWorld )
+		return 0;
+
+	if ( !g_pSimWorld->LoadSurfaces( texInfo, texInfoLen, texData, texDataLen,
+			stringTable, stringTableLen, stringData, stringDataLen ) )
+		return 0;
+
+	return g_pSimWorld->NumTexInfo();
 }
 
 bool SimEngine_HasCollision()

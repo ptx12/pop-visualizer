@@ -64,6 +64,11 @@ struct Model {
   int32_t firstface, numfaces;
 };
 
+struct TexInfo {
+  int32_t flags;
+  int32_t texdata;
+};
+
 struct TraceResult {
   float fraction;
   Vec3 endpos;
@@ -72,6 +77,8 @@ struct TraceResult {
   bool startsolid;
   bool allsolid;
   int32_t contents;
+  int32_t surfaceFlags;
+  const char *surfaceName;
 };
 
 class CollisionWorld {
@@ -86,6 +93,11 @@ class CollisionWorld {
             const uint8_t *brushes, int brushesLen,
             const uint8_t *brushSides, int brushSidesLen,
             const uint8_t *models, int modelsLen);
+
+  bool LoadSurfaces(const uint8_t *texInfo, int texInfoLen,
+                    const uint8_t *texData, int texDataLen,
+                    const uint8_t *stringTable, int stringTableLen,
+                    const uint8_t *stringData, int stringDataLen);
 
   void TraceRay(const Vec3 &start, const Vec3 &end, int mask, TraceResult *out) const;
 
@@ -106,6 +118,9 @@ class CollisionWorld {
     return (i >= 0 && i < m_numModels) ? (m_models + i) : 0;
   }
   int LeafContainingPoint(const Vec3 &p) const { return PointLeaf(p); }
+  int NumTexInfo() const { return m_numTexInfo; }
+  int SurfaceFlags(int texInfoIndex) const;
+  const char *SurfaceName(int texInfoIndex) const;
 
  private:
   struct TraceWork {
@@ -115,6 +130,7 @@ class CollisionWorld {
     bool isPoint;
     int mask;
     TraceResult *tr;
+    int leadSideTexInfo;
   };
 
   void RecursiveHullCheck(TraceWork &w, int nodeNum, float p1f, float p2f,
@@ -130,9 +146,14 @@ class CollisionWorld {
   Brush *m_brushes;
   BrushSide *m_brushSides;
   Model *m_models;
+  TexInfo *m_texInfo;
+  int32_t *m_texDataName;
+  int32_t *m_stringTable;
+  char *m_stringData;
 
   int m_numPlanes, m_numNodes, m_numLeafs, m_numLeafBrushes;
   int m_numBrushes, m_numBrushSides, m_numModels;
+  int m_numTexInfo, m_numTexData, m_numStrings, m_stringDataLen;
 
   mutable int m_checkCount;
   mutable int *m_brushCheck;

@@ -30,12 +30,17 @@ int SimEngine_LoadDisplacements( const uint8_t *dispInfo, int dispInfoLen,
 	const uint8_t *surfEdges, int surfEdgesLen,
 	const uint8_t *edges, int edgesLen,
 	const uint8_t *verts, int vertsLen );
+int SimEngine_LoadSurfaces( const uint8_t *texInfo, int texInfoLen,
+	const uint8_t *texData, int texDataLen,
+	const uint8_t *stringTable, int stringTableLen,
+	const uint8_t *stringData, int stringDataLen );
 bool SimEngine_HasCollision();
 int SimEngine_UntracedVPhysicsCount();
 
 static CGlobalVars s_SimGlobals( false );
 static bool s_bInitialized = false;
 static char *s_pEntityLump = NULL;
+static char s_szLastTraceSurface[ 128 ] = "";
 
 static int SimEntityCount();
 
@@ -145,6 +150,23 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_load_disp( const uint8_t *dispInfo, int dispIn
 		verts, vertsLen );
 }
 
+EMSCRIPTEN_KEEPALIVE int sim_ents_load_surfaces( const uint8_t *texInfo, int texInfoLen,
+	const uint8_t *texData, int texDataLen,
+	const uint8_t *stringTable, int stringTableLen,
+	const uint8_t *stringData, int stringDataLen )
+{
+	if ( !s_bInitialized )
+		return 0;
+
+	return SimEngine_LoadSurfaces( texInfo, texInfoLen, texData, texDataLen,
+		stringTable, stringTableLen, stringData, stringDataLen );
+}
+
+EMSCRIPTEN_KEEPALIVE const char *sim_ents_trace_surface()
+{
+	return s_szLastTraceSurface;
+}
+
 EMSCRIPTEN_KEEPALIVE int sim_ents_has_collision()
 {
 	return SimEngine_HasCollision() ? 1 : 0;
@@ -183,6 +205,9 @@ EMSCRIPTEN_KEEPALIVE float sim_ents_trace( float sx, float sy, float sz,
 	trace_t tr;
 	enginetrace->TraceRay( ray, mask, pFilter, &tr );
 
+	V_strncpy( s_szLastTraceSurface, tr.surface.name ? tr.surface.name : "",
+		sizeof( s_szLastTraceSurface ) );
+
 	if ( pOut )
 	{
 		pOut[ 0 ] = tr.endpos.x;
@@ -195,6 +220,7 @@ EMSCRIPTEN_KEEPALIVE float sim_ents_trace( float sx, float sy, float sz,
 		pOut[ 7 ] = tr.startsolid ? 1.0f : 0.0f;
 		pOut[ 8 ] = tr.allsolid ? 1.0f : 0.0f;
 		pOut[ 9 ] = tr.m_pEnt ? (float)tr.m_pEnt->entindex() : -1.0f;
+		pOut[ 10 ] = (float)tr.surface.flags;
 	}
 
 	return tr.fraction;

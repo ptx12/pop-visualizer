@@ -117,6 +117,21 @@ console.log(`  displacement collision trees: ${dispTrees}`);
 check('displacement collision is live inside the entity module', dispTrees > 0,
   dispTrees + ' trees');
 
+const surfLumps = {
+  texInfo: upload(readLump(bspPath, 6)),
+  texData: upload(readLump(bspPath, 2)),
+  stringTable: upload(readLump(bspPath, 44)),
+  stringData: upload(readLump(bspPath, 43)),
+};
+const texInfoCount = ex.sim_ents_load_surfaces(
+  surfLumps.texInfo.ptr, surfLumps.texInfo.len,
+  surfLumps.texData.ptr, surfLumps.texData.len,
+  surfLumps.stringTable.ptr, surfLumps.stringTable.len,
+  surfLumps.stringData.ptr, surfLumps.stringData.len);
+console.log(`  texinfo entries: ${texInfoCount}`);
+check('surface data loads from the bsp texinfo lumps', texInfoCount > 0,
+  texInfoCount + ' texinfo');
+
 const lump = new TextEncoder().encode(readEntityLump(`${MAPS_DIR}/${map}.bsp`));
 check('bsp entity lump is readable', lump.length > 1000, `${lump.length} bytes`);
 
@@ -230,7 +245,7 @@ if (existsSync(collisionPath)) {
     cupload(readLump(bspPath, 12)).ptr, readLump(bspPath, 12).length,
     cupload(readLump(bspPath, 3)).ptr, readLump(bspPath, 3).length);
 
-  const out = ex.sim_ents_alloc(10 * 4);
+  const out = ex.sim_ents_alloc(11 * 4);
   const rays = [];
   for (let i = 0; i < count; i++) {
     const x = ex.sim_ents_origin(i, 0);
@@ -260,7 +275,7 @@ if (existsSync(collisionPath)) {
     agreed === compared,
     `${agreed}/${compared} agreed, worst delta ${worst.diff} at ${worst.ray}`);
 
-  const f = new Float32Array(ex.memory.buffer, out, 10);
+  const f = new Float32Array(ex.memory.buffer, out, 11);
   ex.sim_ents_trace(rays[0][0], rays[0][1], rays[0][2],
     rays[0][0], rays[0][1], rays[0][2] - 4096, 0, 0, 0, 0, 0, 0, MASK_PLAYERSOLID, 0, out);
   const nlen = Math.hypot(f[3], f[4], f[5]);
@@ -301,6 +316,30 @@ if (existsSync(collisionPath)) {
     traceThroughEnts <= ex.sim_ents_trace(rays[0][0], rays[0][1], rays[0][2],
       rays[0][0], rays[0][1], rays[0][2] - 4096, 0, 0, 0, 0, 0, 0, MASK_PLAYERSOLID, 0, out) + 1e-6,
     'fraction ' + traceThroughEnts.toFixed(6));
+
+  const SURF_SKY = 0x0004;
+  const materials = new Map();
+  let skyHits = 0, downHitsNamed = 0, downHits = 0;
+  for (const [x, y, z] of rays) {
+    if (ex.sim_ents_trace(x, y, z, x, y, z - 4096, 0, 0, 0, 0, 0, 0,
+        MASK_PLAYERSOLID, 0, out) < 1) {
+      downHits++;
+      const name = cstr(ex.sim_ents_trace_surface());
+      if (name) { downHitsNamed++; materials.set(name, (materials.get(name) || 0) + 1); }
+    }
+    ex.sim_ents_trace(x, y, z, x, y, z + 8192, 0, 0, 0, 0, 0, 0, MASK_PLAYERSOLID, 0, out);
+    if ((new Float32Array(ex.memory.buffer, out, 11)[10] & SURF_SKY) !== 0) skyHits++;
+  }
+
+  const topMaterials = [...materials.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+  console.log('  materials underfoot: ' + topMaterials.map(([n, c]) => `${n} x${c}`).join(', '));
+  check('every world hit names the material it struck', downHitsNamed === downHits,
+    `${downHitsNamed}/${downHits} named`);
+  check('material names come out of the bsp string table intact',
+    topMaterials.length > 0 && topMaterials.every(([n]) => /^[\w/\\.-]+$/.test(n)),
+    topMaterials.map(([n]) => n).join(', '));
+  console.log(`  origins with sky overhead: ${skyHits}/${rays.length}`);
+  check('tracing up from outdoor entities reports SURF_SKY', skyHits > 0, skyHits + ' sky hits');
 
   console.log(`  entities skipped for want of vphysics: ${ex.sim_ents_untraced_vphysics()}`);
 }

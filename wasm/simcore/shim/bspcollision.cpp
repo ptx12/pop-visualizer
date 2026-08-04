@@ -39,8 +39,10 @@ static inline float ReadF32(const uint8_t *p) {
 
 CollisionWorld::CollisionWorld()
     : m_planes(0), m_nodes(0), m_leafs(0), m_leafBrushes(0), m_brushes(0),
-      m_brushSides(0), m_models(0), m_numPlanes(0), m_numNodes(0), m_numLeafs(0),
+      m_brushSides(0), m_models(0), m_texInfo(0), m_texDataName(0), m_stringTable(0),
+      m_stringData(0), m_numPlanes(0), m_numNodes(0), m_numLeafs(0),
       m_numLeafBrushes(0), m_numBrushes(0), m_numBrushSides(0), m_numModels(0),
+      m_numTexInfo(0), m_numTexData(0), m_numStrings(0), m_stringDataLen(0),
       m_checkCount(0), m_brushCheck(0) {}
 
 CollisionWorld::~CollisionWorld() {
@@ -51,7 +53,71 @@ CollisionWorld::~CollisionWorld() {
   free(m_brushes);
   free(m_brushSides);
   free(m_models);
+  free(m_texInfo);
+  free(m_texDataName);
+  free(m_stringTable);
+  free(m_stringData);
   free(m_brushCheck);
+}
+
+bool CollisionWorld::LoadSurfaces(const uint8_t *texInfo, int texInfoLen,
+                                  const uint8_t *texData, int texDataLen,
+                                  const uint8_t *stringTable, int stringTableLen,
+                                  const uint8_t *stringData, int stringDataLen) {
+  free(m_texInfo);
+  free(m_texDataName);
+  free(m_stringTable);
+  free(m_stringData);
+  m_texInfo = 0;
+  m_texDataName = 0;
+  m_stringTable = 0;
+  m_stringData = 0;
+
+  m_numTexInfo = texInfoLen / 72;
+  m_texInfo = (TexInfo *)calloc(m_numTexInfo > 0 ? m_numTexInfo : 1, sizeof(TexInfo));
+  for (int i = 0; i < m_numTexInfo; ++i) {
+    const uint8_t *p = texInfo + i * 72;
+    m_texInfo[i].flags = ReadI32(p + 64);
+    m_texInfo[i].texdata = ReadI32(p + 68);
+  }
+
+  m_numTexData = texDataLen / 32;
+  m_texDataName = (int32_t *)calloc(m_numTexData > 0 ? m_numTexData : 1, sizeof(int32_t));
+  for (int i = 0; i < m_numTexData; ++i) {
+    m_texDataName[i] = ReadI32(texData + i * 32 + 12);
+  }
+
+  m_numStrings = stringTableLen / 4;
+  m_stringTable = (int32_t *)calloc(m_numStrings > 0 ? m_numStrings : 1, sizeof(int32_t));
+  for (int i = 0; i < m_numStrings; ++i) {
+    m_stringTable[i] = ReadI32(stringTable + i * 4);
+  }
+
+  m_stringDataLen = stringDataLen;
+  m_stringData = (char *)calloc(stringDataLen > 0 ? stringDataLen + 1 : 1, 1);
+  if (stringDataLen > 0) memcpy(m_stringData, stringData, stringDataLen);
+
+  return m_numTexInfo > 0;
+}
+
+int CollisionWorld::SurfaceFlags(int texInfoIndex) const {
+  if (texInfoIndex < 0 || texInfoIndex >= m_numTexInfo) return 0;
+  return m_texInfo[texInfoIndex].flags;
+}
+
+const char *CollisionWorld::SurfaceName(int texInfoIndex) const {
+  if (texInfoIndex < 0 || texInfoIndex >= m_numTexInfo) return "";
+
+  int texData = m_texInfo[texInfoIndex].texdata;
+  if (texData < 0 || texData >= m_numTexData) return "";
+
+  int stringIndex = m_texDataName[texData];
+  if (stringIndex < 0 || stringIndex >= m_numStrings) return "";
+
+  int offset = m_stringTable[stringIndex];
+  if (offset < 0 || offset >= m_stringDataLen) return "";
+
+  return m_stringData + offset;
 }
 
 bool CollisionWorld::Load(const uint8_t *planes, int planesLen,
@@ -198,6 +264,7 @@ void CollisionWorld::ClipBoxToBrush(TraceWork &w, const Brush &brush) const {
   float enterfrac = NEVER_UPDATED;
   float leavefrac = 1.0f;
   const Plane *clipplane = 0;
+  const BrushSide *clipside = 0;
 
   bool getout = false;
   bool startout = false;
@@ -234,6 +301,7 @@ void CollisionWorld::ClipBoxToBrush(TraceWork &w, const Brush &brush) const {
       if (f > enterfrac) {
         enterfrac = f;
         clipplane = plane;
+        clipside = &side;
       }
     } else {
       float f = (d1 + DIST_EPSILON) / (d1 - d2);
@@ -254,6 +322,7 @@ void CollisionWorld::ClipBoxToBrush(TraceWork &w, const Brush &brush) const {
       w.tr->planeDist = clipplane->dist;
       w.tr->planeNormal = clipplane->normal;
       w.tr->contents = brush.contents;
+      w.leadSideTexInfo = clipside ? clipside->texinfo : -1;
     }
   }
 }
@@ -373,6 +442,7 @@ void CollisionWorld::TraceHullInModel(int modelIndex, const Vec3 &start, const V
   w.maxs = maxs;
   w.mask = mask;
   w.tr = out;
+  w.leadSideTexInfo = -1;
   w.isPoint = (mins.x == 0 && mins.y == 0 && mins.z == 0 &&
                maxs.x == 0 && maxs.y == 0 && maxs.z == 0);
   w.extents = Vec3(-mins.x > maxs.x ? -mins.x : maxs.x,
@@ -388,6 +458,8 @@ void CollisionWorld::TraceHullInModel(int modelIndex, const Vec3 &start, const V
     out->endpos = Vec3(start.x + out->fraction * (end.x - start.x),
                        start.y + out->fraction * (end.y - start.y),
                        start.z + out->fraction * (end.z - start.z));
+    out->surfaceFlags = SurfaceFlags(w.leadSideTexInfo);
+    out->surfaceName = SurfaceName(w.leadSideTexInfo);
   }
 }
 
