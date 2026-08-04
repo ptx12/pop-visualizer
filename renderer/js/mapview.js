@@ -2092,7 +2092,7 @@ export function renderMapView(container, file, waveIndex) {
       killIndexAt: (wx, wy) => killPointAt(killPts, wx, wy),
       hintRings: engineerNests.map(h => [h.origin[0], h.origin[1]]),
       propEvents: ai.propEvents || null,
-      doors: ai.doors || null,
+      doors: ai.doors || mapData.doors || null,
       teleporters: ai.teleporters || null,
       mapParticles: new Map((mapData.particles || []).map(p => [p.name, p])),
       onHover: (wx, wy) => {
