@@ -1459,7 +1459,7 @@ function eventLogFor(ai) {
     const wsn = a.ws && a.ws.name ? ' — ' + a.ws.name : '';
     log.push({ t: a.spawnT, kind: 'spawn', text: label + ' spawned' + wsn });
     if (Number.isFinite(a.dieT) && a.dieT <= ai.end) {
-      if (a.done && ai.bomb.deliveredAt != null && Math.abs(a.dieT - ai.bomb.deliveredAt) < 0.3) {
+      if (a.done && ai.bomb && ai.bomb.deliveredAt != null && Math.abs(a.dieT - ai.bomb.deliveredAt) < 0.3) {
         log.push({ t: a.dieT, kind: 'deliver', text: label + ' deployed the bomb' + wsn });
       } else {
         log.push({ t: a.dieT, kind: 'death', text: label + (a.kind === 'tank' ? ' destroyed' : ' died') + wsn });
@@ -1662,6 +1662,7 @@ export function renderMapView(container, file, waveIndex) {
     })));
 
   const objCands = objectiveCandidates(mapData, buildTrackChains(mapData, file.model.extraTankPaths));
+  const objective = ai.objective || (objCands[objIdx] || objCands[0]).pos;
 
   const displayBtn = el('button', {
     class: 'btn sm map-simbtn' + (ps.optionsOpen ? ' on' : ''),
@@ -1693,6 +1694,8 @@ export function renderMapView(container, file, waveIndex) {
   });
   if (truncParts.length) setStatus('map:trunc', { view: 'map', kind: 'warn', text: 'sim truncated', title: truncParts.join('; ') });
   else clearStatus('map:trunc');
+  if (ai.unavailable) setStatus('map:unavailable', { view: 'map', kind: 'warn', text: 'no robot playback', title: ai.note || 'Bot movement playback is unavailable.' });
+  else clearStatus('map:unavailable');
   const tbtn = (iconName, label, action) => {
     const b = el('button', {
       class: 'icon-btn sm', title: label, 'aria-label': label,
@@ -2328,7 +2331,7 @@ export function renderMapView(container, file, waveIndex) {
         ctx.fillText(name, sx + 8, sy + 3);
       }
     }
-    const [ox, oy] = toScreen(ai.objective[0], ai.objective[1]);
+    const [ox, oy] = toScreen(objective[0], objective[1]);
     ctx.strokeStyle = '#d4504a';
     ctx.lineWidth = 2;
     ctx.strokeRect(ox - 8, oy - 8, 16, 16);
@@ -2715,6 +2718,7 @@ export function renderMapView(container, file, waveIndex) {
   }
 
   function drawBomb(t) {
+    if (!ai.bomb || !ai.bomb.samples || !ai.bomb.samples.length) return;
     const idx = Math.max(0, Math.min(ai.bomb.samples.length - 1, Math.round(t / STEP)));
     const b = ai.bomb.samples[idx];
     if (!b) return;
@@ -2757,7 +2761,7 @@ export function renderMapView(container, file, waveIndex) {
       const sp = actorPosAt(sel, t);
       if (sp) { vs.cx = sp[0]; vs.cy = sp[1]; }
     }
-    if (ps.showRoute !== false && ai.route) {
+    if (ps.showRoute !== false && ai.route && ai.bomb && ai.bomb.samples && ai.bomb.samples.length) {
       const bi = Math.max(0, Math.min(ai.bomb.samples.length - 1, Math.round(t / STEP)));
       drawRoute(ctx, ai.route, toScreen, t, routeProgress(ai.route, ai.bomb.samples[bi]));
     }
