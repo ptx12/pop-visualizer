@@ -7,6 +7,7 @@
 #include "utlstring.h"
 #include "model_types.h"
 #include "ispatialpartition.h"
+#include "gameinterface.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -47,7 +48,11 @@ static CUtlVector< char * > g_SimDecals;
 
 static edict_t *g_SimEdicts = NULL;
 static int g_nSimEdicts = 0;
+static int g_nSimMaxClients = 0;
+static char *g_pSimMapEntities = NULL;
 static CSharedEdictChangeInfo g_SimChangeInfo;
+
+extern CServerGameClients g_ServerGameClients;
 
 class CSimChangeAccessor : public IChangeInfoAccessor
 {
@@ -165,7 +170,9 @@ public:
 	{
 		if ( !g_SimEdicts || iEntIndex < 0 || iEntIndex >= g_nSimEdicts )
 			return NULL;
-		return &g_SimEdicts[ iEntIndex ];
+
+		edict_t *pEdict = &g_SimEdicts[ iEntIndex ];
+		return pEdict->IsFree() ? NULL : pEdict;
 	}
 
 	edict_t *CreateEdict( int iForceEdictIndex ) override
@@ -182,12 +189,49 @@ public:
 
 		for ( int i = 0; i < g_nSimEdicts; ++i )
 		{
+			if ( i >= 1 && i <= g_nSimMaxClients )
+				continue;
+
 			edict_t *pEdict = &g_SimEdicts[ i ];
 			if ( pEdict->IsFree() )
 			{
 				pEdict->ClearFree();
 				return pEdict;
 			}
+		}
+		return NULL;
+	}
+
+	const char *GetMapEntitiesString() override
+	{
+		return g_pSimMapEntities;
+	}
+
+	edict_t *CreateFakeClient( const char *netname ) override
+	{
+		return CreateFakeClientEx( netname, true );
+	}
+
+	edict_t *CreateFakeClientEx( const char *netname, bool bReportFakeClient ) override
+	{
+		if ( !g_SimEdicts )
+			return NULL;
+
+		for ( int i = 1; i <= g_nSimMaxClients && i < g_nSimEdicts; ++i )
+		{
+			edict_t *pEdict = &g_SimEdicts[ i ];
+			if ( !pEdict->IsFree() )
+				continue;
+
+			pEdict->ClearFree();
+			g_ServerGameClients.ClientPutInServer( pEdict, netname ? netname : "" );
+
+			if ( !pEdict->GetUnknown() )
+			{
+				pEdict->SetFree();
+				return NULL;
+			}
+			return pEdict;
 		}
 		return NULL;
 	}
@@ -317,7 +361,7 @@ static CSimModelInfo g_SimModelInfo;
 
 void SimEngine_InstallDefaults();
 
-void SimEngine_Init( int nMaxEdicts )
+void SimEngine_Init( int nMaxEdicts, int nMaxClients )
 {
 	if ( g_SimEdicts )
 		return;
@@ -325,6 +369,7 @@ void SimEngine_Init( int nMaxEdicts )
 	SimEngine_InstallDefaults();
 
 	g_nSimEdicts = nMaxEdicts;
+	g_nSimMaxClients = nMaxClients;
 	g_SimEdicts = (edict_t *)calloc( nMaxEdicts, sizeof( edict_t ) );
 	g_SimAccessors = (CSimChangeAccessor *)calloc( nMaxEdicts, sizeof( CSimChangeAccessor ) );
 	for ( int i = 0; i < nMaxEdicts; ++i )
@@ -337,6 +382,22 @@ void SimEngine_Init( int nMaxEdicts )
 	engine = &g_SimEngineServer;
 	modelinfo = &g_SimModelInfo;
 	partition = &g_SimSpatialPartition;
+}
+
+edict_t *SimEngine_EdictList()
+{
+	return g_SimEdicts;
+}
+
+int SimEngine_EdictCount()
+{
+	return g_nSimEdicts;
+}
+
+void SimEngine_SetMapEntitiesString( const char *pLump )
+{
+	free( g_pSimMapEntities );
+	g_pSimMapEntities = pLump ? strdup( pLump ) : NULL;
 }
 
 void SimEngine_SetModelBounds( const char *name, const Vector &mins, const Vector &maxs )

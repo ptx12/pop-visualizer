@@ -61,6 +61,7 @@ ENGINE_SKIP = {
     "PEntityOfEntIndex", "CreateEdict", "RemoveEdict", "GetEntityCount",
     "GetChangeAccessor", "GetGameDir", "IsInternalBuild", "GetAppID",
     "PvAllocEntPrivateData", "FreeEntPrivateData", "SaveAllocMemory", "SaveFreeMemory",
+    "CreateFakeClient", "CreateFakeClientEx", "GetMapEntitiesString",
 }
 
 MODEL_SKIP = {

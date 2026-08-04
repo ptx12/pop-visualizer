@@ -10,6 +10,13 @@
 #include "nav_mesh.h"
 #include "player_vs_environment/tf_population_manager.h"
 #include "player_vs_environment/tf_populators.h"
+#include "tf_gamerules.h"
+#include "bot/tf_bot.h"
+#include "NextBot/Player/NextBotPlayer.h"
+#include "NextBot/NextBotManager.h"
+#include "tf_classdata.h"
+#include "tf_objective_resource.h"
+#include "player_vs_environment/tf_mann_vs_machine_logic.h"
 
 #include <emscripten/emscripten.h>
 #include <stdlib.h>
@@ -17,7 +24,10 @@
 
 extern CGlobalVars *gpGlobals;
 extern void Physics_RunThinkFunctions( bool simulating );
-extern void SimEngine_Init( int nMaxEdicts );
+extern void SimEngine_Init( int nMaxEdicts, int nMaxClients );
+extern void SimEngine_SetMapEntitiesString( const char *pLump );
+extern edict_t *SimEngine_EdictList();
+extern int SimEngine_EdictCount();
 extern CServerGameDLL g_ServerGameDLL;
 
 int SimEngine_LoadCollision( const uint8_t *planes, int planesLen,
@@ -46,6 +56,8 @@ void SimEngine_FSReset();
 int SimEngine_FSFileCount();
 bool SimEngine_FSFileExists( const char *pPath );
 
+static const int SIM_FIRST_TICK = 1;
+
 static CGlobalVars s_SimGlobals( false );
 static bool s_bInitialized = false;
 static char *s_pEntityLump = NULL;
@@ -53,6 +65,7 @@ static char s_szLastTraceSurface[ 128 ] = "";
 
 static CUtlVector< CBaseEntity * > s_EntityIndex;
 static bool s_bIndexValid = false;
+static bool s_bFullFrame = false;
 
 static void SimInvalidateIndex()
 {
@@ -83,13 +96,10 @@ static int SimEntityCount()
 	return s_EntityIndex.Count();
 }
 
-static void SimActivateEntities()
+static void SimLevelInit()
 {
-	for ( CBaseEntity *pClass = gEntList.FirstEnt(); pClass != NULL; pClass = gEntList.NextEnt( pClass ) )
-	{
-		if ( pClass && !pClass->IsDormant() )
-			pClass->Activate();
-	}
+	g_ServerGameDLL.LevelInit( STRING( gpGlobals->mapname ), s_pEntityLump, NULL, NULL, false, false );
+	g_ServerGameDLL.ServerActivate( SimEngine_EdictList(), SimEngine_EdictCount(), gpGlobals->maxClients );
 	SimInvalidateIndex();
 }
 
@@ -110,14 +120,14 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_init( float tickInterval )
 	if ( s_bInitialized )
 		return 1;
 
-	SimEngine_Init( MAX_EDICTS );
+	SimEngine_Init( MAX_EDICTS, MAX_PLAYERS );
 
 	gpGlobals = &s_SimGlobals;
-	gpGlobals->curtime = 0.0f;
-	gpGlobals->frametime = tickInterval;
 	gpGlobals->interval_per_tick = tickInterval;
-	gpGlobals->tickcount = 0;
-	gpGlobals->maxClients = 0;
+	gpGlobals->frametime = tickInterval;
+	gpGlobals->tickcount = SIM_FIRST_TICK;
+	gpGlobals->curtime = SIM_FIRST_TICK * tickInterval;
+	gpGlobals->maxClients = MAX_PLAYERS;
 	gpGlobals->maxEntities = MAX_EDICTS;
 
 	g_ServerGameDLL.CreateNetworkStringTables();
@@ -135,10 +145,10 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_load_lump( const char *pLump, int length )
 	s_pEntityLump = (char *)malloc( length + 1 );
 	memcpy( s_pEntityLump, pLump, length );
 	s_pEntityLump[ length ] = 0;
+	SimEngine_SetMapEntitiesString( s_pEntityLump );
 
 	SimInvalidateIndex();
-	MapEntity_ParseAllEntities( s_pEntityLump, NULL, false );
-	SimActivateEntities();
+	SimLevelInit();
 
 	return SimEntityCount();
 }
@@ -154,14 +164,13 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_reset()
 		return 0;
 
 	g_EventQueue.Clear();
-	gEntList.Clear();
+	g_ServerGameDLL.LevelShutdown();
 	SimInvalidateIndex();
 
-	gpGlobals->tickcount = 0;
-	gpGlobals->curtime = 0.0f;
+	gpGlobals->tickcount = SIM_FIRST_TICK;
+	gpGlobals->curtime = SIM_FIRST_TICK * gpGlobals->interval_per_tick;
 
-	MapEntity_ParseAllEntities( s_pEntityLump, NULL, false );
-	SimActivateEntities();
+	SimLevelInit();
 
 	return SimEntityCount();
 }
@@ -292,10 +301,21 @@ EMSCRIPTEN_KEEPALIVE void sim_ents_frame()
 
 	gpGlobals->tickcount++;
 	gpGlobals->curtime = gpGlobals->tickcount * gpGlobals->interval_per_tick;
+	gpGlobals->frametime = gpGlobals->interval_per_tick;
 
-	Physics_RunThinkFunctions( true );
-	g_EventQueue.ServiceEvents();
+	if ( s_bFullFrame )
+		g_ServerGameDLL.GameFrame( true );
+	else
+	{
+		Physics_RunThinkFunctions( true );
+		g_EventQueue.ServiceEvents();
+	}
 	SimInvalidateIndex();
+}
+
+EMSCRIPTEN_KEEPALIVE void sim_ents_full_frame( int enable )
+{
+	s_bFullFrame = enable != 0;
 }
 
 EMSCRIPTEN_KEEPALIVE float sim_ents_curtime()
@@ -639,6 +659,176 @@ EMSCRIPTEN_KEEPALIVE const char *sim_pop_wave_description( int index )
 EMSCRIPTEN_KEEPALIVE const char *sim_pop_filename()
 {
 	return g_pPopulationManager ? g_pPopulationManager->GetPopulationFilename() : "";
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_tf_init_class_data()
+{
+	if ( !g_pTFPlayerClassDataMgr )
+		return 0;
+
+	g_pTFPlayerClassDataMgr->Init();
+
+	int parsed = 0;
+	for ( int i = TF_FIRST_NORMAL_CLASS; i < TF_LAST_NORMAL_CLASS; i++ )
+	{
+		TFPlayerClassData_t *pData = GetPlayerClassData( i );
+		if ( pData && pData->m_szClassName[ 0 ] )
+			parsed++;
+	}
+	return parsed;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bots_add( const char *pTeam, const char *pClass )
+{
+	if ( !s_bInitialized )
+		return 0;
+
+	CTFBot *pBot = NextBotCreatePlayerBot< CTFBot >( pClass && pClass[ 0 ] ? pClass : "TFBot" );
+	if ( !pBot )
+		return 0;
+
+	pBot->HandleCommand_JoinTeam( pTeam && pTeam[ 0 ] ? pTeam : "auto" );
+	pBot->SetDifficulty( CTFBot::NORMAL );
+	pBot->HandleCommand_JoinClass( pClass && pClass[ 0 ] ? pClass : pBot->GetNextSpawnClassname() );
+
+	SimInvalidateIndex();
+	return pBot->entindex();
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_cvar_set( const char *pName, const char *pValue )
+{
+	if ( !g_pCVar || !pName || !pValue )
+		return 0;
+
+	ConVar *pVar = g_pCVar->FindVar( pName );
+	if ( !pVar )
+		return 0;
+
+	pVar->SetValue( pValue );
+	return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE const char *sim_cvar_get( const char *pName )
+{
+	if ( !g_pCVar || !pName )
+		return "";
+
+	ConVar *pVar = g_pCVar->FindVar( pName );
+	return pVar ? pVar->GetString() : "";
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_pop_set_next( const char *pShortName )
+{
+	if ( !TFGameRules() )
+		return 0;
+	TFGameRules()->SetNextMvMPopfile( pShortName ? pShortName : "" );
+	return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_pop_start_wave()
+{
+	if ( !g_pPopulationManager )
+		return 0;
+	g_pPopulationManager->StartCurrentWave();
+	return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_pop_debug( float *pOut )
+{
+	if ( !pOut )
+		return 0;
+
+	CPopulationManager *pMgr = g_pPopulationManager;
+	pOut[ 0 ] = pMgr ? (float)pMgr->entindex() : -1.0f;
+	pOut[ 1 ] = pMgr ? pMgr->GetNextThink() : -1.0f;
+	pOut[ 2 ] = pMgr ? (float)pMgr->GetTotalWaveCount() : -1.0f;
+	pOut[ 3 ] = ( pMgr && pMgr->GetCurrentWave() ) ? 1.0f : 0.0f;
+	pOut[ 4 ] = ( pMgr && pMgr->IsSpawningPaused() ) ? 1.0f : 0.0f;
+	pOut[ 5 ] = TFObjectiveResource() ? (float)TFObjectiveResource()->GetMannVsMachineWaveCount() : -1.0f;
+	pOut[ 6 ] = ( pMgr && pMgr->IsInEndlessWaves() ) ? 1.0f : 0.0f;
+	pOut[ 7 ] = TFGameRules() ? (float)TFGameRules()->IsMannVsMachineMode() : -1.0f;
+	pOut[ 8 ] = g_hMannVsMachineLogic ? (float)g_hMannVsMachineLogic->entindex() : -1.0f;
+	pOut[ 9 ] = g_hMannVsMachineLogic ? g_hMannVsMachineLogic->GetNextThink() : -1.0f;
+	return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_pop_wave_index()
+{
+	return g_pPopulationManager ? g_pPopulationManager->GetWaveNumber() : -1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_gamerules_state()
+{
+	return TFGameRules() ? (int)TFGameRules()->State_Get() : -1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_gamerules_set_state( int state )
+{
+	if ( !TFGameRules() )
+		return 0;
+	TFGameRules()->State_Transition( (gamerules_roundstate_t)state );
+	return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bots_count()
+{
+	int count = 0;
+	for ( int i = 1; i <= gpGlobals->maxClients; i++ )
+	{
+		CBasePlayer *pPlayer = UTIL_PlayerByIndex( i );
+		if ( pPlayer && pPlayer->IsBot() )
+			count++;
+	}
+	return count;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bots_state( float *pOut, int maxBots )
+{
+	if ( !pOut || maxBots <= 0 )
+		return 0;
+
+	int written = 0;
+	for ( int i = 1; i <= gpGlobals->maxClients && written < maxBots; i++ )
+	{
+		CBasePlayer *pPlayer = UTIL_PlayerByIndex( i );
+		if ( !pPlayer || !pPlayer->IsBot() )
+			continue;
+
+		const Vector &origin = pPlayer->GetAbsOrigin();
+		const QAngle &angles = pPlayer->GetAbsAngles();
+		const Vector &velocity = pPlayer->GetAbsVelocity();
+
+		float *p = pOut + written * 12;
+		p[ 0 ] = (float)i;
+		p[ 1 ] = origin.x;
+		p[ 2 ] = origin.y;
+		p[ 3 ] = origin.z;
+		p[ 4 ] = angles.x;
+		p[ 5 ] = angles.y;
+		p[ 6 ] = angles.z;
+		p[ 7 ] = velocity.x;
+		p[ 8 ] = velocity.y;
+		p[ 9 ] = velocity.z;
+		p[ 10 ] = (float)pPlayer->GetHealth();
+		p[ 11 ] = (float)pPlayer->GetTeamNumber();
+		written++;
+	}
+	return written;
+}
+
+EMSCRIPTEN_KEEPALIVE const char *sim_bots_class( int playerIndex )
+{
+	CBasePlayer *pPlayer = UTIL_PlayerByIndex( playerIndex );
+	CTFBot *pBot = pPlayer ? ToTFBot( pPlayer ) : NULL;
+	if ( !pBot )
+		return "";
+	return pBot->GetPlayerClass() ? pBot->GetPlayerClass()->GetName() : "";
+}
+
+EMSCRIPTEN_KEEPALIVE const char *sim_bots_name( int playerIndex )
+{
+	CBasePlayer *pPlayer = UTIL_PlayerByIndex( playerIndex );
+	return pPlayer ? pPlayer->GetPlayerName() : "";
 }
 
 }

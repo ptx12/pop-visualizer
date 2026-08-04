@@ -159,6 +159,7 @@ static CSimDefault_ILagCompensationManager s_LagCompensation;
 static CSimDefault_ITempEntsSystem s_TempEnts;
 static CSimDefault_IResponseSystem s_ResponseSystem;
 static CSimDefault_ISceneFileCache s_SceneFileCache;
+static CSimDefault_IUploadGameStats s_GameStatsUploader;
 static CSimDefault_IPhysicsCollision s_PhysicsCollision;
 static CSimDefault_IPhysicsSurfaceProps s_PhysicsSurfaceProps;
 static CSimDefault_IPhysicsEnvironment s_PhysicsEnvironment;
@@ -166,6 +167,7 @@ static CSimDefault_IPhysicsEnvironment s_PhysicsEnvironment;
 extern IFileSystem *g_pFullFileSystem;
 extern IFileSystem *filesystem;
 extern ISceneFileCache *scenefilecache;
+extern IUploadGameStats *gamestatsuploader;
 extern ILagCompensationManager *lagcompensation;
 extern ITempEntsSystem *te;
 extern IResponseSystem *g_pResponseSystem;
@@ -178,6 +180,9 @@ extern IPhysicsObjectPairHash *g_EntityCollisionHash;
 
 extern ISoundEmitterSystemBase *soundemitterbase;
 extern IServerPluginHelpers *serverpluginhelpers;
+extern void InitializeCvars( void );
+extern ConVar *sv_cheats;
+extern ConVar *sv_maxreplay;
 
 void SimEngine_InstallDefaults()
 {
@@ -193,14 +198,17 @@ void SimEngine_InstallDefaults()
 	networkstringtable = SimEngine_StringTables();
 	scriptmanager = &s_ScriptManager;
 	scenefilecache = &s_SceneFileCache;
+	gamestatsuploader = &s_GameStatsUploader;
 	g_pFullFileSystem = SimEngine_CreateFileSystem();
 	filesystem = g_pFullFileSystem;
 	physcollision = &s_PhysicsCollision;
 	physprops = &s_PhysicsSurfaceProps;
 	physenv = &s_PhysicsEnvironment;
 	g_EntityCollisionHash = SimEngine_CreateObjectPairHash();
-	g_pCVar = SimEngine_CreateCvar();
-	ConVar_Register();
+	cvar = g_pCVar = SimEngine_CreateCvar();
+	InitializeCvars();
+	sv_cheats = g_pCVar->FindVar( "sv_cheats" );
+	sv_maxreplay = g_pCVar->FindVar( "sv_maxreplay" );
 	if ( !TheNavMesh )
 		TheNavMesh = NavMeshFactory();
 }

@@ -117,3 +117,20 @@ ICvar *SimEngine_CreateCvar()
 	static CSimCvar s_Cvar;
 	return &s_Cvar;
 }
+
+static ConVar sim_sv_cheats( "sv_cheats", "0", FCVAR_NOTIFY | FCVAR_REPLICATED );
+static ConVar sim_developer( "developer", "0", 0 );
+static ConVar sim_commentary( "commentary", "0", FCVAR_ARCHIVE );
+static ConVar sim_host_thread_mode( "host_thread_mode", "0", 0 );
+static ConVar sim_host_timescale( "host_timescale", "1", FCVAR_REPLICATED | FCVAR_CHEAT );
+static ConVar sim_hide_server( "hide_server", "0", 0 );
+static ConVar sim_hostip( "hostip", "0", 0 );
+static ConVar sim_hostport( "hostport", "27015", 0 );
+static ConVar sim_closecaption( "closecaption", "0", FCVAR_ARCHIVE | FCVAR_USERINFO );
+static ConVar sim_sv_maxreplay( "sv_maxreplay", "0", 0 );
+static ConVar sim_sv_minupdaterate( "sv_minupdaterate", "10", FCVAR_REPLICATED );
+static ConVar sim_sv_maxupdaterate( "sv_maxupdaterate", "66", FCVAR_REPLICATED );
+static ConVar sim_sv_client_min_interp_ratio( "sv_client_min_interp_ratio", "1", FCVAR_REPLICATED );
+static ConVar sim_sv_client_max_interp_ratio( "sv_client_max_interp_ratio", "5", FCVAR_REPLICATED );
+static ConVar sim_cl_forwardspeed( "cl_forwardspeed", "450", FCVAR_REPLICATED | FCVAR_CHEAT );
+static ConVar sim_snd_mixahead( "snd_mixahead", "0.1", FCVAR_ARCHIVE );

@@ -36,7 +36,6 @@
 	void CrosshairAngle( const edict_t *pClient, float pitch, float yaw ) override {  }
 	int CompareFileTime( const char *filename1, const char *filename2, int *iCompare ) override { return int(); }
 	bool LockNetworkStringTables( bool lock ) override { return false; }
-	edict_t * CreateFakeClient( const char *netname ) override { return 0; }
 	const char * GetClientConVarValue( int clientIndex, const char *name ) override { return 0; }
 	const char * ParseFile( const char *data, char *token, int maxlen ) override { return 0; }
 	bool CopyFile( const char *source, const char *destination ) override { return false; }
@@ -52,7 +51,6 @@
 	bool LoadGameState( char const *pMapName, bool createPlayers ) override { return false; }
 	void LoadAdjacentEnts( const char *pOldLevel, const char *pLandmarkName ) override {  }
 	void ClearSaveDir(  ) override {  }
-	const char* GetMapEntitiesString(  ) override { return 0; }
 	client_textmessage_t * TextMessageGet( const char *pName ) override { return 0; }
 	void LogPrint( const char *msg ) override {  }
 	void BuildEntityClusterList( edict_t *pEdict, PVSInfo_t *pPVSInfo ) override {  }
@@ -95,7 +93,6 @@
 	const CSteamID * GetClientSteamIDByPlayerIndex( int entnum ) override { return 0; }
 	int GetClusterCount(  ) override { return int(); }
 	int GetAllClusterBounds( bbox_t *pBBoxList, int maxBBox ) override { return int(); }
-	edict_t * CreateFakeClientEx( const char *netname, bool bReportFakeClient ) override { return 0; }
 	int GetServerVersion(  ) const override { return int(); }
 	float GetServerTime(  ) const override { return 0.0f; }
 	IServer * GetIServer(  ) override { return 0; }

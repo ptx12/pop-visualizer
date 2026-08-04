@@ -25,7 +25,7 @@
   "type": "module",
   "scripts": {
     "start": "electron .",
-    "test": "node test/roundtrip.mjs && node test/hardening.mjs && node test/vtfkernel.mjs && node test/lzmakernel.mjs && node test/bakekernel.mjs && node test/collision.mjs && node test/vmt.mjs && node test/gamefs.mjs && node test/navpick.mjs && node test/tonemap.mjs && node test/mapassets.mjs && node test/botanims.mjs && node test/entities.mjs && node test/movers.mjs && node test/random.mjs && node test/popfile.mjs",
+    "test": "node test/roundtrip.mjs && node test/hardening.mjs && node test/vtfkernel.mjs && node test/lzmakernel.mjs && node test/bakekernel.mjs && node test/collision.mjs && node test/vmt.mjs && node test/gamefs.mjs && node test/navpick.mjs && node test/tonemap.mjs && node test/mapassets.mjs && node test/botanims.mjs && node test/entities.mjs && node test/movers.mjs && node test/random.mjs && node test/popfile.mjs && node test/robots.mjs",
     "dev": "node test/devserver.mjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
