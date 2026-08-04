@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { loadEntitySim, entitySimMovers, entitySimPathChain } from '../shared/entssim.js';
-import { readEntityLump, parseEntities, readModels, doorRecord, pathTracks, chainLength } from '../shared/bsp.js';
+import { readEntityLump, parseEntities, readModels, doorRecord, pathTracks, chainLength, readDynamicProps } from '../shared/bsp.js';
 
 let pass = 0, fail = 0;
 const check = (name, cond, detail) => {
@@ -42,6 +42,8 @@ let lipCorrected = 0, lipCases = 0;
 const templatePhantoms = [];
 let chainsChecked = 0, chainsAgree = 0, linkedBothWays = 0, linkedNodes = 0, forwardLinks = 0;
 let keyed = 0, monotonic = 0, inRange = 0, waveOpened = 0, waveDurationExact = 0;
+let parentedProps = 0, propsPlacedRight = 0;
+const propMisses = [];
 
 for (const map of maps) {
   const bspPath = `${MAPS_DIR}/${map}.bsp`;
@@ -108,6 +110,34 @@ for (const map of maps) {
   check(`${map} exposes its movers by brush model index`,
     !!lookup && movers.every(m => lookup.get(m.model) === m));
 
+  const spawnedProps = new Map();
+  for (const e of sim.entities()) {
+    if (e.classname !== 'prop_dynamic') continue;
+    if (!spawnedProps.has(e.classname)) spawnedProps.set(e.classname, []);
+    spawnedProps.get(e.classname).push(e);
+  }
+  const lumpProps = ents.filter(e => e.classname === 'prop_dynamic');
+  const spawnedList = spawnedProps.get('prop_dynamic') || [];
+  if (spawnedList.length === lumpProps.length) {
+    const moverByName = new Map();
+    for (const m of movers) if (m.name) moverByName.set(m.name, m);
+    for (let i = 0; i < lumpProps.length; i++) {
+      const parent = String(lumpProps[i].parentname || '').trim().toLowerCase();
+      const mover = parent ? moverByName.get(parent) : null;
+      if (!mover || mover.kind !== 'linear') continue;
+      parentedProps++;
+      const o = String(lumpProps[i].origin || '0 0 0').trim().split(/\s+/).map(Number);
+      const frac = mover.keys[0].frac;
+      const drawn = [o[0] + mover.dir[0] * mover.travel * frac,
+        o[1] + mover.dir[1] * mover.travel * frac,
+        o[2] + mover.dir[2] * mover.travel * frac];
+      const real = spawnedList[i].origin;
+      const d = Math.hypot(drawn[0] - real[0], drawn[1] - real[1], drawn[2] - real[2]);
+      if (d < 1e-2) propsPlacedRight++;
+      else propMisses.push(`${map} ${parent} off by ${d.toFixed(2)}u`);
+    }
+  }
+
   const jsTracks = pathTracks(ents);
   for (const [name] of jsTracks) {
     const a = chainLength(jsTracks, name);
@@ -145,6 +175,10 @@ check('keyframes advance in time and stay within the open range',
   `${monotonic} monotonic, ${inRange} in range, of ${totalMovers}`);
 check('a door the wave start opens takes exactly its own travel time',
   waveOpened > 0 && waveDurationExact === waveOpened, `${waveDurationExact}/${waveOpened}`);
+
+check('props parented to a mover draw where the engine actually puts them',
+  parentedProps > 0 && propsPlacedRight === parentedProps,
+  `${propsPlacedRight}/${parentedProps}` + (propMisses.length ? ' — ' + propMisses.join(', ') : ''));
 
 check('CPathTrack::Link built a real path graph', linkedNodes > 0, linkedNodes + ' nodes');
 check('every forward link has the matching back link Link() sets',
