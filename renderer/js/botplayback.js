@@ -155,7 +155,7 @@ function lerpAngle(a, b, f) {
 }
 
 export function createBotSim(wave, sim, mapData, opts = {}) {
-  const state = { done: false, actors: [], waveSpawns: [], end: 0, note: null, requested: false };
+  const state = { done: false, actors: [], waveSpawns: [], end: 0, bomb: null, note: null, requested: false };
 
   const request = () => {
     state.requested = true;
@@ -179,6 +179,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       state.actors = (r.actors || []).map(a => prepare(a, wave, opts.missions));
       state.waveSpawns = r.waveSpawns || [];
       state.end = r.end || 0;
+      state.bomb = r.bomb || null;
       state.note = r.note || null;
       state.done = true;
     }).catch(err => {
@@ -200,6 +201,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
         actors: state.actors,
         waveSpawns: state.waveSpawns,
         end: state.end,
+        bomb: state.bomb,
         note: state.note,
         unavailable: !state.actors.length,
         source: 'source'

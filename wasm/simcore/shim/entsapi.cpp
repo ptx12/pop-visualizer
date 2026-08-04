@@ -18,6 +18,7 @@
 #include "tf_objective_resource.h"
 #include "player_vs_environment/tf_mann_vs_machine_logic.h"
 #include "player_vs_environment/tf_tank_boss.h"
+#include "entity_capture_flag.h"
 
 #include <emscripten/emscripten.h>
 #include <stdlib.h>
@@ -696,6 +697,53 @@ EMSCRIPTEN_KEEPALIVE int sim_bots_add( const char *pTeam, const char *pClass )
 
 	SimInvalidateIndex();
 	return pBot->entindex();
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bomb_upgrade_level()
+{
+	return TFObjectiveResource() ? TFObjectiveResource()->GetFlagCarrierUpgradeLevel() : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE float sim_bomb_upgrade_base_time()
+{
+	return TFObjectiveResource() ? TFObjectiveResource()->GetBaseMvMBombUpgradeTime() : 0.0f;
+}
+
+EMSCRIPTEN_KEEPALIVE float sim_bomb_upgrade_next_time()
+{
+	return TFObjectiveResource() ? TFObjectiveResource()->GetNextMvMBombUpgradeTime() : 0.0f;
+}
+
+static CCaptureFlag *SimFindFlag()
+{
+	for ( int i = 0; i < ICaptureFlagAutoList::AutoList().Count(); i++ )
+	{
+		CCaptureFlag *pFlag = static_cast< CCaptureFlag * >( ICaptureFlagAutoList::AutoList()[ i ] );
+		if ( pFlag )
+			return pFlag;
+	}
+	return NULL;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bomb_state()
+{
+	CCaptureFlag *pFlag = SimFindFlag();
+	if ( !pFlag )
+		return -1;
+	if ( pFlag->IsStolen() )
+		return 2;
+	if ( pFlag->IsDropped() )
+		return 1;
+	if ( pFlag->IsHome() )
+		return 0;
+	return 3;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bomb_carrier()
+{
+	CCaptureFlag *pFlag = SimFindFlag();
+	CBaseEntity *pOwner = pFlag ? pFlag->GetOwnerEntity() : NULL;
+	return pOwner ? pOwner->entindex() : 0;
 }
 
 struct SimKillZone_t

@@ -251,6 +251,13 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
   let startT = 0;
   let end = 0;
 
+  const bombLog = [];
+  const bombAvailable = typeof ex.sim_bomb_state === 'function';
+  let bombLevel = -1;
+  let bombState = -1;
+  let bombCarrier = -1;
+  let deliveredAt = null;
+
   let killed = 0;
   for (let tick = 1; tick <= limit; tick++) {
     ex.sim_ents_frame();
@@ -266,6 +273,28 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
     if (!started || tick % SAMPLE_TICKS !== 0) continue;
 
     const t = ex.sim_ents_curtime() - startT;
+
+    if (bombAvailable) {
+      const state = ex.sim_bomb_state();
+      const level = ex.sim_bomb_upgrade_level();
+      const carrier = ex.sim_bomb_carrier();
+      if (state !== bombState || level !== bombLevel || carrier !== bombCarrier) {
+        const kind = state === 2 ? 'carry' : state === 1 ? 'drop' : state === 0 ? 'home' : 'other';
+        bombLog.push({
+          t,
+          kind,
+          level,
+          carrier,
+          upgradeAt: ex.sim_bomb_upgrade_next_time() - ex.sim_ents_curtime() + t,
+          tauntUntil: 0
+        });
+        bombState = state;
+        bombLevel = level;
+        bombCarrier = carrier;
+      }
+      if (deliveredAt === null && state === 0 && bombLog.some(e => e.kind === 'carry')) deliveredAt = t;
+    }
+
     const written = ex.sim_bots_state(out, 64);
     const f = new Float32Array(ex.memory.buffer, out, written * 12);
     for (let i = 0; i < written; i++) {
@@ -385,6 +414,7 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
     killed,
     tracked: actors.size,
     killZones: zones.length,
+    bomb: bombLog.length ? { log: bombLog, maxLevel: 3, deliveredAt } : null,
     note: list.length ? null : 'The wave produced no robots in the simulated window.'
   };
 }
