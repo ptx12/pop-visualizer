@@ -19,6 +19,7 @@
 #include "player_vs_environment/tf_mann_vs_machine_logic.h"
 #include "player_vs_environment/tf_tank_boss.h"
 #include "entity_capture_flag.h"
+#include "nav_mesh/tf_nav_area.h"
 
 #include <emscripten/emscripten.h>
 #include <stdlib.h>
@@ -744,6 +745,113 @@ EMSCRIPTEN_KEEPALIVE int sim_bomb_carrier()
 	CCaptureFlag *pFlag = SimFindFlag();
 	CBaseEntity *pOwner = pFlag ? pFlag->GetOwnerEntity() : NULL;
 	return pOwner ? pOwner->entindex() : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bomb_count()
+{
+	return ICaptureFlagAutoList::AutoList().Count();
+}
+
+static CCaptureFlag *SimFlagAt( int slot )
+{
+	if ( slot < 0 || slot >= ICaptureFlagAutoList::AutoList().Count() )
+		return NULL;
+	return static_cast< CCaptureFlag * >( ICaptureFlagAutoList::AutoList()[ slot ] );
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bomb_state_at( int slot )
+{
+	CCaptureFlag *pFlag = SimFlagAt( slot );
+	if ( !pFlag )
+		return -1;
+	if ( pFlag->IsStolen() )
+		return 2;
+	if ( pFlag->IsDropped() )
+		return 1;
+	if ( pFlag->IsHome() )
+		return 0;
+	return 3;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bomb_carrier_at( int slot )
+{
+	CCaptureFlag *pFlag = SimFlagAt( slot );
+	CBaseEntity *pOwner = pFlag ? pFlag->GetOwnerEntity() : NULL;
+	return pOwner ? pOwner->entindex() : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bomb_followers( int slot )
+{
+	CCaptureFlag *pFlag = SimFlagAt( slot );
+	return pFlag ? pFlag->GetNumFollowers() : -1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bomb_entindex( int slot )
+{
+	CCaptureFlag *pFlag = SimFlagAt( slot );
+	return pFlag ? pFlag->entindex() : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE float sim_bomb_origin( int slot, int axis )
+{
+	CCaptureFlag *pFlag = SimFlagAt( slot );
+	if ( !pFlag || axis < 0 || axis > 2 )
+		return 0.0f;
+	return pFlag->GetAbsOrigin()[ axis ];
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bomb_disabled( int slot )
+{
+	CCaptureFlag *pFlag = SimFlagAt( slot );
+	return pFlag ? ( pFlag->IsDisabled() ? 1 : 0 ) : -1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_nav_attr_count( int attr )
+{
+	int count = 0;
+	FOR_EACH_VEC( TheNavAreas, it )
+	{
+		CTFNavArea *pArea = static_cast< CTFNavArea * >( TheNavAreas[ it ] );
+		if ( pArea && pArea->HasAttributeTF( attr ) )
+			count++;
+	}
+	return count;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_nav_bomb_target_reached()
+{
+	int count = 0;
+	FOR_EACH_VEC( TheNavAreas, it )
+	{
+		CTFNavArea *pArea = static_cast< CTFNavArea * >( TheNavAreas[ it ] );
+		if ( pArea && pArea->GetTravelDistanceToBombTarget() >= 0.0f )
+			count++;
+	}
+	return count;
+}
+
+EMSCRIPTEN_KEEPALIVE float sim_nav_bomb_target_max()
+{
+	float best = -1.0f;
+	FOR_EACH_VEC( TheNavAreas, it )
+	{
+		CTFNavArea *pArea = static_cast< CTFNavArea * >( TheNavAreas[ it ] );
+		if ( pArea && pArea->GetTravelDistanceToBombTarget() > best )
+			best = pArea->GetTravelDistanceToBombTarget();
+	}
+	return best;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_nav_bomb_target_origins()
+{
+	int count = 0;
+	FOR_EACH_VEC( TheNavAreas, it )
+	{
+		CTFNavArea *pArea = static_cast< CTFNavArea * >( TheNavAreas[ it ] );
+		if ( pArea && pArea->GetTravelDistanceToBombTarget() == 0.0f )
+			count++;
+	}
+	return count;
 }
 
 struct SimKillZone_t

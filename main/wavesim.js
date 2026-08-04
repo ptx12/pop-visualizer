@@ -123,6 +123,14 @@ function instantiate() {
   return { imports, spew, attach: e => { ex = e; }, decoder };
 }
 
+function entityBlock(ent) {
+  if (typeof ent === 'string') return ent.trim() + '\n';
+  const pairs = Object.entries(ent || {})
+    .filter(([k, v]) => k && v !== undefined && v !== null)
+    .map(([k, v]) => `"${k}" "${String(v).replace(/"/g, '')}"`);
+  return pairs.length ? '{\n' + pairs.join('\n') + '\n}\n' : '';
+}
+
 function popfilesOnDisk(dir) {
   const out = [];
   try {
@@ -133,7 +141,7 @@ function popfilesOnDisk(dir) {
   return out;
 }
 
-export async function simulateWave({ bspPath, mapName, popShortName, popPath, popDir, waveIndex = 0, seconds = 120, killPoints = [], tfPath }) {
+export async function simulateWave({ bspPath, mapName, popShortName, popPath, popDir, waveIndex = 0, seconds = 120, killPoints = [], extraEntities = [], tfPath }) {
   const resolvedTF = tfPath || await (await import('./tfpath.js')).detectTFPath();
   if (!resolvedTF) return { actors: [], end: 0, note: 'Team Fortress 2 was not found.' };
   if (!fs.existsSync(bspPath)) return { actors: [], end: 0, note: 'The map bsp was not found.' };
@@ -209,8 +217,9 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
   const ti = L(6), td = L(2), st = L(44), sd = L(43);
   ex.sim_ents_load_surfaces(ti.ptr, ti.len, td.ptr, td.len, st.ptr, st.len, sd.ptr, sd.len);
 
-  const lumpText = readEntityLump(bspPath);
-  if (!lumpText) return { actors: [], end: 0, note: 'The map entity lump could not be read.' };
+  const baseLump = readEntityLump(bspPath);
+  if (!baseLump) return { actors: [], end: 0, note: 'The map entity lump could not be read.' };
+  const lumpText = baseLump + (extraEntities || []).map(entityBlock).join('');
   const lumpBytes = new TextEncoder().encode(lumpText);
   const lp = ex.sim_ents_alloc(lumpBytes.length + 1);
   mem().set(lumpBytes, lp);
@@ -258,6 +267,18 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
   let bombCarrier = -1;
   let deliveredAt = null;
 
+  const perBomb = typeof ex.sim_bomb_count === 'function'
+    ? Array.from({ length: ex.sim_bomb_count() }, (_, i) => ({
+        slot: i,
+        entindex: ex.sim_bomb_entindex(i),
+        home: [ex.sim_bomb_origin(i, 0), ex.sim_bomb_origin(i, 1), ex.sim_bomb_origin(i, 2)],
+        origin: null,
+        followersMax: 0,
+        carriers: [],
+        states: new Set()
+      }))
+    : [];
+
   let killed = 0;
   for (let tick = 1; tick <= limit; tick++) {
     ex.sim_ents_frame();
@@ -293,6 +314,14 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
         bombCarrier = carrier;
       }
       if (deliveredAt === null && state === 0 && bombLog.some(e => e.kind === 'carry')) deliveredAt = t;
+
+      for (const b of perBomb) {
+        b.origin = [ex.sim_bomb_origin(b.slot, 0), ex.sim_bomb_origin(b.slot, 1), ex.sim_bomb_origin(b.slot, 2)];
+        b.followersMax = Math.max(b.followersMax, ex.sim_bomb_followers(b.slot));
+        b.states.add(ex.sim_bomb_state_at(b.slot));
+        const who = ex.sim_bomb_carrier_at(b.slot);
+        if (who && !b.carriers.includes(who)) b.carriers.push(who);
+      }
     }
 
     const written = ex.sim_bots_state(out, 64);
@@ -404,6 +433,37 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
     });
   }
 
+  const TF_NAV_SPAWN_ROOM_RED = 0x00000002;
+  const TF_NAV_SPAWN_ROOM_BLUE = 0x00000004;
+  const TF_NAV_NO_SPAWNING = 0x02000000;
+  const TF_NAV_BOMB_CAN_DROP_HERE = 0x08000000;
+  const spawnRooms = TF_NAV_SPAWN_ROOM_RED | TF_NAV_SPAWN_ROOM_BLUE;
+  const navStats = typeof ex.sim_nav_attr_count === 'function' ? {
+    areas: ex.sim_nav_area_count(),
+    bombDrop: ex.sim_nav_attr_count(TF_NAV_BOMB_CAN_DROP_HERE),
+    spawnRoom: ex.sim_nav_attr_count(spawnRooms),
+    blueSpawnRoom: ex.sim_nav_attr_count(TF_NAV_SPAWN_ROOM_BLUE),
+    bombDropOrSpawnRoom: ex.sim_nav_attr_count(TF_NAV_BOMB_CAN_DROP_HERE | spawnRooms),
+    noSpawning: ex.sim_nav_attr_count(TF_NAV_NO_SPAWNING),
+    targetReached: ex.sim_nav_bomb_target_reached(),
+    targetOrigins: ex.sim_nav_bomb_target_origins(),
+    targetMax: ex.sim_nav_bomb_target_max()
+  } : null;
+
+  const bombs = perBomb.map(b => ({
+    slot: b.slot,
+    entindex: b.entindex,
+    home: b.home,
+    origin: b.origin || b.home,
+    state: ex.sim_bomb_state_at(b.slot),
+    carrier: ex.sim_bomb_carrier_at(b.slot),
+    followers: ex.sim_bomb_followers(b.slot),
+    followersMax: b.followersMax,
+    carriers: b.carriers,
+    states: [...b.states],
+    disabled: ex.sim_bomb_disabled(b.slot) === 1
+  }));
+
   return {
     actors: list,
     waveSpawns,
@@ -414,6 +474,8 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
     killed,
     tracked: actors.size,
     killZones: zones.length,
+    nav: navStats,
+    bombs,
     bomb: bombLog.length ? { log: bombLog, maxLevel: 3, deliveredAt } : null,
     note: list.length ? null : 'The wave produced no robots in the simulated window.'
   };
