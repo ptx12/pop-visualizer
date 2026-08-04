@@ -275,6 +275,44 @@ if (run.actors.length) {
   check('robot model scale is real and positive',
     run.actors.every(a => a.scale > 0 && a.scale <= 4), run.actors.map(a => a.scale.toFixed(2)).join(','));
 
+  const { botModelBase, botWeaponModels, botCosmeticModels, botActivity } = await import('../renderer/js/botmodels.js');
+  const { botDisplayName } = await import('../renderer/js/popmodel.js');
+  const { botMaxSpeed } = await import('../renderer/js/navpaths.js');
+
+  const drawn = linked.filter(l => l.spec).map(l => {
+    const bot = { ...l.spec };
+    return {
+      model: botModelBase(bot),
+      weapons: botWeaponModels(bot, bot.itemStyles),
+      cosmetics: botCosmeticModels(bot, bot.itemStyles),
+      activity: botActivity(bot),
+      label: botDisplayName(bot),
+      speed: botMaxSpeed(bot, false)
+    };
+  });
+
+  check('the map view resolves a model for every matched robot',
+    drawn.length > 0 && drawn.every(d => typeof d.model === 'string' && d.model.startsWith('models/')),
+    [...new Set(drawn.map(d => d.model))].join(', '));
+  check('the map view resolves a display name for every matched robot',
+    drawn.every(d => d.label && d.label.length > 0), [...new Set(drawn.map(d => d.label))].join(', '));
+  check('the map view resolves a walk speed for every matched robot',
+    drawn.every(d => Number.isFinite(d.speed) && d.speed > 0),
+    [...new Set(drawn.map(d => Math.round(d.speed)))].join(','));
+  check('weapon and cosmetic lookups return arrays, not throws',
+    drawn.every(d => Array.isArray(d.weapons) && Array.isArray(d.cosmetics)));
+
+  const tip = a => `${botDisplayName(a.bot)} — ${a.bot.health} HP\n${a.state}\nfrom "${a.ws.name || 'unnamed'}"`;
+  const prepared = run.actors.map(a => {
+    const l = matchSpawner(a, wave0, model.missions);
+    return { ...a, bot: l.spec || { cls: a.cls, health: a.maxHealth }, ws: l.ws };
+  });
+  check('the hover tooltip never dereferences a missing wavespawn',
+    prepared.every(a => typeof tip(a) === 'string' && !tip(a).includes('undefined')),
+    prepared.map(a => tip(a).split('\n')[0]).slice(0, 3).join(' | '));
+
+  console.log(`  models: ${[...new Set(drawn.map(d => d.model))].join(', ')}`);
+
   const names = [...new Set(run.actors.map(a => a.name))];
   console.log(`  identities: ${names.join(', ')}`);
   console.log(`  wavespawn ordinals: ${run.actors.map(a => a.wsIndex).join(',')}`);
