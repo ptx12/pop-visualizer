@@ -6,6 +6,7 @@
 #include "igamesystem.h"
 #include "gameinterface.h"
 #include "pathtrack.h"
+#include "vstdlib/random.h"
 
 #include <emscripten/emscripten.h>
 #include <stdlib.h>
@@ -374,6 +375,21 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_fire_input_index( int index, const char *pInpu
 
 	g_EventQueue.AddEvent( pEnt, pInput, value, delay, NULL, NULL );
 	return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE void sim_ents_random_seed( int seed )
+{
+	RandomSeed( seed );
+}
+
+EMSCRIPTEN_KEEPALIVE float sim_ents_random_float( float flLow, float flHigh )
+{
+	return RandomFloat( flLow, flHigh );
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_ents_random_int( int iLow, int iHigh )
+{
+	return RandomInt( iLow, iHigh );
 }
 
 EMSCRIPTEN_KEEPALIVE int sim_ents_handle( int index )
