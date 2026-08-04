@@ -133,7 +133,7 @@ function popfilesOnDisk(dir) {
   return out;
 }
 
-export async function simulateWave({ bspPath, mapName, popShortName, popPath, popDir, waveIndex = 0, seconds = 120, tfPath }) {
+export async function simulateWave({ bspPath, mapName, popShortName, popPath, popDir, waveIndex = 0, seconds = 120, killPoints = [], tfPath }) {
   const resolvedTF = tfPath || await (await import('./tfpath.js')).detectTFPath();
   if (!resolvedTF) return { actors: [], end: 0, note: 'Team Fortress 2 was not found.' };
   if (!fs.existsSync(bspPath)) return { actors: [], end: 0, note: 'The map bsp was not found.' };
@@ -228,6 +228,19 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
   ex.sim_ents_full_frame(1);
   ex.sim_bots_add(push('red'), push('scout'));
 
+  const zones = (killPoints || []).filter(k => Array.isArray(k) && Number.isFinite(k[0]) && Number.isFinite(k[1]) && k[2] > 0);
+  const killZonesActive = zones.length > 0 && typeof ex.sim_killzones_set === 'function';
+  if (killZonesActive) {
+    const zp = ex.sim_ents_alloc(zones.length * 3 * 4);
+    const zf = new Float32Array(ex.memory.buffer, zp, zones.length * 3);
+    for (let i = 0; i < zones.length; i++) {
+      zf[i * 3] = zones[i][0];
+      zf[i * 3 + 1] = zones[i][1];
+      zf[i * 3 + 2] = zones[i][2];
+    }
+    ex.sim_killzones_set(zp, zones.length);
+  }
+
   const out = ex.sim_ents_alloc(64 * 12 * 4);
   const tankOut = ex.sim_ents_alloc(16 * 9 * 4);
   const actors = new Map();
@@ -238,8 +251,10 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
   let startT = 0;
   let end = 0;
 
+  let killed = 0;
   for (let tick = 1; tick <= limit; tick++) {
     ex.sim_ents_frame();
+    if (killZonesActive) killed += ex.sim_killzones_apply();
     if (!jumped && ex.sim_pop_wave_count() > waveIndex) {
       jumped = ex.sim_pop_jump_to_wave(waveIndex) === 1;
     }
@@ -259,6 +274,11 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
       const index = b[0];
       const handle = ex.sim_bots_handle(index);
       const key = handle || index;
+      if (b[10] <= 0) {
+        const dead = actors.get(key);
+        if (dead && !Number.isFinite(dead.dieT)) dead.dieT = t;
+        continue;
+      }
       let a = actors.get(key);
       if (!a) {
         a = {
@@ -335,7 +355,7 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
   const gone = SAMPLE_TICKS * TICK_INTERVAL * 2;
   const list = [...actors.values()].filter(a => a.track.length > 1);
   for (const a of list) {
-    a.dieT = a.lastT < end - gone ? a.lastT : Infinity;
+    if (!Number.isFinite(a.dieT)) a.dieT = a.lastT < end - gone ? a.lastT : Infinity;
     a.state = Number.isFinite(a.dieT) ? 'died' : 'active';
     delete a.lastT;
   }
@@ -362,6 +382,9 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
     started,
     map: mapName,
     waveIndex,
+    killed,
+    tracked: actors.size,
+    killZones: zones.length,
     note: list.length ? null : 'The wave produced no robots in the simulated window.'
   };
 }
@@ -386,6 +409,7 @@ export async function register() {
         popShortName: o.popShortName,
         waveIndex: o.waveIndex || 0,
         seconds: o.seconds || 120,
+        killPoints: o.killPoints,
         tfPath
       });
     } catch (err) {

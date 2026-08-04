@@ -698,6 +698,78 @@ EMSCRIPTEN_KEEPALIVE int sim_bots_add( const char *pTeam, const char *pClass )
 	return pBot->entindex();
 }
 
+struct SimKillZone_t
+{
+	float x;
+	float y;
+	float radius;
+};
+
+static CUtlVector< SimKillZone_t > g_SimKillZones;
+
+EMSCRIPTEN_KEEPALIVE void sim_killzones_clear()
+{
+	g_SimKillZones.RemoveAll();
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_killzones_set( const float *pData, int count )
+{
+	g_SimKillZones.RemoveAll();
+	if ( !pData || count <= 0 )
+		return 0;
+
+	for ( int i = 0; i < count; i++ )
+	{
+		SimKillZone_t zone;
+		zone.x = pData[ i * 3 ];
+		zone.y = pData[ i * 3 + 1 ];
+		zone.radius = pData[ i * 3 + 2 ];
+		if ( zone.radius > 0.0f )
+			g_SimKillZones.AddToTail( zone );
+	}
+	return g_SimKillZones.Count();
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_killzones_count()
+{
+	return g_SimKillZones.Count();
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_killzones_apply()
+{
+	if ( !s_bInitialized || g_SimKillZones.Count() <= 0 )
+		return 0;
+
+	int killed = 0;
+	for ( int i = 1; i <= gpGlobals->maxClients; i++ )
+	{
+		CBasePlayer *pPlayer = UTIL_PlayerByIndex( i );
+		if ( !pPlayer || !pPlayer->IsBot() || !pPlayer->IsAlive() )
+			continue;
+
+		if ( pPlayer->GetTeamNumber() != TF_TEAM_PVE_INVADERS )
+			continue;
+
+		const Vector &origin = pPlayer->GetAbsOrigin();
+		for ( int z = 0; z < g_SimKillZones.Count(); z++ )
+		{
+			const SimKillZone_t &zone = g_SimKillZones[ z ];
+			float dx = zone.x - origin.x;
+			float dy = zone.y - origin.y;
+			if ( dx * dx + dy * dy > zone.radius * zone.radius )
+				continue;
+
+			pPlayer->CommitSuicide( false, true );
+			killed++;
+			break;
+		}
+	}
+
+	if ( killed )
+		SimInvalidateIndex();
+	return killed;
+}
+
 EMSCRIPTEN_KEEPALIVE int sim_cvar_set( const char *pName, const char *pValue )
 {
 	if ( !g_pCVar || !pName || !pValue )

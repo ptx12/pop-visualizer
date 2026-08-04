@@ -1,4 +1,5 @@
 import { normalizeClass } from './popmodel.js';
+import { killRadiusOf } from './killzones.js';
 
 export const PLAYBACK_UNAVAILABLE_NOTE = 'Bot movement playback needs the desktop app and a navigation mesh for this map.';
 
@@ -168,7 +169,11 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       popPath: opts.popPath || null,
       popDir: opts.popDir || null,
       waveIndex: wave ? wave.index : 0,
-      seconds: opts.seconds || SIM_SECONDS
+      seconds: opts.seconds || SIM_SECONDS,
+      killPoints: (Array.isArray(opts.killPoints) ? opts.killPoints : [])
+        .filter(kp => Array.isArray(kp) && Number.isFinite(kp[0]) && Number.isFinite(kp[1]))
+        .map(kp => [kp[0], kp[1], killRadiusOf(kp)]),
+      deathModel: opts.deathModel || null
     }).then(res => {
       const r = res || {};
       state.actors = (r.actors || []).map(a => prepare(a, wave, opts.missions));
