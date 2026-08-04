@@ -119,3 +119,7 @@ if __name__ == "__main__":
     }
     emit(sdk + "/public/eiface.h", "IVEngineServer", out + "/engineserver_generated.inl", engine_skip)
     emit(sdk + "/public/engine/IVModelInfo.h", "IVModelInfo", out + "/modelinfo_generated.inl", model_skip)
+
+    partition_skip = {"CreateHandle", "DestroyHandle"}
+    emit(sdk + "/public/ispatialpartition.h", "ISpatialPartition",
+         out + "/spatialpartition_generated.inl", partition_skip)

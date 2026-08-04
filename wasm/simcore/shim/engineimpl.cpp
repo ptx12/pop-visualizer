@@ -6,6 +6,7 @@
 #include "utlvector.h"
 #include "utlstring.h"
 #include "model_types.h"
+#include "ispatialpartition.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -234,6 +235,33 @@ public:
 	virtualmodel_t *GetVirtualModel( const studiohdr_t *pStudioHdr ) const override { return 0; }
 };
 
+class CSimSpatialPartition : public ISpatialPartition
+{
+public:
+#include "generated/spatialpartition_generated.inl"
+
+	SpatialPartitionHandle_t CreateHandle( IHandleEntity *pHandleEntity ) override
+	{
+		return (SpatialPartitionHandle_t)m_Handles.AddToTail( pHandleEntity );
+	}
+
+	SpatialPartitionHandle_t CreateHandle( IHandleEntity *pHandleEntity,
+		SpatialPartitionListMask_t listMask, const Vector &mins, const Vector &maxs ) override
+	{
+		return CreateHandle( pHandleEntity );
+	}
+
+	void DestroyHandle( SpatialPartitionHandle_t handle ) override
+	{
+		if ( handle >= 0 && handle < m_Handles.Count() )
+			m_Handles[ handle ] = NULL;
+	}
+
+private:
+	CUtlVector< IHandleEntity * > m_Handles;
+};
+
+static CSimSpatialPartition g_SimSpatialPartition;
 static CSimEngineServer g_SimEngineServer;
 static CSimModelInfo g_SimModelInfo;
 
@@ -251,6 +279,7 @@ void SimEngine_Init( int nMaxEdicts )
 	g_pSharedChangeInfo = &g_SimChangeInfo;
 	engine = &g_SimEngineServer;
 	modelinfo = &g_SimModelInfo;
+	partition = &g_SimSpatialPartition;
 }
 
 void SimEngine_SetModelBounds( const char *name, const Vector &mins, const Vector &maxs )

@@ -183,8 +183,6 @@ namespace NWCEdit
 }
 
 
-#include "ispatialpartition.h"
-
 
 #include "te.h"
 #include "tier0/vcrmode.h"
@@ -410,14 +408,12 @@ void DisconnectTier3Libraries()
 {
 }
 
-bool ParseParticleEffects( bool bLoadSheets, bool bPrecache )
+void ParseParticleEffects( bool bLoadSheets, bool bPrecache )
 {
-	return false;
 }
 
-bool ParseParticleEffectsMap( const char *pMapName, bool bLoadSheets )
+void ParseParticleEffectsMap( const char *pMapName, bool bLoadSheets )
 {
-	return false;
 }
 
 void CreateNetworkStringTables_GameRules()
