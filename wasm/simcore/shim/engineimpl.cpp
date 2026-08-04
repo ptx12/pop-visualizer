@@ -265,16 +265,23 @@ static CSimSpatialPartition g_SimSpatialPartition;
 static CSimEngineServer g_SimEngineServer;
 static CSimModelInfo g_SimModelInfo;
 
+void SimEngine_InstallDefaults();
+
 void SimEngine_Init( int nMaxEdicts )
 {
 	if ( g_SimEdicts )
 		return;
 
+	SimEngine_InstallDefaults();
+
 	g_nSimEdicts = nMaxEdicts;
 	g_SimEdicts = (edict_t *)calloc( nMaxEdicts, sizeof( edict_t ) );
 	g_SimAccessors = (CSimChangeAccessor *)calloc( nMaxEdicts, sizeof( CSimChangeAccessor ) );
 	for ( int i = 0; i < nMaxEdicts; ++i )
+	{
+		g_SimEdicts[ i ].m_EdictIndex = i;
 		g_SimEdicts[ i ].SetFree();
+	}
 
 	g_pSharedChangeInfo = &g_SimChangeInfo;
 	engine = &g_SimEngineServer;

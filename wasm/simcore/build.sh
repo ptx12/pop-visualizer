@@ -31,7 +31,7 @@ INCLUDES=(
 )
 
 DEFINES=(
-  -DPOSIX -DLINUX -D_LINUX -DGNUC -DNDEBUG -DCOMPILER_GCC -DGAME_DLL
+  -DPOSIX -DLINUX -D_LINUX -DGNUC -DNDEBUG -DCOMPILER_GCC -DGAME_DLL -DNO_VCR
 )
 
 FLAGS=(
@@ -143,6 +143,17 @@ ENT_SOURCES=(
   "$SDK/game/server/baseviewmodel.cpp"
   "$SDK/game/shared/baseviewmodel_shared.cpp"
   "$SDK/game/shared/gamerules.cpp"
+  "$SDK/game/shared/gamerules_register.cpp"
+  "$SDK/game/shared/multiplay_gamerules.cpp"
+  "$SDK/game/shared/teamplay_gamerules.cpp"
+  "$SDK/game/shared/mp_shareddefs.cpp"
+  "$SDK/game/shared/gamevars_shared.cpp"
+  "$SDK/game/shared/voice_gamemgr.cpp"
+  "$SDK/game/server/globals.cpp"
+  "$SDK/game/server/team.cpp"
+  "$SDK/game/server/player_resource.cpp"
+  "$SDK/game/server/basemultiplayerplayer.cpp"
+  "$SDK/game/server/tactical_mission.cpp"
   "$SDK/public/registry.cpp"
   "$SDK/game/server/GameStats_BasicStatsFunctions.cpp"
   "$SDK/game/server/playerlocaldata.cpp"
@@ -167,6 +178,7 @@ ENT_SOURCES=(
   "$SDK/game/server/RagdollBoogie.cpp"
   "$SDK/game/shared/precache_register.cpp"
   "$SDK/game/shared/physics_shared.cpp"
+  "$SDK/game/shared/physics_saverestore.cpp"
   "$SDK/public/bone_setup.cpp"
   "$SDK/game/server/physobj.cpp"
   "$SDK/game/server/physics_prop_ragdoll.cpp"
@@ -271,6 +283,8 @@ ENT_SOURCES=(
   "$HERE/shim/keyvaluesstub.cpp"
   "$HERE/shim/ssemath_wasm.cpp"
   "$HERE/shim/engineimpl.cpp"
+  "$HERE/shim/enginedefaults.cpp"
+  "$HERE/shim/stringtables.cpp"
   "$HERE/shim/entsapi.cpp"
 )
 
@@ -279,7 +293,14 @@ EXPORTS='_sim_collision_load,_sim_collision_stats,_sim_disp_load,_sim_disp_count
 mkdir -p "$OUT"
 mkdir -p "$OUT/generated"
 
-python "$HERE/tools/geniface.py" "$SDK" "$HERE/shim/generated" >/dev/null
+python "$HERE/tools/genclass.py" --tu "$OUT/genclass_tu.cpp"
+if ! em++ -E "$OUT/genclass_tu.cpp" -o "$OUT/genclass_tu.i" \
+    "${INCLUDES[@]}" "${DEFINES[@]}" "${FLAGS[@]}" 2>"$OUT/genclass_tu.log"; then
+  echo "  FAIL  interface preprocess"
+  tail -20 "$OUT/genclass_tu.log"
+  exit 1
+fi
+python "$HERE/tools/genclass.py" "$OUT/genclass_tu.i" "$HERE/shim/generated" >/dev/null
 
 for nut in "$SDK"/game/server/*.nut; do
   base="$(basename "${nut%.nut}")"
@@ -322,7 +343,7 @@ for src in "${ENT_SOURCES[@]}"; do
   name="$(basename "${src%.cpp}")"
   obj="$OUT/ents/$name.o"
   entobjs+=("$obj")
-  if [ "$obj" -nt "$src" ] && [ -f "$obj" ]; then continue; fi
+  if [ -f "$obj" ] && [ "$obj" -nt "$src" ] && [ "$obj" -nt "$HERE/build.sh" ]; then continue; fi
   if em++ -c "$src" -o "$obj" "${INCLUDES[@]}" "${DEFINES[@]}" "${FLAGS[@]}" 2>"$OUT/ents/$name.log"; then
     echo "  ok    $name"
   else
@@ -336,6 +357,12 @@ if em++ "${entobjs[@]}" -o "$OUT/ents.wasm" \
     --no-entry -sSTANDALONE_WASM -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=64MB \
     -sERROR_ON_UNDEFINED_SYMBOLS=1 2>"$OUT/entslink.log"; then
   echo "  ok    ents.wasm ($(stat -c%s "$OUT/ents.wasm") bytes)"
+  if [ -n "${NAMED:-}" ]; then
+    em++ "${entobjs[@]}" -o "$OUT/ents_named.wasm" \
+      --no-entry -sSTANDALONE_WASM -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=64MB \
+      --profiling-funcs -sERROR_ON_UNDEFINED_SYMBOLS=1 2>"$OUT/entslink_named.log" \
+      && echo "  ok    ents_named.wasm ($(stat -c%s "$OUT/ents_named.wasm") bytes)"
+  fi
 else
   echo "  link pending"
   grep -oE "(undefined|duplicate) symbol: .*" "$OUT/entslink.log" | sort -u | head -30

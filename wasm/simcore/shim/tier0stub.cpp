@@ -87,6 +87,7 @@ static void SimSpew(const char *prefix, const char *fmt, va_list args) {
   char buf[2048];
   vsnprintf(buf, sizeof(buf), fmt, args);
   fprintf(stderr, "%s%s", prefix, buf);
+  fflush(stderr);
 }
 
 #define SIM_SPEW_BODY(prefix)      \

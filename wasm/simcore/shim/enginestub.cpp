@@ -7,8 +7,6 @@
 #include "igameevents.h"
 #include "gamerules.h"
 
-Vector g_vecAttackDir;
-
 bool PhysIsInCallback()
 {
 	return false;
@@ -29,11 +27,6 @@ bool ScriptHookEnabled( const char *pszHook )
 
 void DispatchEffect( const char *pName, const CEffectData &data )
 {
-}
-
-ISaveRestoreOps *GetPhysObjSaveRestoreOps( PhysInterfaceId_t id )
-{
-	return NULL;
 }
 
 bool RunScriptHook( const char *pszHookName, HSCRIPT params )
@@ -98,11 +91,6 @@ bool VScriptRunScript( const char *pszScriptName, HSCRIPT hScope, bool bWarnMiss
 #include "engine/IEngineTrace.h"
 
 IFileSystem *g_pFullFileSystem = NULL;
-
-CTeam *GetGlobalTeam( int iIndex )
-{
-	return NULL;
-}
 
 CBaseEntity *GetNextCommandEntity( CBasePlayer *pPlayer, const char *name, CBaseEntity *ent )
 {
@@ -209,10 +197,24 @@ void PhysRemoveShadow( CBaseEntity *pEntity )
 
 #include "engine/IStaticPropMgr.h"
 
-bool g_fGameOver = false;
+#include "gamerules_register.h"
+#include "voice_gamemgr.h"
+
+class CSimVoiceGameMgrHelper : public IVoiceGameMgrHelper
+{
+public:
+	bool CanPlayerHearPlayer( CBasePlayer *pListener, CBasePlayer *pTalker, bool &bProximity ) override
+	{
+		return false;
+	}
+};
+
+static CSimVoiceGameMgrHelper s_VoiceGameMgrHelper;
+IVoiceGameMgrHelper *g_pVoiceGameMgrHelper = &s_VoiceGameMgrHelper;
 
 void InstallGameRules()
 {
+	CreateGameRulesObject( "CTeamplayRules" );
 }
 
 #include "ai_initutils.h"
@@ -355,7 +357,6 @@ void ExplosionCreate( const Vector &center, const QAngle &angles, CBaseEntity *p
 }
 
 IResponseSystem *g_pResponseSystem = NULL;
-ISaveRestoreOps *g_pPhysSaveRestoreManager = NULL;
 
 void FireSystem_AddHeatInRadius( const Vector &vecSrc, float flRadius, float flHeat )
 {
@@ -413,10 +414,6 @@ void ParseParticleEffects( bool bLoadSheets, bool bPrecache )
 }
 
 void ParseParticleEffectsMap( const char *pMapName, bool bLoadSheets )
-{
-}
-
-void CreateNetworkStringTables_GameRules()
 {
 }
 
@@ -516,11 +513,6 @@ ISaveRestoreBlockHandler *GetCommentarySaveRestoreBlockHandler()
 }
 
 ISaveRestoreBlockHandler *GetDefaultResponseSystemSaveRestoreBlockHandler()
-{
-	return NULL;
-}
-
-ISaveRestoreBlockHandler *GetPhysSaveRestoreBlockHandler()
 {
 	return NULL;
 }

@@ -4,6 +4,7 @@
 #include "entitylist.h"
 #include "edict.h"
 #include "igamesystem.h"
+#include "gameinterface.h"
 
 #include <emscripten/emscripten.h>
 #include <stdlib.h>
@@ -12,6 +13,7 @@
 extern CGlobalVars *gpGlobals;
 extern void Physics_RunThinkFunctions( bool simulating );
 extern void SimEngine_Init( int nMaxEdicts );
+extern CServerGameDLL g_ServerGameDLL;
 
 static CGlobalVars s_SimGlobals( false );
 static bool s_bInitialized = false;
@@ -65,6 +67,8 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_init( float tickInterval )
 	gpGlobals->tickcount = 0;
 	gpGlobals->maxClients = 0;
 	gpGlobals->maxEntities = MAX_EDICTS;
+
+	g_ServerGameDLL.CreateNetworkStringTables();
 
 	s_bInitialized = true;
 	return 1;
