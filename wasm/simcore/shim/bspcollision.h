@@ -92,12 +92,20 @@ class CollisionWorld {
   void TraceHull(const Vec3 &start, const Vec3 &end, const Vec3 &mins, const Vec3 &maxs,
                  int mask, TraceResult *out) const;
 
+  void TraceHullInModel(int modelIndex, const Vec3 &start, const Vec3 &end, const Vec3 &mins,
+                        const Vec3 &maxs, int mask, TraceResult *out) const;
+
   int PointContents(const Vec3 &p) const;
 
   int NumBrushes() const { return m_numBrushes; }
   int NumNodes() const { return m_numNodes; }
   int NumLeafs() const { return m_numLeafs; }
   int NumPlanes() const { return m_numPlanes; }
+  int NumModels() const { return m_numModels; }
+  const Model *GetModel(int i) const {
+    return (i >= 0 && i < m_numModels) ? (m_models + i) : 0;
+  }
+  int LeafContainingPoint(const Vec3 &p) const { return PointLeaf(p); }
 
  private:
   struct TraceWork {

@@ -285,6 +285,13 @@ ENT_SOURCES=(
   "$HERE/shim/engineimpl.cpp"
   "$HERE/shim/enginedefaults.cpp"
   "$HERE/shim/stringtables.cpp"
+  "$HERE/shim/enginetrace.cpp"
+  "$HERE/shim/bspcollision.cpp"
+  "$HERE/shim/dispcollision.cpp"
+  "$SDK/public/builddisp.cpp"
+  "$SDK/public/dispcoll_common.cpp"
+  "$SDK/public/disp_common.cpp"
+  "$SDK/public/disp_powerinfo.cpp"
   "$HERE/shim/entsapi.cpp"
 )
 

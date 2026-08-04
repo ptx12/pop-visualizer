@@ -351,11 +351,18 @@ void CollisionWorld::RecursiveHullCheck(TraceWork &w, int nodeNum, float p1f, fl
 
 void CollisionWorld::TraceHull(const Vec3 &start, const Vec3 &end, const Vec3 &mins,
                                const Vec3 &maxs, int mask, TraceResult *out) const {
+  TraceHullInModel(0, start, end, mins, maxs, mask, out);
+}
+
+void CollisionWorld::TraceHullInModel(int modelIndex, const Vec3 &start, const Vec3 &end,
+                                      const Vec3 &mins, const Vec3 &maxs, int mask,
+                                      TraceResult *out) const {
   memset(out, 0, sizeof(*out));
   out->fraction = 1.0f;
   out->endpos = end;
 
   if (!m_nodes || m_numNodes == 0) return;
+  if (modelIndex < 0 || (modelIndex > 0 && modelIndex >= m_numModels)) return;
 
   ++m_checkCount;
 
@@ -372,7 +379,8 @@ void CollisionWorld::TraceHull(const Vec3 &start, const Vec3 &end, const Vec3 &m
                    -mins.y > maxs.y ? -mins.y : maxs.y,
                    -mins.z > maxs.z ? -mins.z : maxs.z);
 
-  RecursiveHullCheck(w, (m_numModels > 0) ? m_models[0].headnode : 0, 0.0f, 1.0f, start, end);
+  RecursiveHullCheck(w, (m_numModels > 0) ? m_models[modelIndex].headnode : 0, 0.0f, 1.0f,
+                     start, end);
 
   if (out->fraction == 1.0f) {
     out->endpos = end;

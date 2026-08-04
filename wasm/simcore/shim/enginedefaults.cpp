@@ -146,7 +146,6 @@ public:
 };
 
 static CSimMDLCache s_MDLCache;
-static CSimDefault_IEngineTrace s_EngineTrace;
 static CSimDefault_IStaticPropMgrServer s_StaticPropMgr;
 static CSimDefault_IGameEventManager2 s_GameEventManager;
 static CSimDefault_IDataCache s_DataCache;
@@ -170,6 +169,7 @@ extern ILagCompensationManager *lagcompensation;
 extern ITempEntsSystem *te;
 extern IResponseSystem *g_pResponseSystem;
 INetworkStringTableContainer *SimEngine_StringTables();
+void SimEngine_InstallTrace();
 
 extern ISoundEmitterSystemBase *soundemitterbase;
 extern IServerPluginHelpers *serverpluginhelpers;
@@ -177,7 +177,7 @@ extern IServerPluginHelpers *serverpluginhelpers;
 void SimEngine_InstallDefaults()
 {
 	mdlcache = &s_MDLCache;
-	enginetrace = &s_EngineTrace;
+	SimEngine_InstallTrace();
 	staticpropmgr = &s_StaticPropMgr;
 	gameeventmanager = &s_GameEventManager;
 	datacache = &s_DataCache;

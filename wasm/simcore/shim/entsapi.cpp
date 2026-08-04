@@ -15,6 +15,24 @@ extern void Physics_RunThinkFunctions( bool simulating );
 extern void SimEngine_Init( int nMaxEdicts );
 extern CServerGameDLL g_ServerGameDLL;
 
+int SimEngine_LoadCollision( const uint8_t *planes, int planesLen,
+	const uint8_t *nodes, int nodesLen,
+	const uint8_t *leafs, int leafsLen, int leafSize,
+	const uint8_t *leafBrushes, int leafBrushesLen,
+	const uint8_t *brushes, int brushesLen,
+	const uint8_t *brushSides, int brushSidesLen,
+	const uint8_t *models, int modelsLen,
+	const char *pMapName );
+int SimEngine_LoadDisplacements( const uint8_t *dispInfo, int dispInfoLen,
+	const uint8_t *dispVerts, int dispVertsLen,
+	const uint8_t *dispTris, int dispTrisLen,
+	const uint8_t *faces, int facesLen,
+	const uint8_t *surfEdges, int surfEdgesLen,
+	const uint8_t *edges, int edgesLen,
+	const uint8_t *verts, int vertsLen );
+bool SimEngine_HasCollision();
+int SimEngine_UntracedVPhysicsCount();
+
 static CGlobalVars s_SimGlobals( false );
 static bool s_bInitialized = false;
 static char *s_pEntityLump = NULL;
@@ -92,6 +110,94 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_load_lump( const char *pLump, int length )
 EMSCRIPTEN_KEEPALIVE int sim_ents_count()
 {
 	return SimEntityCount();
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_ents_load_bsp( const uint8_t *planes, int planesLen,
+	const uint8_t *nodes, int nodesLen,
+	const uint8_t *leafs, int leafsLen, int leafSize,
+	const uint8_t *leafBrushes, int leafBrushesLen,
+	const uint8_t *brushes, int brushesLen,
+	const uint8_t *brushSides, int brushSidesLen,
+	const uint8_t *models, int modelsLen,
+	const char *pMapName )
+{
+	if ( !s_bInitialized || s_pEntityLump )
+		return 0;
+
+	return SimEngine_LoadCollision( planes, planesLen, nodes, nodesLen, leafs, leafsLen,
+		leafSize, leafBrushes, leafBrushesLen, brushes, brushesLen, brushSides,
+		brushSidesLen, models, modelsLen, pMapName );
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_ents_load_disp( const uint8_t *dispInfo, int dispInfoLen,
+	const uint8_t *dispVerts, int dispVertsLen,
+	const uint8_t *dispTris, int dispTrisLen,
+	const uint8_t *faces, int facesLen,
+	const uint8_t *surfEdges, int surfEdgesLen,
+	const uint8_t *edges, int edgesLen,
+	const uint8_t *verts, int vertsLen )
+{
+	if ( !s_bInitialized )
+		return 0;
+
+	return SimEngine_LoadDisplacements( dispInfo, dispInfoLen, dispVerts, dispVertsLen,
+		dispTris, dispTrisLen, faces, facesLen, surfEdges, surfEdgesLen, edges, edgesLen,
+		verts, vertsLen );
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_ents_has_collision()
+{
+	return SimEngine_HasCollision() ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_ents_untraced_vphysics()
+{
+	return SimEngine_UntracedVPhysicsCount();
+}
+
+EMSCRIPTEN_KEEPALIVE float sim_ents_trace( float sx, float sy, float sz,
+	float ex, float ey, float ez,
+	float minx, float miny, float minz,
+	float maxx, float maxy, float maxz,
+	int mask, int entities, float *pOut )
+{
+	if ( !s_bInitialized )
+		return 1.0f;
+
+	Ray_t ray;
+	Vector vecStart( sx, sy, sz );
+	Vector vecEnd( ex, ey, ez );
+	Vector vecMins( minx, miny, minz );
+	Vector vecMaxs( maxx, maxy, maxz );
+
+	if ( vecMins == vec3_origin && vecMaxs == vec3_origin )
+		ray.Init( vecStart, vecEnd );
+	else
+		ray.Init( vecStart, vecEnd, vecMins, vecMaxs );
+
+	CTraceFilterWorldOnly worldFilter;
+	CTraceFilterSimple simpleFilter( NULL, COLLISION_GROUP_NONE );
+	ITraceFilter *pFilter = entities ? (ITraceFilter *)&simpleFilter
+		: (ITraceFilter *)&worldFilter;
+
+	trace_t tr;
+	enginetrace->TraceRay( ray, mask, pFilter, &tr );
+
+	if ( pOut )
+	{
+		pOut[ 0 ] = tr.endpos.x;
+		pOut[ 1 ] = tr.endpos.y;
+		pOut[ 2 ] = tr.endpos.z;
+		pOut[ 3 ] = tr.plane.normal.x;
+		pOut[ 4 ] = tr.plane.normal.y;
+		pOut[ 5 ] = tr.plane.normal.z;
+		pOut[ 6 ] = (float)tr.contents;
+		pOut[ 7 ] = tr.startsolid ? 1.0f : 0.0f;
+		pOut[ 8 ] = tr.allsolid ? 1.0f : 0.0f;
+		pOut[ 9 ] = tr.m_pEnt ? (float)tr.m_pEnt->entindex() : -1.0f;
+	}
+
+	return tr.fraction;
 }
 
 EMSCRIPTEN_KEEPALIVE void sim_ents_frame()

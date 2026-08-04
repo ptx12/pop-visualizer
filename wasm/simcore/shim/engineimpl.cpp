@@ -15,9 +15,30 @@ struct SimModel_t
 {
 	char name[ 260 ];
 	int index;
+	int type;
 	Vector mins;
 	Vector maxs;
 };
+
+static int SimModelTypeFromName( const char *name )
+{
+	if ( !name || !name[ 0 ] )
+		return mod_bad;
+	if ( name[ 0 ] == '*' )
+		return mod_brush;
+
+	const char *pExt = V_strrchr( name, '.' );
+	if ( pExt )
+	{
+		if ( V_stricmp( pExt, ".mdl" ) == 0 )
+			return mod_studio;
+		if ( V_stricmp( pExt, ".spr" ) == 0 || V_stricmp( pExt, ".vmt" ) == 0 )
+			return mod_sprite;
+		if ( V_stricmp( pExt, ".bsp" ) == 0 )
+			return mod_brush;
+	}
+	return mod_bad;
+}
 
 static CUtlVector< SimModel_t * > g_SimModels;
 static CUtlVector< char * > g_SimSounds;
@@ -60,10 +81,35 @@ static SimModel_t *SimFindModel( const char *name )
 	SimModel_t *pModel = (SimModel_t *)calloc( 1, sizeof( SimModel_t ) );
 	V_strncpy( pModel->name, name, sizeof( pModel->name ) );
 	pModel->index = g_SimModels.Count();
-	pModel->mins.Init( -8, -8, -8 );
-	pModel->maxs.Init( 8, 8, 8 );
+	pModel->type = SimModelTypeFromName( name );
+	pModel->mins.Init();
+	pModel->maxs.Init();
 	g_SimModels.AddToTail( pModel );
 	return pModel;
+}
+
+void SimEngine_ResetModels()
+{
+	for ( int i = 0; i < g_SimModels.Count(); ++i )
+		free( g_SimModels[ i ] );
+	g_SimModels.RemoveAll();
+
+	SimModel_t *pEmpty = (SimModel_t *)calloc( 1, sizeof( SimModel_t ) );
+	pEmpty->index = 0;
+	pEmpty->type = mod_bad;
+	pEmpty->mins.Init();
+	pEmpty->maxs.Init();
+	g_SimModels.AddToTail( pEmpty );
+}
+
+int SimEngine_RegisterModel( const char *name, const Vector &mins, const Vector &maxs )
+{
+	SimModel_t *pModel = SimFindModel( name );
+	if ( !pModel )
+		return -1;
+	pModel->mins = mins;
+	pModel->maxs = maxs;
+	return pModel->index;
 }
 
 static SimModel_t *SimModelByIndex( int index )
@@ -228,7 +274,11 @@ public:
 		GetModelBounds( model, mins, maxs );
 	}
 
-	int GetModelType( const model_t *model ) const override { return (int)mod_studio; }
+	int GetModelType( const model_t *model ) const override
+	{
+		const SimModel_t *pModel = (const SimModel_t *)model;
+		return pModel ? pModel->type : (int)mod_bad;
+	}
 
 	int GetModelFrameCount( const model_t *model ) const override { return 1; }
 
