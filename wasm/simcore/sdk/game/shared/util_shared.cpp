@@ -1109,6 +1109,7 @@ CBasePlayer* UTIL_PlayerByCommandArg( const char *arg )
 		UTIL_PLAYERBYCMDARG_CHECKMATCH( bMatch ? UTIL_PlayerBySteamID( steamID ) : NULL );
 	}
 
+#if defined( INCLUDED_STEAM2_USERID_STRUCTS )
 	// Legacy SteamID?
 	const char szPrefix[] = "STEAM_";
 	if ( nLength >= V_ARRAYSIZE( szPrefix ) && V_strncmp( szPrefix, arg, V_ARRAYSIZE( szPrefix ) - 1 ) == 0 )
@@ -1117,6 +1118,7 @@ CBasePlayer* UTIL_PlayerByCommandArg( const char *arg )
 		bool bMatch = SteamIDFromSteam2String( arg, GetUniverse(), &steamID );
 		UTIL_PLAYERBYCMDARG_CHECKMATCH( bMatch ? UTIL_PlayerBySteamID( steamID ) : NULL );
 	}
+#endif
 
 	// UserID preceded by a pound (#4)
 	if ( nLength > 1 && arg[0] == '#' && bAllButFirstNumbers )
@@ -1541,6 +1543,7 @@ CSteamID UTIL_SteamIDFromProperString( const char *pszInput, bool bAllowSteam2 /
 			{ return steamID; }
 	}
 
+#if defined( INCLUDED_STEAM2_USERID_STRUCTS )
 	// Legacy SteamID?
 	const char szPrefix[] = "STEAM_";
 	if ( bAllowSteam2 && V_strlen( pszInput ) >= (int)V_ARRAYSIZE( szPrefix ) &&
@@ -1551,6 +1554,7 @@ CSteamID UTIL_SteamIDFromProperString( const char *pszInput, bool bAllowSteam2 /
 		if ( bMatch && steamID.IsValid() )
 			{ return steamID; }
 	}
+#endif
 
 	return CSteamID();
 }
