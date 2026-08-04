@@ -1054,6 +1054,7 @@ public:
 	void				ReapplyItemUpgrades ( CEconItemView *pItem );
 	void				ReapplyPlayerUpgrades ( void );
 	void				SetWaveSpawnPopulator( CWaveSpawnPopulator *pWave ){ m_pWaveSpawnPopulator = pWave; }
+	CWaveSpawnPopulator *GetWaveSpawnPopulator( void ) const { return m_pWaveSpawnPopulator; }
 	CUtlVector< CUpgradeInfo >* GetRefundableUpgrades( void ) { return &m_RefundableUpgrades; }
 	void				ResetRefundableUpgrades( void ) { m_RefundableUpgrades.RemoveAll(); }
 	void				BeginPurchasableUpgrades( void );

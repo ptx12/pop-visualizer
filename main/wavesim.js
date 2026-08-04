@@ -207,41 +207,73 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
     const t = ex.sim_ents_curtime() - startT;
     const written = ex.sim_bots_state(out, 64);
     const f = new Float32Array(ex.memory.buffer, out, written * 12);
-    const live = new Set();
     for (let i = 0; i < written; i++) {
       const b = f.subarray(i * 12, i * 12 + 12);
       if (b[11] !== 3) continue;
       const index = b[0];
       const handle = ex.sim_bots_handle(index);
       const key = handle || index;
-      live.add(key);
       let a = actors.get(key);
       if (!a) {
         a = {
           id: key,
           kind: 'bot',
           cls: cstr(ex.sim_bots_class(index)),
+          name: '',
+          wsIndex: -1,
+          wsName: '',
+          mission: 0,
           isGiant: ex.sim_bots_is_giant(index) === 1,
+          scale: 1,
+          maxHealth: 0,
           spawnT: t,
           dieT: Infinity,
           track: []
         };
         actors.set(key, a);
       }
+      if (a.wsIndex < 0) {
+        a.wsIndex = ex.sim_bots_wavespawn(index);
+        a.wsName = cstr(ex.sim_bots_wavespawn_name(index));
+      }
+      if (!a.mission) a.mission = ex.sim_bots_mission(index);
+      if (!a.name) a.name = cstr(ex.sim_bots_name(index));
+      if (!a.cls) a.cls = cstr(ex.sim_bots_class(index));
+      a.scale = ex.sim_bots_scale(index);
+      a.maxHealth = ex.sim_bots_max_health(index);
+      a.isGiant = a.isGiant || ex.sim_bots_is_giant(index) === 1;
       a.track.push([t, b[1], b[2], b[3], b[5]]);
-      a.dieT = t;
-    }
-    for (const [key, a] of actors) {
-      if (!live.has(key) && a.dieT < t) a.closed = true;
+      a.lastT = t;
     }
     end = t;
   }
 
+  const gone = SAMPLE_TICKS * TICK_INTERVAL * 2;
   const list = [...actors.values()].filter(a => a.track.length > 1);
-  for (const a of list) delete a.closed;
+  for (const a of list) {
+    a.dieT = a.lastT < end - gone ? a.lastT : Infinity;
+    a.state = Number.isFinite(a.dieT) ? 'died' : 'active';
+    delete a.lastT;
+  }
+
+  const waveSpawns = [];
+  for (let i = 0; i < ex.sim_pop_wavespawn_count(waveIndex); i++) {
+    waveSpawns.push({
+      index: i,
+      name: cstr(ex.sim_pop_wavespawn_name(waveIndex, i)),
+      totalCount: ex.sim_pop_wavespawn_total(waveIndex, i),
+      totalCurrency: ex.sim_pop_wavespawn_currency(waveIndex, i),
+      maxActive: ex.sim_pop_wavespawn_max_active(waveIndex, i),
+      spawnCount: ex.sim_pop_wavespawn_spawn_count(waveIndex, i),
+      support: ex.sim_pop_wavespawn_support(waveIndex, i),
+      waitBeforeStarting: ex.sim_pop_wavespawn_wait_before(waveIndex, i),
+      waitBetweenSpawns: ex.sim_pop_wavespawn_wait_between(waveIndex, i)
+    });
+  }
 
   return {
     actors: list,
+    waveSpawns,
     end,
     started,
     map: mapName,

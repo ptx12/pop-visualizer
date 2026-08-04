@@ -317,6 +317,9 @@ public:
 
 	CWaveSpawnPopulator *FindWaveSpawnPopulator( const char *name );	// find a CWaveSpawnPopulator by name
 
+	int GetWaveSpawnCount( void ) const { return m_waveSpawnVector.Count(); }
+	CWaveSpawnPopulator *GetWaveSpawn( int index ) const { return m_waveSpawnVector.IsValidIndex( index ) ? m_waveSpawnVector[ index ] : NULL; }
+
 	void AddClassType( string_t iszClassIconName, int nCount, unsigned int iFlags );
 	
 	int GetNumClassTypes( void ) const { return m_nWaveClassCounts.Count(); }

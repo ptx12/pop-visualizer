@@ -1,0 +1,32 @@
+A robot spawned by the population manager knows which WaveSpawn produced it:
+CWaveSpawnPopulator::Update() calls bot->SetWaveSpawnPopulator( this ) on every
+CTFBot it creates. The game only ever reads that pointer back from inside
+CTFPlayer itself (to charge currency on death), so tf_player.h ships the setter
+without a matching getter, and CWave keeps its m_waveSpawnVector private because
+nothing outside the wave walks it.
+
+The host needs both to answer "which spawner definition in the popfile is this
+robot?", which is what the map view draws models, cosmetics and names from.
+
+Both additions are inline read accessors over storage that already exists. They
+add no data members and no virtuals, so the class layouts are unchanged, and no
+behaviour is altered. They are used only by shim/entsapi.cpp.
+
+diff --git a/src/game/server/tf/tf_player.h b/src/game/server/tf/tf_player.h
+--- a/src/game/server/tf/tf_player.h
++++ b/src/game/server/tf/tf_player.h
+@@ -1056,6 +1056,7 @@
+ 	void				SetWaveSpawnPopulator( CWaveSpawnPopulator *pWave ){ m_pWaveSpawnPopulator = pWave; }
++	CWaveSpawnPopulator *GetWaveSpawnPopulator( void ) const { return m_pWaveSpawnPopulator; }
+ 	CUtlVector< CUpgradeInfo >* GetRefundableUpgrades( void ) { return &m_RefundableUpgrades; }
+
+diff --git a/src/game/server/tf/player_vs_environment/tf_populators.h b/src/game/server/tf/player_vs_environment/tf_populators.h
+--- a/src/game/server/tf/player_vs_environment/tf_populators.h
++++ b/src/game/server/tf/player_vs_environment/tf_populators.h
+@@ -318,6 +318,9 @@
+ 	CWaveSpawnPopulator *FindWaveSpawnPopulator( const char *name );	// find a CWaveSpawnPopulator by name
++
++	int GetWaveSpawnCount( void ) const { return m_waveSpawnVector.Count(); }
++	CWaveSpawnPopulator *GetWaveSpawn( int index ) const { return m_waveSpawnVector.IsValidIndex( index ) ? m_waveSpawnVector[ index ] : NULL; }
+
+ 	void AddClassType( string_t iszClassIconName, int nCount, unsigned int iFlags );

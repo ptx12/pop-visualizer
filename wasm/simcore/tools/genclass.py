@@ -62,6 +62,7 @@ ENGINE_SKIP = {
     "GetChangeAccessor", "GetGameDir", "IsInternalBuild", "GetAppID",
     "PvAllocEntPrivateData", "FreeEntPrivateData", "SaveAllocMemory", "SaveFreeMemory",
     "CreateFakeClient", "CreateFakeClientEx", "GetMapEntitiesString",
+    "SetFakeClientConVarValue", "GetClientConVarValue",
 }
 
 MODEL_SKIP = {

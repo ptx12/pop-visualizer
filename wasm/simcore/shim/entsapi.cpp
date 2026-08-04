@@ -26,6 +26,7 @@ extern CGlobalVars *gpGlobals;
 extern void Physics_RunThinkFunctions( bool simulating );
 extern void SimEngine_Init( int nMaxEdicts, int nMaxClients );
 extern void SimEngine_SetMapEntitiesString( const char *pLump );
+extern void SimEngine_ClearClientCvars();
 extern edict_t *SimEngine_EdictList();
 extern int SimEngine_EdictCount();
 extern CServerGameDLL g_ServerGameDLL;
@@ -165,6 +166,7 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_reset()
 
 	g_EventQueue.Clear();
 	g_ServerGameDLL.LevelShutdown();
+	SimEngine_ClearClientCvars();
 	SimInvalidateIndex();
 
 	gpGlobals->tickcount = SIM_FIRST_TICK;
@@ -850,6 +852,115 @@ EMSCRIPTEN_KEEPALIVE const char *sim_bots_name( int playerIndex )
 {
 	CBasePlayer *pPlayer = UTIL_PlayerByIndex( playerIndex );
 	return pPlayer ? pPlayer->GetPlayerName() : "";
+}
+
+EMSCRIPTEN_KEEPALIVE float sim_bots_scale( int playerIndex )
+{
+	CBasePlayer *pPlayer = UTIL_PlayerByIndex( playerIndex );
+	return pPlayer ? pPlayer->GetModelScale() : 1.0f;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bots_max_health( int playerIndex )
+{
+	CBasePlayer *pPlayer = UTIL_PlayerByIndex( playerIndex );
+	return pPlayer ? pPlayer->GetMaxHealth() : 0;
+}
+
+static CWaveSpawnPopulator *SimWaveSpawnOf( int playerIndex )
+{
+	CBasePlayer *pPlayer = UTIL_PlayerByIndex( playerIndex );
+	CTFBot *pBot = pPlayer ? ToTFBot( pPlayer ) : NULL;
+	return pBot ? pBot->GetWaveSpawnPopulator() : NULL;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bots_wavespawn( int playerIndex )
+{
+	CWaveSpawnPopulator *pSpawn = SimWaveSpawnOf( playerIndex );
+	CWave *pWave = g_pPopulationManager ? g_pPopulationManager->GetCurrentWave() : NULL;
+	if ( !pSpawn || !pWave )
+		return -1;
+
+	for ( int i = 0; i < pWave->GetWaveSpawnCount(); i++ )
+	{
+		if ( pWave->GetWaveSpawn( i ) == pSpawn )
+			return i;
+	}
+	return -1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_bots_mission( int playerIndex )
+{
+	CBasePlayer *pPlayer = UTIL_PlayerByIndex( playerIndex );
+	CTFBot *pBot = pPlayer ? ToTFBot( pPlayer ) : NULL;
+	return pBot ? (int)pBot->GetMission() : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE const char *sim_bots_wavespawn_name( int playerIndex )
+{
+	CWaveSpawnPopulator *pSpawn = SimWaveSpawnOf( playerIndex );
+	return pSpawn ? pSpawn->m_name.Get() : "";
+}
+
+static CWaveSpawnPopulator *SimWaveSpawnAt( int waveIndex, int spawnIndex )
+{
+	CWave *pWave = g_pPopulationManager ? g_pPopulationManager->GetWave( waveIndex ) : NULL;
+	return pWave ? pWave->GetWaveSpawn( spawnIndex ) : NULL;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_pop_wavespawn_count( int waveIndex )
+{
+	CWave *pWave = g_pPopulationManager ? g_pPopulationManager->GetWave( waveIndex ) : NULL;
+	return pWave ? pWave->GetWaveSpawnCount() : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE const char *sim_pop_wavespawn_name( int waveIndex, int spawnIndex )
+{
+	CWaveSpawnPopulator *pSpawn = SimWaveSpawnAt( waveIndex, spawnIndex );
+	return pSpawn ? pSpawn->m_name.Get() : "";
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_pop_wavespawn_total( int waveIndex, int spawnIndex )
+{
+	CWaveSpawnPopulator *pSpawn = SimWaveSpawnAt( waveIndex, spawnIndex );
+	return pSpawn ? pSpawn->m_totalCount : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_pop_wavespawn_currency( int waveIndex, int spawnIndex )
+{
+	CWaveSpawnPopulator *pSpawn = SimWaveSpawnAt( waveIndex, spawnIndex );
+	return pSpawn ? pSpawn->m_totalCurrency : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_pop_wavespawn_max_active( int waveIndex, int spawnIndex )
+{
+	CWaveSpawnPopulator *pSpawn = SimWaveSpawnAt( waveIndex, spawnIndex );
+	return pSpawn ? pSpawn->m_maxActive : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_pop_wavespawn_spawn_count( int waveIndex, int spawnIndex )
+{
+	CWaveSpawnPopulator *pSpawn = SimWaveSpawnAt( waveIndex, spawnIndex );
+	return pSpawn ? pSpawn->m_spawnCount : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_pop_wavespawn_support( int waveIndex, int spawnIndex )
+{
+	CWaveSpawnPopulator *pSpawn = SimWaveSpawnAt( waveIndex, spawnIndex );
+	if ( !pSpawn || !pSpawn->IsSupportWave() )
+		return 0;
+	return pSpawn->IsLimitedSupportWave() ? 2 : 1;
+}
+
+EMSCRIPTEN_KEEPALIVE float sim_pop_wavespawn_wait_before( int waveIndex, int spawnIndex )
+{
+	CWaveSpawnPopulator *pSpawn = SimWaveSpawnAt( waveIndex, spawnIndex );
+	return pSpawn ? pSpawn->m_waitBeforeStarting : 0.0f;
+}
+
+EMSCRIPTEN_KEEPALIVE float sim_pop_wavespawn_wait_between( int waveIndex, int spawnIndex )
+{
+	CWaveSpawnPopulator *pSpawn = SimWaveSpawnAt( waveIndex, spawnIndex );
+	return pSpawn ? pSpawn->m_waitBetweenSpawns : 0.0f;
 }
 
 }

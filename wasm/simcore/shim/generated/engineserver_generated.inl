@@ -36,7 +36,6 @@
 	void CrosshairAngle( const edict_t *pClient, float pitch, float yaw ) override {  }
 	int CompareFileTime( const char *filename1, const char *filename2, int *iCompare ) override { return int(); }
 	bool LockNetworkStringTables( bool lock ) override { return false; }
-	const char * GetClientConVarValue( int clientIndex, const char *name ) override { return 0; }
 	const char * ParseFile( const char *data, char *token, int maxlen ) override { return 0; }
 	bool CopyFile( const char *source, const char *destination ) override { return false; }
 	void ResetPVS( byte *pvs, int pvssize ) override {  }
@@ -64,7 +63,6 @@
 	void ForceExactFile( const char *s ) override {  }
 	void ForceModelBounds( const char *s, const Vector &mins, const Vector &maxs ) override {  }
 	void ClearSaveDirAfterClientLoad(  ) override {  }
-	void SetFakeClientConVarValue( edict_t *pEntity, const char *cvar, const char *value ) override {  }
 	void ForceSimpleMaterial( const char *s ) override {  }
 	int IsInCommentaryMode( void ) override { return int(); }
 	void SetAreaPortalStates( const int *portalNumbers, const int *isOpen, int nPortals ) override {  }

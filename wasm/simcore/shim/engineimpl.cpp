@@ -54,6 +54,29 @@ static CSharedEdictChangeInfo g_SimChangeInfo;
 
 extern CServerGameClients g_ServerGameClients;
 
+struct SimClientCvar_t
+{
+	int nClient;
+	CUtlString name;
+	CUtlString value;
+};
+
+static CUtlVector< SimClientCvar_t > g_SimClientCvars;
+
+static SimClientCvar_t *SimFindClientCvar( int clientIndex, const char *pName )
+{
+	if ( !pName )
+		return NULL;
+
+	for ( int i = 0; i < g_SimClientCvars.Count(); ++i )
+	{
+		SimClientCvar_t &entry = g_SimClientCvars[ i ];
+		if ( entry.nClient == clientIndex && !V_stricmp( entry.name.Get(), pName ) )
+			return &entry;
+	}
+	return NULL;
+}
+
 class CSimChangeAccessor : public IChangeInfoAccessor
 {
 };
@@ -205,6 +228,34 @@ public:
 	const char *GetMapEntitiesString() override
 	{
 		return g_pSimMapEntities;
+	}
+
+	const char *GetClientConVarValue( int clientIndex, const char *name ) override
+	{
+		SimClientCvar_t *pEntry = SimFindClientCvar( clientIndex, name );
+		return pEntry ? pEntry->value.Get() : "";
+	}
+
+	void SetFakeClientConVarValue( edict_t *pEntity, const char *cvar, const char *value ) override
+	{
+		if ( !pEntity || !cvar )
+			return;
+
+		SimClientCvar_t *pEntry = SimFindClientCvar( IndexOfEdict( pEntity ), cvar );
+		if ( pEntry )
+		{
+			pEntry->value = value ? value : "";
+		}
+		else
+		{
+			SimClientCvar_t entry;
+			entry.nClient = IndexOfEdict( pEntity );
+			entry.name = cvar;
+			entry.value = value ? value : "";
+			g_SimClientCvars.AddToTail( entry );
+		}
+
+		g_ServerGameClients.ClientSettingsChanged( pEntity );
 	}
 
 	edict_t *CreateFakeClient( const char *netname ) override
@@ -382,6 +433,11 @@ void SimEngine_Init( int nMaxEdicts, int nMaxClients )
 	engine = &g_SimEngineServer;
 	modelinfo = &g_SimModelInfo;
 	partition = &g_SimSpatialPartition;
+}
+
+void SimEngine_ClearClientCvars()
+{
+	g_SimClientCvars.RemoveAll();
 }
 
 edict_t *SimEngine_EdictList()

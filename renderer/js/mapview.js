@@ -1,6 +1,6 @@
 import { el, clear, showTip, hideTip, fmtTime, fmtNum, loader, botVisual, tankVisual } from './ui.js';
 import { state, simFor, emit, onChange, deathModel, navTogglesFor, bombPathRerollsFor, mapQueryName, probesFor, addProbe, clearProbes } from './state.js';
-import { CLASS_INFO, botDisplayName } from './popmodel.js';
+import { CLASS_INFO, botDisplayName, missionActiveOn } from './popmodel.js';
 import { getTFPath, iconURL, iconNameFor, classIconName, tankIconName } from './icons.js';
 import { native } from './native.js';
 import { botMaxSpeed, buildTrackChains, dpsProfile, objectiveCandidates, bombPathGroups, isSentryBuster, STEP, RNG_SEED_BASE } from './navpaths.js';
@@ -1444,9 +1444,10 @@ function aiRunFor(file, wave, sim, mapData, key, opts) {
     if (run.cancelled) return;
     run.stepper = createBotSim(wave, sim, mapData, {
       ...opts,
+      missions: (file.model.missions || []).filter(m => m.bots && m.bots.length && missionActiveOn(m, wave.index)),
       popName: file && file.name ? file.name : null,
       popPath: file && file.path ? file.path : null,
-      popDir: file && file.path ? file.path.replace(/[\/][^\/]*$/, '') : null
+      popDir: file && file.path ? file.path.replace(/[\\/][^\\/]*$/, '') : null
     });
     setTimeout(tick, 0);
   });

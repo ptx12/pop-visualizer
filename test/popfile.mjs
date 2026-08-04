@@ -203,6 +203,50 @@ check('per-wave enemy count agrees with the popfile parser in the app',
   rows.every(r => r.enemies[0] === r.enemies[1]),
   rows.filter(r => r.enemies[0] !== r.enemies[1]).map(r => `wave ${r.wave}: ${r.enemies[0]} vs ${r.enemies[1]}`).join(', '));
 
+const SUPPORT_CODE = { null: 0, unlimited: 1, limited: 2 };
+const wsRows = [];
+for (let i = 0; i < Math.min(waveCount, model.waves.length); i++) {
+  const valveCount = ex.sim_pop_wavespawn_count(i);
+  const appSpawns = model.waves[i].wavespawns;
+  wsRows.push({ wave: i + 1, count: [valveCount, appSpawns.length], fields: [] });
+  for (let j = 0; j < Math.min(valveCount, appSpawns.length); j++) {
+    const app = appSpawns[j];
+    const valveCurrency = ex.sim_pop_wavespawn_currency(i, j);
+    wsRows[i].fields.push({
+      j,
+      name: [cstr(ex.sim_pop_wavespawn_name(i, j)), app.name || ''],
+      total: [ex.sim_pop_wavespawn_total(i, j), app.totalCount],
+      currency: [valveCurrency < 0 ? 0 : valveCurrency, app.totalCurrency],
+      maxActive: [ex.sim_pop_wavespawn_max_active(i, j), app.maxActive],
+      spawnCount: [ex.sim_pop_wavespawn_spawn_count(i, j), app.spawnCount],
+      support: [ex.sim_pop_wavespawn_support(i, j), SUPPORT_CODE[String(app.support)]],
+      before: [ex.sim_pop_wavespawn_wait_before(i, j), app.waitBeforeStarting],
+      between: [ex.sim_pop_wavespawn_wait_between(i, j), app.waitBetweenSpawns]
+    });
+  }
+}
+
+const allFields = wsRows.flatMap(r => r.fields);
+const mismatch = key => allFields
+  .filter(f => Array.isArray(f[key]) && (typeof f[key][0] === 'number'
+    ? Math.abs(f[key][0] - f[key][1]) > 0.001
+    : f[key][0] !== f[key][1]))
+  .map(f => `ws ${f.j}: ${f[key][0]} vs ${f[key][1]}`);
+
+check('every wave has the same number of WaveSpawns in both parsers',
+  wsRows.every(r => r.count[0] === r.count[1]),
+  wsRows.filter(r => r.count[0] !== r.count[1]).map(r => `wave ${r.wave}: ${r.count[0]} vs ${r.count[1]}`).join(', '));
+console.log(`  wavespawns cross-checked: ${allFields.length}`);
+
+for (const [key, label] of [
+  ['name', 'names'], ['total', 'TotalCount'], ['currency', 'TotalCurrency'],
+  ['maxActive', 'MaxActive'], ['spawnCount', 'SpawnCount'], ['support', 'Support'],
+  ['before', 'WaitBeforeStarting'], ['between', 'WaitBetweenSpawns']
+]) {
+  const bad = mismatch(key);
+  check(`WaveSpawn ${label} agrees with the popfile parser in the app`, bad.length === 0, bad.slice(0, 4).join(', '));
+}
+
 let iconTotal = 0;
 for (let i = 0; i < waveCount; i++) {
   const n = ex.sim_pop_wave_class_count(i);

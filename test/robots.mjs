@@ -240,6 +240,44 @@ if (run.actors.length) {
     actorDistAt(a, a.dieT) >= actorDistAt(a, mid) && actorDistAt(a, mid) > 0,
     actorDistAt(a, a.dieT).toFixed(0) + ' units');
   check('the sampler returns a finite heading', Number.isFinite(actorYawAt(a, mid)));
+
+  const { parse } = await import('../renderer/js/kv.js');
+  const { buildModel, normalizeClass } = await import('../renderer/js/popmodel.js');
+  const { matchSpawner } = await import('../renderer/js/botplayback.js');
+  const model = buildModel(parse(readFileSync(join(repo, 'vanilla', `${map}.pop`), 'utf8')), []);
+  const wave0 = model.waves[0];
+
+  check('Valve\'s WaveSpawn ordinals index the app\'s parsed wave',
+    run.waveSpawns.length === wave0.wavespawns.length,
+    `${run.waveSpawns.length} vs ${wave0.wavespawns.length}`);
+
+  const placed = run.actors.filter(a => a.wsIndex >= 0);
+  check('robots report the WaveSpawn that spawned them',
+    placed.length > 0 && placed.every(a => a.wsIndex < wave0.wavespawns.length),
+    `${placed.length} of ${run.actors.length} actors carry an ordinal`);
+
+  check('robots carry the name their popfile spawner gives them',
+    run.actors.every(a => a.name && a.name.length > 0),
+    run.actors.map(a => a.name).join(','));
+
+  const linked = run.actors.map(a => matchSpawner(a, wave0, model.missions));
+  check('every robot resolves to a bot definition in the popfile',
+    linked.every(l => l.spec),
+    linked.filter(l => !l.spec).length + ' unresolved');
+  check('the resolved definition is the same class the game spawned',
+    linked.every((l, i) => !l.spec || normalizeClass(l.spec.cls || '') === run.actors[i].cls),
+    linked.map((l, i) => l.spec ? `${l.spec.cls}/${run.actors[i].cls}` : '-').join(' '));
+  check('resolved definitions agree with the game on giant status',
+    linked.every((l, i) => !l.spec || !!l.spec.isGiant === !!run.actors[i].isGiant));
+
+  check('robots carry the health their class data gives them through the runner',
+    run.actors.every(a => a.maxHealth > 0), run.actors.map(a => a.maxHealth).join(','));
+  check('robot model scale is real and positive',
+    run.actors.every(a => a.scale > 0 && a.scale <= 4), run.actors.map(a => a.scale.toFixed(2)).join(','));
+
+  const names = [...new Set(run.actors.map(a => a.name))];
+  console.log(`  identities: ${names.join(', ')}`);
+  console.log(`  wavespawn ordinals: ${run.actors.map(a => a.wsIndex).join(',')}`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

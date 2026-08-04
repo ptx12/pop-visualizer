@@ -1,3 +1,5 @@
+import { normalizeClass } from './popmodel.js';
+
 export const PLAYBACK_UNAVAILABLE_NOTE = 'Bot movement playback needs the desktop app and a navigation mesh for this map.';
 
 const SIM_SECONDS = 120;
@@ -6,36 +8,103 @@ export function botPlaybackAvailable() {
   return typeof window !== 'undefined' && !!(window.popnative && window.popnative.simulateWave);
 }
 
-function makeBot(actor) {
+function synthesize(actor) {
   return {
-    cls: actor.cls || 'scout',
-    name: null,
+    cls: normalizeClass(actor.cls || 'scout'),
+    name: actor.name || null,
     isGiant: !!actor.isGiant,
     isBoss: false,
-    scale: actor.isGiant ? 1.75 : 1,
+    scale: actor.scale > 0 ? actor.scale : (actor.isGiant ? 1.75 : 1),
     items: [],
     itemStyles: {},
     revertItemStyles: {},
     attributes: [],
     tags: [],
     alwaysCrit: false,
-    health: null
+    health: actor.maxHealth > 0 ? actor.maxHealth : null
   };
 }
 
-function prepare(actor) {
+function scoreSpec(spec, actor, cls, name) {
+  let score = 0;
+  if (name && String(spec.name || '').trim().toLowerCase() === name) score += 4;
+  if (cls && normalizeClass(spec.cls || '') === cls) score += 2;
+  if (!!spec.isGiant === !!actor.isGiant) score += 1;
+  return score;
+}
+
+const MISSION_TYPE = {
+  destroysentries: 2,
+  sniper: 3,
+  spy: 4,
+  engineer: 5,
+  seekanddestroy: 2
+};
+
+function pickEntry(entries, actor) {
+  const cls = normalizeClass(actor.cls || '');
+  const name = String(actor.name || '').trim().toLowerCase();
+  let bestIdx = 0, bestScore = -1;
+  for (let i = 0; i < entries.length; i++) {
+    const score = scoreSpec(entries[i].bot, actor, cls, name);
+    if (score > bestScore) { bestScore = score; bestIdx = i; }
+  }
+  return bestIdx;
+}
+
+function matchMission(actor, missions) {
+  const wanted = actor.mission | 0;
+  if (!wanted) return null;
+  for (const m of Array.isArray(missions) ? missions : []) {
+    if (MISSION_TYPE[String(m.objective || '').trim().toLowerCase()] !== wanted) continue;
+    const entries = (m.bots || []).filter(e => e && e.bot);
+    if (!entries.length) continue;
+    const idx = pickEntry(entries, actor);
+    return {
+      ws: { name: 'Mission: ' + (m.objective || 'unnamed'), node: m.node, mission: m },
+      spec: entries[idx].bot,
+      memberIdx: idx
+    };
+  }
+  return null;
+}
+
+export function matchSpawner(actor, wave, missions) {
+  const spawns = wave && Array.isArray(wave.wavespawns) ? wave.wavespawns : [];
+  const ws = actor.wsIndex >= 0 && actor.wsIndex < spawns.length ? spawns[actor.wsIndex] : null;
+  if (!ws) {
+    const fromMission = matchMission(actor, missions);
+    if (fromMission) return fromMission;
+    return { ws: { name: actor.wsName || '', node: null }, spec: null, memberIdx: 0 };
+  }
+
+  const entries = (ws.bots || []).filter(e => e && e.bot);
+  if (!entries.length) return { ws, spec: null, memberIdx: 0 };
+
+  const idx = pickEntry(entries, actor);
+  return { ws, spec: entries[idx].bot, memberIdx: idx };
+}
+
+function prepare(actor, wave, missions) {
   const track = actor.track || [];
   const dist = new Float64Array(track.length);
   for (let i = 1; i < track.length; i++) {
     const a = track[i - 1], b = track[i];
     dist[i] = dist[i - 1] + Math.hypot(b[1] - a[1], b[2] - a[2], b[3] - a[3]);
   }
+
+  const { ws, spec, memberIdx } = matchSpawner(actor, wave, missions);
+  const bot = spec ? { ...spec } : synthesize(actor);
+  if (bot.health == null && actor.maxHealth > 0) bot.health = actor.maxHealth;
+  if (bot.scale == null) bot.scale = actor.scale > 0 ? actor.scale : (bot.isGiant ? 1.75 : 1);
+
   return {
     ...actor,
-    bot: makeBot(actor),
+    bot,
+    matched: !!spec,
     spawned: true,
-    memberIdx: 0,
-    ws: null,
+    memberIdx,
+    ws,
     dist,
     travelled: dist.length ? dist[dist.length - 1] : 0
   };
@@ -65,7 +134,7 @@ function lerpAngle(a, b, f) {
 }
 
 export function createBotSim(wave, sim, mapData, opts = {}) {
-  const state = { done: false, actors: [], end: 0, note: null, requested: false };
+  const state = { done: false, actors: [], waveSpawns: [], end: 0, note: null, requested: false };
 
   const request = () => {
     state.requested = true;
@@ -82,7 +151,8 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
       seconds: opts.seconds || SIM_SECONDS
     }).then(res => {
       const r = res || {};
-      state.actors = (r.actors || []).map(prepare);
+      state.actors = (r.actors || []).map(a => prepare(a, wave, opts.missions));
+      state.waveSpawns = r.waveSpawns || [];
       state.end = r.end || 0;
       state.note = r.note || null;
       state.done = true;
@@ -103,6 +173,7 @@ export function createBotSim(wave, sim, mapData, opts = {}) {
     result() {
       return {
         actors: state.actors,
+        waveSpawns: state.waveSpawns,
         end: state.end,
         note: state.note,
         unavailable: !state.actors.length,
