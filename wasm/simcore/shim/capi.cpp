@@ -74,7 +74,7 @@ float sim_trace_hull(float sx, float sy, float sz, float ex, float ey, float ez,
   float frac = g_result.fraction;
   float normal[3] = {0, 0, 0};
   int contents = 0;
-  if (DispCollision_Trace(start, end, mins, maxs, isPoint, &frac, normal, &contents)) {
+  if (DispCollision_Trace(start, end, mins, maxs, isPoint, mask, &frac, normal, &contents)) {
     g_result.fraction = frac;
     g_result.planeNormal = Vec3(normal[0], normal[1], normal[2]);
     g_result.contents = contents;
@@ -97,10 +97,12 @@ float sim_trace_result(int which) {
     case 6: return g_result.planeNormal.z;
     case 7: return g_result.startsolid ? 1.0f : 0.0f;
     case 8: return g_result.allsolid ? 1.0f : 0.0f;
-    case 9: return (float)g_result.contents;
   }
   return 0.0f;
 }
+
+EMSCRIPTEN_KEEPALIVE
+int sim_trace_contents() { return g_result.contents; }
 
 EMSCRIPTEN_KEEPALIVE
 int sim_point_contents(float x, float y, float z) {

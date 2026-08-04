@@ -18,8 +18,8 @@ void DispCollision_Free();
 int DispCollision_Count();
 
 bool DispCollision_Trace(const float *start, const float *end, const float *mins,
-                         const float *maxs, bool isPoint, float *inOutFraction,
-                         float *outNormal, int *outContents);
+                         const float *maxs, bool isPoint, int mask,
+                         float *inOutFraction, float *outNormal, int *outContents);
 
 }  // namespace simcore
 

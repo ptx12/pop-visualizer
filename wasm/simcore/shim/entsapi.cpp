@@ -117,6 +117,22 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_count()
 	return SimEntityCount();
 }
 
+EMSCRIPTEN_KEEPALIVE int sim_ents_reset()
+{
+	if ( !s_bInitialized || !s_pEntityLump )
+		return 0;
+
+	g_EventQueue.Clear();
+	gEntList.Clear();
+
+	gpGlobals->tickcount = 0;
+	gpGlobals->curtime = 0.0f;
+
+	MapEntity_ParseAllEntities( s_pEntityLump, NULL, false );
+
+	return SimEntityCount();
+}
+
 EMSCRIPTEN_KEEPALIVE int sim_ents_load_bsp( const uint8_t *planes, int planesLen,
 	const uint8_t *nodes, int nodesLen,
 	const uint8_t *leafs, int leafsLen, int leafSize,
@@ -181,7 +197,7 @@ EMSCRIPTEN_KEEPALIVE float sim_ents_trace( float sx, float sy, float sz,
 	float ex, float ey, float ez,
 	float minx, float miny, float minz,
 	float maxx, float maxy, float maxz,
-	int mask, int entities, float *pOut )
+	int mask, int entities, float *pOut, int *pOutInt )
 {
 	if ( !s_bInitialized )
 		return 1.0f;
@@ -216,11 +232,18 @@ EMSCRIPTEN_KEEPALIVE float sim_ents_trace( float sx, float sy, float sz,
 		pOut[ 3 ] = tr.plane.normal.x;
 		pOut[ 4 ] = tr.plane.normal.y;
 		pOut[ 5 ] = tr.plane.normal.z;
-		pOut[ 6 ] = (float)tr.contents;
-		pOut[ 7 ] = tr.startsolid ? 1.0f : 0.0f;
-		pOut[ 8 ] = tr.allsolid ? 1.0f : 0.0f;
-		pOut[ 9 ] = tr.m_pEnt ? (float)tr.m_pEnt->entindex() : -1.0f;
-		pOut[ 10 ] = (float)tr.surface.flags;
+		pOut[ 6 ] = tr.plane.dist;
+	}
+
+	if ( pOutInt )
+	{
+		pOutInt[ 0 ] = tr.contents;
+		pOutInt[ 1 ] = tr.startsolid ? 1 : 0;
+		pOutInt[ 2 ] = tr.allsolid ? 1 : 0;
+		pOutInt[ 3 ] = tr.m_pEnt ? tr.m_pEnt->entindex() : -1;
+		pOutInt[ 4 ] = tr.surface.flags;
+		pOutInt[ 5 ] = tr.dispFlags;
+		pOutInt[ 6 ] = tr.hitgroup;
 	}
 
 	return tr.fraction;
@@ -295,6 +318,36 @@ EMSCRIPTEN_KEEPALIVE int sim_ents_fire_input( const char *pTarget, const char *p
 
 	g_EventQueue.AddEvent( pTarget, pInput, value, delay, NULL, NULL );
 	return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_ents_fire_input_index( int index, const char *pInput, const char *pParam, float delay )
+{
+	if ( !s_bInitialized || !pInput )
+		return 0;
+
+	CBaseEntity *pEnt = SimEntityByIndex( index );
+	if ( !pEnt )
+		return 0;
+
+	variant_t value;
+	if ( pParam && pParam[ 0 ] )
+		value.SetString( MAKE_STRING( pParam ) );
+
+	g_EventQueue.AddEvent( pEnt, pInput, value, delay, NULL, NULL );
+	return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_ents_movetype( int index )
+{
+	CBaseEntity *pEnt = SimEntityByIndex( index );
+	return pEnt ? (int)pEnt->GetMoveType() : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int sim_ents_class_supported( const char *pClassname )
+{
+	if ( !pClassname || !pClassname[ 0 ] )
+		return 0;
+	return EntityFactoryDictionary()->FindFactory( pClassname ) ? 1 : 0;
 }
 
 EMSCRIPTEN_KEEPALIVE int sim_ents_solid( int index )

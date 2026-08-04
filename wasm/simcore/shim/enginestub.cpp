@@ -104,11 +104,6 @@ void SetDebugBits( CBasePlayer *pPlayer, const char *name, int bit )
 #include "engine/IEngineSound.h"
 
 
-int SENTENCEG_Lookup( const char *sample )
-{
-	return -1;
-}
-
 void ClientActive( edict_t *pEdict, bool bLoadGame )
 {
 }
@@ -138,11 +133,6 @@ IPhysicsObject *FindPhysicsObjectByName( const char *pName, CBaseEntity *pErrorE
 IPhysicsObject *EntityPhysics_CreateSolver( CBaseEntity *pMovingEntity, CBaseEntity *pPhysicsBlocker, bool disableCollisions, float separationDuration )
 {
 	return NULL;
-}
-
-int SENTENCEG_PlaySequentialSz( edict_t *entity, const char *szgroupname, float volume, soundlevel_t soundlevel, int flags, int pitch, int ipick, int freset )
-{
-	return -1;
 }
 
 #include "ilagcompensationmanager.h"
@@ -224,10 +214,6 @@ void InstallGameRules()
 #include "precache_register.h"
 
 IPredictionSystem *IPredictionSystem::g_pPredictionSystems = NULL;
-void CBaseTempEntity::PrecacheTempEnts()
-{
-}
-
 void ClientPrecache()
 {
 }
@@ -237,10 +223,6 @@ void InitBodyQue()
 }
 
 void PrecacheStandardParticleSystems()
-{
-}
-
-void SENTENCEG_Init()
 {
 }
 
@@ -270,11 +252,6 @@ float PhysGetEntityMass( CBaseEntity *pEntity )
 IPhysicsObject *NPCPhysics_CreateSolver( CAI_BaseNPC *pNPC, CBaseEntity *pPhysicsObject, bool disableCollisions, float separationDuration )
 {
 	return NULL;
-}
-
-int SENTENCEG_PlayRndSz( edict_t *entity, const char *szrootname, float volume, soundlevel_t soundlevel, int flags, int pitch )
-{
-	return -1;
 }
 
 #include "vphysics/object_hash.h"
@@ -363,10 +340,6 @@ void FireSystem_AddHeatInRadius( const Vector &vecSrc, float flRadius, float flH
 }
 
 void PhysSetMassCenterOverride( masscenteroverride_t &override )
-{
-}
-
-void PhysTeleportConstrainedEntity( CBaseEntity *pTeleportSource, IPhysicsObject *pObject0, IPhysicsObject *pObject1, const Vector &prevPosition, const QAngle &prevAngles, bool physicsRotate )
 {
 }
 

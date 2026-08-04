@@ -50,6 +50,7 @@ DEFAULT_TARGETS = [
     "IFileSystem",
     "IPhysicsCollision",
     "IPhysicsSurfaceProps",
+    "IPhysicsEnvironment",
 ]
 
 ENGINE_SKIP = {

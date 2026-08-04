@@ -120,7 +120,7 @@ static void SimTraceWorldModel( const Ray_t &ray, unsigned int fMask, int nModel
 		float flFraction = res.fraction;
 		float normal[ 3 ] = { 0, 0, 0 };
 		int nContents = 0;
-		if ( simcore::DispCollision_Trace( start, end, mins, maxs, ray.m_IsRay,
+		if ( simcore::DispCollision_Trace( start, end, mins, maxs, ray.m_IsRay, (int)fMask,
 				&flFraction, normal, &nContents ) )
 		{
 			res.fraction = flFraction;

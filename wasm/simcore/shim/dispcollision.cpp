@@ -137,8 +137,8 @@ int DispCollision_Load(const uint8_t *dispInfoBuf, int dispInfoLen,
 int DispCollision_Count() { return g_disp.count; }
 
 bool DispCollision_Trace(const float *start, const float *end, const float *mins,
-                         const float *maxs, bool isPoint, float *inOutFraction,
-                         float *outNormal, int *outContents) {
+                         const float *maxs, bool isPoint, int mask,
+                         float *inOutFraction, float *outNormal, int *outContents) {
   if (!g_disp.trees || g_disp.count <= 0) return false;
 
   Vector vStart(start[0], start[1], start[2]);
@@ -168,6 +168,7 @@ bool DispCollision_Trace(const float *start, const float *end, const float *mins
   bool hit = false;
   for (int i = 0; i < g_disp.count; ++i) {
     CDispCollTree *pTree = &g_disp.trees[i];
+    if (!(pTree->GetContents() & mask)) continue;
     float before = trace.fraction;
     bool r;
     if (isPoint) {

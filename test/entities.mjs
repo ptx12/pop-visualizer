@@ -245,7 +245,8 @@ if (existsSync(collisionPath)) {
     cupload(readLump(bspPath, 12)).ptr, readLump(bspPath, 12).length,
     cupload(readLump(bspPath, 3)).ptr, readLump(bspPath, 3).length);
 
-  const out = ex.sim_ents_alloc(11 * 4);
+  const out = ex.sim_ents_alloc(7 * 4);
+  const outi = ex.sim_ents_alloc(7 * 4);
   const rays = [];
   for (let i = 0; i < count; i++) {
     const x = ex.sim_ents_origin(i, 0);
@@ -258,7 +259,7 @@ if (existsSync(collisionPath)) {
   const worst = { diff: 0, ray: null };
   for (const [x, y, z] of rays) {
     const a = ex.sim_ents_trace(x, y, z, x, y, z - 4096, 0, 0, 0, 0, 0, 0,
-      MASK_PLAYERSOLID, 0, out);
+      MASK_PLAYERSOLID, 0, out, outi);
     const b = cex.sim_trace_hull(x, y, z, x, y, z - 4096, 0, 0, 0, 0, 0, 0,
       MASK_PLAYERSOLID);
     compared++;
@@ -275,13 +276,27 @@ if (existsSync(collisionPath)) {
     agreed === compared,
     `${agreed}/${compared} agreed, worst delta ${worst.diff} at ${worst.ray}`);
 
-  const f = new Float32Array(ex.memory.buffer, out, 11);
   ex.sim_ents_trace(rays[0][0], rays[0][1], rays[0][2],
-    rays[0][0], rays[0][1], rays[0][2] - 4096, 0, 0, 0, 0, 0, 0, MASK_PLAYERSOLID, 0, out);
+    rays[0][0], rays[0][1], rays[0][2] - 4096, 0, 0, 0, 0, 0, 0, MASK_PLAYERSOLID, 0, out, outi);
+  const f = new Float32Array(ex.memory.buffer, out, 7);
+  const fi = new Int32Array(ex.memory.buffer, outi, 7);
   const nlen = Math.hypot(f[3], f[4], f[5]);
   check('a world hit reports a unit surface normal', Math.abs(nlen - 1) < 1e-3,
     'normal length ' + nlen.toFixed(6));
-  check('a world hit reports solid contents', (f[6] & 0x1) !== 0, 'contents ' + f[6]);
+  check('a world hit only stops on contents the mask asked for',
+    (fi[0] & MASK_PLAYERSOLID) !== 0,
+    'contents 0x' + (fi[0] >>> 0).toString(16));
+  let roundedAway = 0, exactLowBits = 0;
+  for (const [x, y, z] of rays) {
+    ex.sim_ents_trace(x, y, z, x, y, z - 4096, 0, 0, 0, 0, 0, 0, MASK_PLAYERSOLID, 0, out, outi);
+    const c = new Int32Array(ex.memory.buffer, outi, 7)[0];
+    if (c === 0) continue;
+    if (Math.fround(c) !== c) roundedAway++;
+    if ((c & MASK_PLAYERSOLID) !== 0) exactLowBits++;
+  }
+  check('contents wide enough to lose bits as a float still arrive intact',
+    roundedAway > 0 && exactLowBits > 0,
+    `${roundedAway} of ${rays.length} would round as float32, ${exactLowBits} match the mask`);
 
   const modelsLump = readLump(bspPath, 14);
   const mdv = new DataView(modelsLump.buffer, modelsLump.byteOffset, modelsLump.byteLength);
@@ -311,10 +326,10 @@ if (existsSync(collisionPath)) {
     `${exactBrushEnts}/${brushEnts}` + (mismatched.length ? ' — ' + mismatched.join(', ') : ''));
 
   const traceThroughEnts = ex.sim_ents_trace(rays[0][0], rays[0][1], rays[0][2],
-    rays[0][0], rays[0][1], rays[0][2] - 4096, 0, 0, 0, 0, 0, 0, MASK_PLAYERSOLID, 1, out);
+    rays[0][0], rays[0][1], rays[0][2] - 4096, 0, 0, 0, 0, 0, 0, MASK_PLAYERSOLID, 1, out, outi);
   check('tracing against entities never reports further than the world alone',
     traceThroughEnts <= ex.sim_ents_trace(rays[0][0], rays[0][1], rays[0][2],
-      rays[0][0], rays[0][1], rays[0][2] - 4096, 0, 0, 0, 0, 0, 0, MASK_PLAYERSOLID, 0, out) + 1e-6,
+      rays[0][0], rays[0][1], rays[0][2] - 4096, 0, 0, 0, 0, 0, 0, MASK_PLAYERSOLID, 0, out, outi) + 1e-6,
     'fraction ' + traceThroughEnts.toFixed(6));
 
   const SURF_SKY = 0x0004;
@@ -322,13 +337,13 @@ if (existsSync(collisionPath)) {
   let skyHits = 0, downHitsNamed = 0, downHits = 0;
   for (const [x, y, z] of rays) {
     if (ex.sim_ents_trace(x, y, z, x, y, z - 4096, 0, 0, 0, 0, 0, 0,
-        MASK_PLAYERSOLID, 0, out) < 1) {
+        MASK_PLAYERSOLID, 0, out, outi) < 1) {
       downHits++;
       const name = cstr(ex.sim_ents_trace_surface());
       if (name) { downHitsNamed++; materials.set(name, (materials.get(name) || 0) + 1); }
     }
-    ex.sim_ents_trace(x, y, z, x, y, z + 8192, 0, 0, 0, 0, 0, 0, MASK_PLAYERSOLID, 0, out);
-    if ((new Float32Array(ex.memory.buffer, out, 11)[10] & SURF_SKY) !== 0) skyHits++;
+    ex.sim_ents_trace(x, y, z, x, y, z + 8192, 0, 0, 0, 0, 0, 0, MASK_PLAYERSOLID, 0, out, outi);
+    if ((new Int32Array(ex.memory.buffer, outi, 7)[4] & SURF_SKY) !== 0) skyHits++;
   }
 
   const topMaterials = [...materials.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);

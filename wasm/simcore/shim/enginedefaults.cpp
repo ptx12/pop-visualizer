@@ -161,6 +161,7 @@ static CSimDefault_ISceneFileCache s_SceneFileCache;
 static CSimDefault_IFileSystem s_FileSystem;
 static CSimDefault_IPhysicsCollision s_PhysicsCollision;
 static CSimDefault_IPhysicsSurfaceProps s_PhysicsSurfaceProps;
+static CSimDefault_IPhysicsEnvironment s_PhysicsEnvironment;
 
 extern IFileSystem *g_pFullFileSystem;
 extern IFileSystem *filesystem;
@@ -170,6 +171,8 @@ extern ITempEntsSystem *te;
 extern IResponseSystem *g_pResponseSystem;
 INetworkStringTableContainer *SimEngine_StringTables();
 void SimEngine_InstallTrace();
+IPhysicsObjectPairHash *SimEngine_CreateObjectPairHash();
+extern IPhysicsObjectPairHash *g_EntityCollisionHash;
 
 extern ISoundEmitterSystemBase *soundemitterbase;
 extern IServerPluginHelpers *serverpluginhelpers;
@@ -195,6 +198,8 @@ void SimEngine_InstallDefaults()
 	filesystem = &s_FileSystem;
 	physcollision = &s_PhysicsCollision;
 	physprops = &s_PhysicsSurfaceProps;
+	physenv = &s_PhysicsEnvironment;
+	g_EntityCollisionHash = SimEngine_CreateObjectPairHash();
 }
 
 void SimEngine_SetStudioHdr( const char *pModelName, void *pData )
