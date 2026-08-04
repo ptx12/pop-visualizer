@@ -274,11 +274,11 @@ function loadIconsFor(file) {
 
 export function deathModel() {
   const v = localStorage.getItem('popvis.deathmodel');
-  return v === 'lifetime' || v === 'damage' ? v : 'hatch';
+  return v === 'lifetime' ? v : 'hatch';
 }
 
 export function setDeathModel(v) {
-  localStorage.setItem('popvis.deathmodel', v === 'lifetime' || v === 'damage' ? v : 'hatch');
+  localStorage.setItem('popvis.deathmodel', v === 'lifetime' ? v : 'hatch');
 }
 
 export function measuredTankTime(file, ws) {
@@ -323,6 +323,7 @@ export function simFor(file, wave) {
       missions: (file.model.missions || []).filter(m => m.bots && m.bots.length && missionActiveOn(m, wave.index)),
       probes: probesFor(file, wave.index).map(spec => probeWaveSpawn(spec, file.model.templates)),
       robotLimit: file.model.robotLimit || 22,
+      deathsFor: ws => measuredDeathsFor(file, wave, ws),
       tankTimeFor: ws => override !== null ? override : measuredTankTime(file, ws),
       gateStateFor: ws => {
         const g = gates.get(ws);
@@ -398,6 +399,45 @@ export function setWsTriggerTime(file, wave, ws, seconds) {
     else localStorage.setItem(k, String(Math.max(0, seconds)));
   } catch {}
   if (file.simCache) file.simCache.delete(wave);
+}
+
+const measuredDeaths = new Map();
+
+const measuredKey = (file, waveIndex) => file.id + ':' + waveIndex;
+
+export function setMeasuredRun(file, waveIndex, actors) {
+  const byWs = new Map();
+  for (const a of Array.isArray(actors) ? actors : []) {
+    if (a.wsIndex == null || a.wsIndex < 0 || !Number.isFinite(a.dieT)) continue;
+    if (!byWs.has(a.wsIndex)) byWs.set(a.wsIndex, []);
+    byWs.get(a.wsIndex).push(a.dieT);
+  }
+  for (const list of byWs.values()) list.sort((x, y) => x - y);
+
+  const key = measuredKey(file, waveIndex);
+  const signature = [...byWs.entries()].sort((a, b) => a[0] - b[0])
+    .map(([i, list]) => i + ':' + list.map(v => v.toFixed(2)).join(',')).join('|');
+  const prev = measuredDeaths.get(key);
+  if (prev && prev.signature === signature) return false;
+
+  measuredDeaths.set(key, { signature, byWs });
+  const wave = file.model && file.model.waves ? file.model.waves[waveIndex] : null;
+  if (wave && file.simCache) file.simCache.delete(wave);
+  return true;
+}
+
+export function measuredDeathsFor(file, wave, ws) {
+  const entry = measuredDeaths.get(measuredKey(file, wave.index));
+  if (!entry) return null;
+  const idx = wave.wavespawns.indexOf(ws);
+  if (idx < 0) return null;
+  return entry.byWs.get(idx) || null;
+}
+
+export function clearMeasuredRuns(file) {
+  for (const key of [...measuredDeaths.keys()]) {
+    if (key.startsWith(file.id + ':')) measuredDeaths.delete(key);
+  }
 }
 
 export function invalidateSims() {

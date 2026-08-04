@@ -1,5 +1,5 @@
 import { el, clear, showTip, hideTip, fmtTime, fmtNum, loader, botVisual, tankVisual } from './ui.js';
-import { state, simFor, emit, onChange, deathModel, navTogglesFor, bombPathRerollsFor, mapQueryName, probesFor, addProbe, clearProbes } from './state.js';
+import { state, simFor, emit, onChange, deathModel, navTogglesFor, bombPathRerollsFor, mapQueryName, probesFor, addProbe, clearProbes, setMeasuredRun } from './state.js';
 import { CLASS_INFO, botDisplayName, missionActiveOn } from './popmodel.js';
 import { getTFPath, iconURL, iconNameFor, classIconName, tankIconName } from './icons.js';
 import { native } from './native.js';
@@ -1176,10 +1176,6 @@ function playStateFor(file, waveIndex) {
   return playStates.get(key);
 }
 
-function getDPS() {
-  return Math.max(0, state.simOpts.teamDPS || 0);
-}
-
 function zonesMode() {
   const v = localStorage.getItem('popvis.zonesmode');
   return v === 'custom' || v === 'off' ? v : 'auto';
@@ -1440,6 +1436,7 @@ function aiRunFor(file, wave, sim, mapData, key, opts) {
       lastAi.delete(stableKey);
       lastAi.set(stableKey, run.ai);
       while (lastAi.size > 6) lastAi.delete(lastAi.keys().next().value);
+      setMeasuredRun(file, wave.index, run.ai.actors);
       emit('map');
     } else setTimeout(tick, 0);
   };
@@ -1535,7 +1532,6 @@ export function renderMapView(container, file, waveIndex) {
   const tex = file.mapTexture && file.mapTexture.canvas ? file.mapTexture : null;
   const sim = simFor(file, wave);
   const model = deathModel();
-  const dps = getDPS();
   const zMode = zonesMode();
   const paint = paintFor(mapData.map);
   const paintV = paintVersions.get(mapData.map) || 0;
@@ -1553,10 +1549,10 @@ export function renderMapView(container, file, waveIndex) {
   if (teleBuild === null) resolveBuildTimes().then(v => { if (v) emit('map'); });
   const deployAnim = animDurationSync(DEPLOY_ANIM_MODEL, 'deploybomb');
   if (deployAnim === null) resolveAnimDuration(DEPLOY_ANIM_MODEL, 'deploybomb').then(v => { if (v) emit('map'); });
-  const aiKey = [waveIndex, model, dps, zMode, paintV, objIdx, bombPath, teleBuild || 0, deployAnim || 0, JSON.stringify(killPts),
+  const aiKey = [waveIndex, model, zMode, paintV, objIdx, bombPath, teleBuild || 0, deployAnim || 0, JSON.stringify(killPts),
     toggles.enabled.join(','), toggles.disabled.join(',')].join('|');
   const aiOpts = {
-    teamDPS: dps, deathModel: model, zonesMode: zMode, killPoints: killPts, objectiveIdx: objIdx, bombPath,
+    deathModel: model, zonesMode: zMode, killPoints: killPts, objectiveIdx: objIdx, bombPath,
     enabledNames: toggles.enabled, disabledNames: toggles.disabled,
     extraSpawnPoints: file.model.extraSpawnPoints || [],
     extraTankPaths: file.model.extraTankPaths || [],

@@ -246,17 +246,12 @@ export function simOptsPanel(file) {
   const wrap = el('div', { class: 'sim-controls' });
   wrap.append(field('Death model', selectInput(model, [
     { value: 'hatch', label: 'Despawn at hatch' },
-    { value: 'damage', label: 'Damage zones' },
     { value: 'lifetime', label: 'Follow the wave schedule' }
   ], v => {
     setDeathModel(v);
     invalidateSims();
     emit();
   })));
-  wrap.append(mk('Team damage per second', 'teamDPS', 100, 6000,
-    model === 'damage'
-      ? 'Combined defender damage per second, shared across everything alive. Sets when robots die on the timeline and inside the damage zones on the map.'
-      : 'Combined defender damage per second, shared across everything alive. Sets when robots die on the wave timeline — on the map they follow the death model above.'));
   return wrap;
 }
 
