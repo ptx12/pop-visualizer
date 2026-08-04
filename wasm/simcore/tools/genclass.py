@@ -63,6 +63,7 @@ ENGINE_SKIP = {
     "PvAllocEntPrivateData", "FreeEntPrivateData", "SaveAllocMemory", "SaveFreeMemory",
     "CreateFakeClient", "CreateFakeClientEx", "GetMapEntitiesString",
     "SetFakeClientConVarValue", "GetClientConVarValue",
+    "EntityMessageBegin", "UserMessageBegin", "MessageEnd",
 }
 
 MODEL_SKIP = {

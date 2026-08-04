@@ -26,9 +26,6 @@
 	void LightStyle( int style, const char *val ) override {  }
 	void StaticDecal( const Vector &originInEntitySpace, int decalIndex, int entityIndex, int modelIndex, bool lowpriority ) override {  }
 	void Message_DetermineMulticastRecipients( bool usepas, const Vector& origin, CBitVec< 255 >& playerbits ) override {  }
-	bf_write * EntityMessageBegin( int ent_index, ServerClass * ent_class, bool reliable ) override { return 0; }
-	bf_write * UserMessageBegin( IRecipientFilter *filter, int msg_type ) override { return 0; }
-	void MessageEnd( void ) override {  }
 	void ClientPrintf( edict_t *pEdict, const char *szMsg ) override {  }
 	void Con_NPrintf( int pos, const char *fmt, ... ) override {  }
 	void Con_NXPrintf( const struct con_nprint_s *info, const char *fmt, ... ) override {  }

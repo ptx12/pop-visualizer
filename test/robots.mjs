@@ -13,7 +13,8 @@ const check = (name, cond, detail) => {
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const TF_DIR = 'C:/Program Files (x86)/Steam/steamapps/common/Team Fortress 2/tf';
 const MAPS_DIR = `${TF_DIR}/maps`;
-const CANDIDATES = ['mvm_decoy', 'mvm_coaltown', 'mvm_mannhattan', 'mvm_rottenburg', 'mvm_bigrock'];
+const CANDIDATES = ['mvm_decoy', 'mvm_coaltown', 'mvm_mannhattan', 'mvm_rottenburg', 'mvm_bigrock',
+  'mvm_mannworks', 'mvm_ghost_town'];
 
 const wasmPath = new URL('../wasm/simcore/build/ents.wasm', import.meta.url);
 if (!existsSync(wasmPath)) {
@@ -379,6 +380,26 @@ if (run.actors.length) {
     }
     console.log(`  ${altName} wave ${altIndex + 1}: ${altRun.actors.length} actors, wavespawn totals [${valveTotals}]`);
   }
+}
+
+for (const other of CANDIDATES) {
+  const otherBsp = `${MAPS_DIR}/${other}.bsp`;
+  const otherPop = join(repo, 'vanilla', `${other}.pop`);
+  if (!existsSync(otherBsp) || !existsSync(otherPop)) continue;
+  let run = null;
+  let failure = '';
+  try {
+    run = await simulateWave({
+      bspPath: otherBsp, mapName: other, popShortName: other, popPath: otherPop,
+      popDir: join(repo, 'vanilla'), waveIndex: 0, seconds: 25, tfPath: TF_DIR
+    });
+  } catch (err) {
+    failure = err.message;
+  }
+  check(`${other} simulates its first wave`,
+    !failure && run && run.actors.length > 0,
+    failure || (run ? run.note || '0 actors' : 'no run'));
+  if (run && run.actors.length) console.log(`  ${other}: ${run.actors.length} actors`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

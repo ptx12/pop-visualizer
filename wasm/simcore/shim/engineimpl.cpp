@@ -8,6 +8,7 @@
 #include "model_types.h"
 #include "ispatialpartition.h"
 #include "gameinterface.h"
+#include "tier1/bitbuf.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -147,10 +148,33 @@ static SimModel_t *SimModelByIndex( int index )
 	return g_SimModels[ index ];
 }
 
+static int g_SimMsgData[ MAX_USER_MSG_DATA ];
+static bf_write g_SimMsgBuffer;
+
+static bf_write *SimMessageBegin()
+{
+	g_SimMsgBuffer.StartWriting( g_SimMsgData, sizeof( g_SimMsgData ) );
+	return &g_SimMsgBuffer;
+}
+
 class CSimEngineServer : public IVEngineServer
 {
 public:
 #include "generated/engineserver_generated.inl"
+
+	bf_write *EntityMessageBegin( int ent_index, ServerClass *ent_class, bool reliable ) override
+	{
+		return SimMessageBegin();
+	}
+
+	bf_write *UserMessageBegin( IRecipientFilter *filter, int msg_type ) override
+	{
+		return SimMessageBegin();
+	}
+
+	void MessageEnd( void ) override
+	{
+	}
 
 	int PrecacheModel( const char *s, bool preload ) override
 	{

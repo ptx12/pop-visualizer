@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readEntityLump, readLump, pakEntries, readPakEntry } from '../shared/bsp.js';
 import { indexVPK, readVPKEntry } from '../shared/vpk.js';
+import { rankNavCandidates } from '../shared/navpick.js';
 
 const TICK_INTERVAL = 1 / 66.6667;
 const SAMPLE_TICKS = 4;
@@ -32,16 +33,57 @@ function gameScripts(tfPath) {
   return out;
 }
 
-function navBytesFor(bspPath, mapName, tfPath) {
-  const loose = path.join(tfPath, 'maps', mapName + '.nav');
-  if (fs.existsSync(loose)) return { bytes: fs.readFileSync(loose), pathID: 'MOD' };
+function navSearchDirs(tfPath, popDir) {
+  const dirs = [];
+  if (popDir) {
+    dirs.push(popDir, path.join(popDir, 'maps'), path.join(path.dirname(popDir), 'maps'));
+  }
+  dirs.push(path.join(tfPath, 'maps'), path.join(tfPath, 'download', 'maps'));
   try {
-    for (const entry of pakEntries(bspPath)) {
-      if (entry.name.toLowerCase().endsWith(mapName + '.nav')) {
-        return { bytes: readPakEntry(bspPath, entry), pathID: 'BSP' };
-      }
+    for (const c of fs.readdirSync(path.join(tfPath, 'custom'), { withFileTypes: true })) {
+      if (!c.isDirectory() || c.name === 'workshop') continue;
+      dirs.push(path.join(tfPath, 'custom', c.name, 'maps'));
+      dirs.push(path.join(tfPath, 'custom', c.name, 'download', 'maps'));
     }
   } catch {}
+  return dirs;
+}
+
+function navCandidates(bspPath, tfPath, popDir) {
+  const out = [];
+  for (const d of navSearchDirs(tfPath, popDir)) {
+    try {
+      for (const n of fs.readdirSync(d)) {
+        if (!n.toLowerCase().endsWith('.nav')) continue;
+        out.push({ name: n.toLowerCase().replace(/\.nav$/, ''), kind: 'file', where: path.join(d, n) });
+      }
+    } catch {}
+  }
+  try {
+    const vpk = path.join(tfPath, 'tf2_misc_dir.vpk');
+    for (const [key, entry] of indexVPK(vpk, (ext, dir) => ext === 'nav' && dir.startsWith('maps'))) {
+      out.push({ name: key.split('/').pop().replace(/\.nav$/, ''), kind: 'vpk', where: vpk, entry });
+    }
+  } catch {}
+  try {
+    for (const p of pakEntries(bspPath)) {
+      if (!p.name.toLowerCase().endsWith('.nav')) continue;
+      out.push({ name: p.name.split('/').pop().replace(/\.nav$/, ''), kind: 'pak', where: bspPath, entry: p, size: p.uncompSize });
+    }
+  } catch {}
+  return out;
+}
+
+function navBytesFor(bspPath, mapName, tfPath, popDir) {
+  for (const pick of rankNavCandidates(navCandidates(bspPath, tfPath, popDir), mapName)) {
+    try {
+      let bytes = null;
+      if (pick.kind === 'file') bytes = fs.readFileSync(pick.where);
+      else if (pick.kind === 'vpk') bytes = readVPKEntry(pick.where, pick.entry);
+      else bytes = readPakEntry(pick.where, pick.entry);
+      if (bytes && bytes.length) return { bytes, pathID: pick.kind === 'pak' ? 'BSP' : 'MOD' };
+    } catch {}
+  }
   return null;
 }
 
@@ -133,7 +175,7 @@ export async function simulateWave({ bspPath, mapName, popShortName, popPath, po
     return ex.sim_fs_add(push(rel), pathID ? push(pathID) : 0, b.ptr, b.len) === 1;
   };
 
-  const nav = navBytesFor(bspPath, mapName, resolvedTF);
+  const nav = navBytesFor(bspPath, mapName, resolvedTF, popDir);
   if (!nav) return { actors: [], end: 0, note: 'No navigation mesh for ' + mapName + '; robots cannot path without one.' };
   addFile(`maps/${mapName}.nav`, nav.pathID, nav.bytes);
 
